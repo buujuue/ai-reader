@@ -11,6 +11,20 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 
 当前仓库处于规格与架构阶段，尚未生成可执行脚手架、依赖清单和构建命令。不要编造不存在的命令、入口或目录；脚手架落地后，在同一个变更中补充本文件。
 
+## Agent skills
+
+### Issue tracker
+
+规格与事项使用 GitHub Issues 管理。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用 `needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix` 五类默认状态。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+采用单一领域上下文：根目录 `CONTEXT.md` 与 `docs/adr/`。详见 `docs/agents/domain.md`。
+
 ## 重点参考对象：Readest
 
 - [readest/readest](https://github.com/readest/readest) 是本项目最重要的参考实现；本机参考仓库位于 `C:\code\projects\readest`。
@@ -38,6 +52,7 @@ ai-reader/
 ├── .scratch/
 │   └── reader-foundation/spec.md   # 当前基础版完整规格
 ├── docs/
+│   ├── agents/                     # 工程技能的事项追踪器与领域文档约定
 │   ├── adr/                        # 已确认的架构决策
 │   ├── architecture/overview.md    # 总体架构、职责和切片顺序
 │   └── product/vision.md           # 产品愿景与范围
@@ -85,4 +100,4 @@ ai-reader/
 - `docs/product/vision.md`：产品定位、目标与非目标。
 - `docs/architecture/overview.md`：总体架构、TS/Rust 分工、模块关系和实施顺序。
 - `docs/adr/`：逐项记录已确认的架构决策及理由。
-
+- `docs/agents/`：工程技能使用的事项追踪器、状态标签和领域文档约定。
