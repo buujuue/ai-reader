@@ -1,5 +1,7 @@
 # AI Reader — Agent Instructions
 
+本文件是全仓库代理指令的入口与总索引：全局规则在这里，各核心代码目录的具体内容在各自的 `AGENTS.md` 中。
+
 ## 沟通约定
 
 - 所有面向用户的回复与项目文档使用中文。
@@ -10,6 +12,20 @@
 AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版先跑通类 VS Code 的阅读工作台与 EPUB、PDF、Markdown 阅读链路，不实现 AI、账号、云同步或 OCR。
 
 工单 #1 的底座已落地：`apps/reader` 提供 React + Vite + TypeScript 前端与 Tauri/Rust 平台核心，Windows 原生应用可启动并显示简体中文工作台外壳。新增能力必须复用既有的 Command Registry、Repository Interface 与 typed Tauri 命令边界，不要另起交互或持久化通道。
+
+## AGENTS.md 总索引
+
+| 文件 | 范围 |
+| --- | --- |
+| `AGENTS.md`（本文件） | 全局规则、开发命令、架构边界与总索引 |
+| `apps/reader/AGENTS.md` | 阅读器应用：应用级构建与测试命令、前后端分工 |
+| `apps/reader/src/AGENTS.md` | React + TypeScript 前端：工作台、Command Registry、Repository Adapter |
+| `apps/reader/src-tauri/AGENTS.md` | Tauri + Rust 平台核心：SQLite、迁移、typed Command 与 Capability |
+| `scripts/AGENTS.md` | 仓库级工具脚本 |
+
+- 进入某个目录工作前，先阅读该目录的 `AGENTS.md`。
+- 子目录文件只描述本目录的内容与实现细节，不得与本文件的全局规则及 ADR 冲突；冲突时以 ADR 和本文件为准。
+- `packages/foliate-js` 等计划中的包记录在 `docs/architecture/overview.md`；在真正创建前，不要把计划结构写成已经存在的结构。
 
 ## Agent skills
 
@@ -28,55 +44,23 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 ## 重点参考对象：Readest
 
 - [readest/readest](https://github.com/readest/readest) 是本项目最重要的参考实现；本机参考仓库位于 `C:\code\projects\readest`。
+- **实现任何功能前，先看 Readest 对应部分是怎么实现的；有能直接复制的代码就直接复制移植，尽量少重复造轮子。** 优先复用 Readest 已验证的阅读逻辑和底层能力，尤其是 `foliate-js` 与 PDF.js 相关实现。
+- 直接移植的代码必须登记到 `docs/legal/third-party.md`：来源路径、许可证与署名要求一次写清。
 - 每次讨论或决定阅读器行为、模块边界、跨端适配、文件格式支持及工作台架构前，先检查 Readest 的实际代码和架构，再向老大说明它如何实现、哪些部分适合继承，以及轻量化实现准备如何取舍。
-- 优先复用 Readest 已验证的阅读逻辑和底层能力，尤其是 `foliate-js` 与 PDF.js 相关实现；应用层代码按纵向切片一步步重建，使架构和演进过程可理解。
+- 应用层代码按纵向切片一步步重建，使架构和演进过程可理解；不要机械复制 Readest 的应用层复杂度、无关功能或历史包袱。
 - 借鉴不等于兼容：AI Reader 拥有独立品牌、数据格式和升级路径，不承诺迁移或兼容 Readest 用户数据。
-- 不要机械复制 Readest 的应用层复杂度、无关功能或历史包袱。引用、移植或修改代码时必须核对并遵守上游许可证、版权和署名要求。
 - 若参考实现与本仓库已确认的规格或 ADR 冲突，以本仓库的明确决策为准；需要改变既有决策时先新增或修订 ADR。
 
 ## 开始工作前
 
 按以下顺序建立上下文：
 
-1. 阅读本文件。
+1. 阅读本文件，以及将要工作的目录对应的 `AGENTS.md`。
 2. 阅读 `CONTEXT.md`，使用其中的正式领域术语。
 3. 阅读与任务相关的 `docs/adr/` 决策记录。
 4. 阅读 `.scratch/reader-foundation/spec.md`，确认需求、验收边界和非目标。
 5. 必要时阅读 `docs/architecture/overview.md` 与 `docs/product/vision.md`。
-6. 针对将要实现或讨论的部分，检查 Readest 对应源码后再设计或编码。
-
-## 当前仓库结构
-
-```text
-ai-reader/
-├── .scratch/
-│   └── reader-foundation/spec.md      # 当前基础版完整规格
-├── apps/
-│   └── reader/                        # 阅读器应用
-│       ├── src/                       # React + TypeScript 前端
-│       │   ├── app/                   # 入口、bootstrap、AppServices 上下文
-│       │   ├── commands/              # Command Registry 与稳定 Command ID
-│       │   ├── components/            # 工作台外壳组件
-│       │   ├── domain/workspace/      # 工作区状态与 Repository Adapter
-│       │   └── workbench/             # Workspace Store 与命令处理
-│       └── src-tauri/                 # Tauri + Rust 平台核心
-│           ├── capabilities/          # 最小权限 Capability
-│           ├── src/db/                # SQLite 连接、迁移、workspace repository
-│           └── src/commands/          # typed Tauri 命令
-├── docs/
-│   ├── agents/                        # 工程技能的事项追踪器与领域文档约定
-│   ├── adr/                           # 已确认的架构决策
-│   ├── architecture/overview.md       # 总体架构、职责和切片顺序
-│   ├── legal/third-party.md           # 第三方许可与来源登记
-│   └── product/vision.md              # 产品愿景与范围
-├── scripts/generate-icons.mjs         # 应用图标生成脚本
-├── CONTEXT.md                         # 领域术语与统一语言
-├── LICENSE                            # AGPL-3.0
-├── Cargo.toml                         # Rust workspace
-└── pnpm-workspace.yaml                # JS workspace
-```
-
-`packages/foliate-js` 等计划中的包记录在 `docs/architecture/overview.md`；在真正创建前，不要把计划结构写成已经存在的结构。
+6. 针对将要实现或讨论的部分，检查 Readest 对应源码后再设计或编码；能直接复制的代码直接复制。
 
 ## 开发命令
 
@@ -116,13 +100,12 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 
 ## AGENTS.md 维护规则
 
-本文件是仓库结构和代理工作约定的权威入口，必须与代码同步演进。发生以下变化时，必须在同一个提交或变更中更新本文件：
+本文件是仓库结构和代理工作约定的权威入口与总索引，必须与代码同步演进。发生以下变化时，必须在同一个提交或变更中同步更新：
 
-- 新增、删除或重命名顶层目录、应用、package、crate 或关键模块；
-- 修改开发入口、构建命令、测试命令或工具链；
-- 调整 TS/Rust 职责、模块所有权、公共接口或主要数据流；
-- 更换规格、领域文档、ADR 或架构文档的权威路径；
-- 新增独立 manifest 管理的子项目。必要时在该子目录创建更具体的 `AGENTS.md`，且不得覆盖已有文件。
+- 新增、删除或重命名顶层目录、应用、package、crate 或关键模块：更新本文件的索引表，并同步对应子目录的 `AGENTS.md`；新增核心代码目录时必须为其创建 `AGENTS.md`，且不得覆盖已有文件。
+- 修改开发入口、构建命令、测试命令或工具链：更新本文件“开发命令”，必要时更新子目录文件。
+- 调整 TS/Rust 职责、模块所有权、公共接口或主要数据流：更新本文件“架构边界”和受影响的子目录文件。
+- 更换规格、领域文档、ADR 或架构文档的权威路径：更新本文件“文档索引”。
 
 更新时只记录已存在、可验证的路径和命令。架构决策本身变化时，还要同步更新 `docs/architecture/overview.md`，并新增或修订相应 ADR；不要只改本文件。
 
