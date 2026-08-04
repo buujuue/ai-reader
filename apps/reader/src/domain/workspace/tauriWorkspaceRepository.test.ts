@@ -1,0 +1,95 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  createTauriWorkspaceRepository,
+  WORKSPACE_COMMAND_NAMES,
+  type TauriInvoke,
+} from './tauriWorkspaceRepository';
+import { workspaceRepositoryContract } from './workspaceRepository.contract';
+import {
+  DEFAULT_WORKSPACE_STATE,
+  WORKSPACE_STATE_SCHEMA_VERSION,
+  type WorkspaceState,
+} from './workspaceState';
+
+/** 模拟 Rust 端 typed command 行为：snake_case 命令名、serde camelCase DTO、空库返回默认状态。 */
+function createFakeTauriBackend(): TauriInvoke {
+  let stored: WorkspaceState | null = null;
+
+  return async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+    switch (command) {
+      case 'load_workspace_state':
+        return stored ?? { ...DEFAULT_WORKSPACE_STATE };
+      case 'save_workspace_state': {
+        const state = (args as { state?: unknown } | undefined)?.state;
+        if (
+          typeof state !== 'object' ||
+          state === null ||
+          typeof (state as WorkspaceState).schemaVersion !== 'number' ||
+          typeof (state as WorkspaceState).primarySidebarVisible !== 'boolean'
+        ) {
+          throw new Error('invalid workspace state payload');
+        }
+        stored = { ...(state as WorkspaceState) };
+        return null;
+      }
+      default:
+        throw new Error(`unknown tauri command: ${command}`);
+    }
+  };
+}
+
+describe('WorkspaceRepository 契约 · Tauri Adapter', () => {
+  workspaceRepositoryContract(() => createTauriWorkspaceRepository(createFakeTauriBackend()));
+});
+
+describe('TauriWorkspaceRepository 边界映射', () => {
+  it('使用稳定的 snake_case Tauri 命令名', async () => {
+    const calls: string[] = [];
+    const invoke: TauriInvoke = async (command) => {
+      calls.push(command);
+      return { schemaVersion: 1, primarySidebarVisible: true };
+    };
+
+    const repository = createTauriWorkspaceRepository(invoke);
+    await repository.saveState({ schemaVersion: 1, primarySidebarVisible: false });
+    await repository.loadState();
+
+    expect(calls).toEqual([
+      WORKSPACE_COMMAND_NAMES.saveState,
+      WORKSPACE_COMMAND_NAMES.loadState,
+    ]);
+    expect(WORKSPACE_COMMAND_NAMES.saveState).toBe('save_workspace_state');
+    expect(WORKSPACE_COMMAND_NAMES.loadState).toBe('load_workspace_state');
+  });
+
+  it('保存时把状态放入 serde 期望的 state 参数', async () => {
+    let receivedArgs: Record<string, unknown> | undefined;
+    const invoke: TauriInvoke = async (_command, args) => {
+      receivedArgs = args;
+      return null;
+    };
+
+    const repository = createTauriWorkspaceRepository(invoke);
+    await repository.saveState({ schemaVersion: 1, primarySidebarVisible: false });
+
+    expect(receivedArgs).toEqual({
+      state: { schemaVersion: 1, primarySidebarVisible: false },
+    });
+  });
+
+  it('后端返回异常结构时拒绝加载', async () => {
+    const invoke: TauriInvoke = async () => ({ schemaVersion: 'oops' });
+
+    const repository = createTauriWorkspaceRepository(invoke);
+
+    await expect(repository.loadState()).rejects.toThrow();
+  });
+
+  it('线格式与 Rust 端锁定的 camelCase DTO 一致', () => {
+    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(1);
+    expect(JSON.stringify(DEFAULT_WORKSPACE_STATE)).toBe(
+      '{"schemaVersion":1,"primarySidebarVisible":true}',
+    );
+  });
+});

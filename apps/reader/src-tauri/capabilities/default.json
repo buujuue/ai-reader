@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "第一版底座只启用核心权限;文件、Shell 等能力随后续切片按需最小化开放",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

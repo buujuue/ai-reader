@@ -1,0 +1,16 @@
+{
+  "name": "ai-reader",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@10.18.2",
+  "scripts": {
+    "dev": "pnpm --filter @ai-reader/app dev",
+    "build": "pnpm --filter @ai-reader/app build",
+    "preview": "pnpm --filter @ai-reader/app preview",
+    "test": "pnpm --filter @ai-reader/app test",
+    "test:rust": "cargo test",
+    "typecheck": "pnpm --filter @ai-reader/app typecheck",
+    "tauri": "pnpm --filter @ai-reader/app tauri"
+  }
+}

@@ -1,0 +1,13 @@
+[workspace]
+members = ["apps/reader/src-tauri"]
+resolver = "2"
+
+[workspace.package]
+license = "AGPL-3.0-only"
+repository = "https://github.com/buujuue/ai-reader"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

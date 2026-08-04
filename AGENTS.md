@@ -9,7 +9,7 @@
 
 AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版先跑通类 VS Code 的阅读工作台与 EPUB、PDF、Markdown 阅读链路，不实现 AI、账号、云同步或 OCR。
 
-当前仓库处于规格与架构阶段，尚未生成可执行脚手架、依赖清单和构建命令。不要编造不存在的命令、入口或目录；脚手架落地后，在同一个变更中补充本文件。
+工单 #1 的底座已落地：`apps/reader` 提供 React + Vite + TypeScript 前端与 Tauri/Rust 平台核心，Windows 原生应用可启动并显示简体中文工作台外壳。新增能力必须复用既有的 Command Registry、Repository Interface 与 typed Tauri 命令边界，不要另起交互或持久化通道。
 
 ## Agent skills
 
@@ -50,16 +50,49 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 ```text
 ai-reader/
 ├── .scratch/
-│   └── reader-foundation/spec.md   # 当前基础版完整规格
+│   └── reader-foundation/spec.md      # 当前基础版完整规格
+├── apps/
+│   └── reader/                        # 阅读器应用
+│       ├── src/                       # React + TypeScript 前端
+│       │   ├── app/                   # 入口、bootstrap、AppServices 上下文
+│       │   ├── commands/              # Command Registry 与稳定 Command ID
+│       │   ├── components/            # 工作台外壳组件
+│       │   ├── domain/workspace/      # 工作区状态与 Repository Adapter
+│       │   └── workbench/             # Workspace Store 与命令处理
+│       └── src-tauri/                 # Tauri + Rust 平台核心
+│           ├── capabilities/          # 最小权限 Capability
+│           ├── src/db/                # SQLite 连接、迁移、workspace repository
+│           └── src/commands/          # typed Tauri 命令
 ├── docs/
-│   ├── agents/                     # 工程技能的事项追踪器与领域文档约定
-│   ├── adr/                        # 已确认的架构决策
-│   ├── architecture/overview.md    # 总体架构、职责和切片顺序
-│   └── product/vision.md           # 产品愿景与范围
-└── CONTEXT.md                      # 领域术语与统一语言
+│   ├── agents/                        # 工程技能的事项追踪器与领域文档约定
+│   ├── adr/                           # 已确认的架构决策
+│   ├── architecture/overview.md       # 总体架构、职责和切片顺序
+│   ├── legal/third-party.md           # 第三方许可与来源登记
+│   └── product/vision.md              # 产品愿景与范围
+├── scripts/generate-icons.mjs         # 应用图标生成脚本
+├── CONTEXT.md                         # 领域术语与统一语言
+├── LICENSE                            # AGPL-3.0
+├── Cargo.toml                         # Rust workspace
+└── pnpm-workspace.yaml                # JS workspace
 ```
 
-计划中的应用、包、Rust crate 和工作区布局记录在 `docs/architecture/overview.md`。在对应文件真正创建前，不要把计划结构写成已经存在的结构。
+`packages/foliate-js` 等计划中的包记录在 `docs/architecture/overview.md`；在真正创建前，不要把计划结构写成已经存在的结构。
+
+## 开发命令
+
+```powershell
+pnpm install                # 安装 JS 依赖(pnpm ≥ 10,Node ≥ 22)
+pnpm dev                    # 浏览器降级开发(内存 Repository,无 Tauri)
+pnpm tauri dev              # 完整桌面开发(Vite + Tauri)
+pnpm build                  # 前端类型检查 + Vite 构建
+pnpm tauri build            # 原生应用构建(Windows 为主验收平台)
+pnpm test                   # Vitest 全量测试
+pnpm typecheck              # TypeScript 严格模式类型检查
+cargo test                  # Rust 迁移与 workspace 持久化契约
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交时必须一并提交锁文件变更。
 
 ## 架构边界
 
@@ -79,7 +112,7 @@ ai-reader/
 - 优先在拥有规则的深模块中实现能力，通过窄接口协作，避免跨模块共享内部状态。
 - 新增依赖、格式、平台、数据库 schema、公共 Command、Tauri 能力或跨 TS/Rust 接口前，先确认相关 ADR 与 Readest 实现；会改变已确认范围时先征得老大同意。
 - 第一版禁止引入 AI、Agent、模型 SDK、向量检索、账号、云同步或 OCR 代码。可以保留清晰边界，但不要创建空包或占位实现。
-- 测试应覆盖最高可用应用 Seam，并为 TS Repository 提供内存适配器；具体命令只能在真实测试工具落地后写入本文件。
+- 测试应覆盖最高可用应用 Seam，并为 TS Repository 提供内存适配器；TypeScript 内存 Adapter 与 Tauri Adapter 必须运行同一份契约测试，Rust 侧在真实 SQLite 上运行镜像契约。具体命令以“开发命令”一节为准。
 
 ## AGENTS.md 维护规则
 
@@ -101,3 +134,4 @@ ai-reader/
 - `docs/architecture/overview.md`：总体架构、TS/Rust 分工、模块关系和实施顺序。
 - `docs/adr/`：逐项记录已确认的架构决策及理由。
 - `docs/agents/`：工程技能使用的事项追踪器、状态标签和领域文档约定。
+- `docs/legal/third-party.md`：第三方组件许可与借鉴来源登记。
