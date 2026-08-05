@@ -6,11 +6,11 @@
 
 | 目录/文件 | 内容 |
 | --- | --- |
-| `app/` | `App.tsx` 应用外壳；`bootstrap.ts` 组装 `AppServices`（CommandRegistry + WorkspaceRepository），按是否在 Tauri 运行时选择真实或内存 Adapter；`AppServicesContext.tsx` 服务上下文；`App.test.tsx` 应用级测试。 |
+| `app/` | `App.tsx` 应用外壳；`bootstrap.ts` 组装 `AppServices`（CommandRegistry + WorkspaceRepository + ImportRepository + FilePicker），按是否在 Tauri 运行时选择真实或内存 Adapter；`filePicker.ts` 系统文件选择器窄接口；`AppServicesContext.tsx` 服务上下文；`App.test.tsx` 应用级测试。 |
 | `commands/` | `commandRegistry.ts`：Command Registry 与稳定 Command ID 注册机制。 |
-| `components/` | 工作台外壳组件：`ActivityBar.tsx`、`PrimarySidebar.tsx`、`EditorArea.tsx`、`StatusBar.tsx`。 |
-| `domain/workspace/` | `workspaceState.ts` 可序列化的 Workspace State；`workspaceRepository.ts` typed Repository 接口；`tauriWorkspaceRepository.ts` 与 `inMemoryWorkspaceRepository.ts` 两个 Adapter；`workspaceRepository.contract.ts` 共享契约测试。 |
-| `workbench/` | `workspaceStore.ts`（zustand）、`workbenchCommands.ts` 命令注册、`shellUiStore.ts` 外壳 UI 状态，及对应测试。 |
+| `components/` | 工作台外壳组件：`ActivityBar.tsx`（导入 EPUB + 切换主侧栏）、`PrimarySidebar.tsx`（书库列表）、`EditorArea.tsx`、`StatusBar.tsx`。 |
+| `domain/` | 领域层：`workspace/` 工作区、`library/` 书库与导入（含内建最小 `EpubInspector`）、`tauriInvoke.ts` 共享 invoke 类型。 |
+| `workbench/` | `workspaceStore.ts`（zustand）、`workbenchCommands.ts` 命令注册、`libraryStore.ts`（书库）、`libraryCommands.ts`（导入/刷新命令）、`importBook.ts`（stage→inspect→commit 编排）、`shellUiStore.ts` 外壳 UI 状态，及对应测试。 |
 | `test/setup.ts` | Vitest 测试环境配置。 |
 
 ## 约定

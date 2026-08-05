@@ -4,12 +4,13 @@ import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
 import { PrimarySidebar } from '../components/PrimarySidebar';
 import { StatusBar } from '../components/StatusBar';
+import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useAppServices } from './AppServicesContext';
 
 export function App() {
-  const { workspaceRepository } = useAppServices();
+  const { commands, workspaceRepository } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
 
   useEffect(() => {
@@ -29,6 +30,10 @@ export function App() {
       cancelled = true;
     };
   }, [workspaceRepository]);
+
+  useEffect(() => {
+    void commands.execute(COMMAND_IDS.libraryRefresh).catch(() => undefined);
+  }, [commands]);
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">

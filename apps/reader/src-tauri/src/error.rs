@@ -12,6 +12,12 @@ pub enum AppError {
     AppDir(String),
     #[error("数据库连接被占用且无法恢复")]
     DatabaseLocked,
+    #[error("文件系统操作失败:{0}")]
+    Io(#[from] std::io::Error),
+    #[error("暂存文件不存在:{0}")]
+    StagedFileMissing(String),
+    #[error("导入提交失败:{0}")]
+    ImportCommit(String),
 }
 
 impl serde::Serialize for AppError {

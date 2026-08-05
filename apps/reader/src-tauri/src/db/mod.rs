@@ -1,3 +1,4 @@
+pub mod import;
 pub mod workspace;
 
 use std::path::Path;
@@ -6,7 +7,10 @@ use rusqlite::Connection;
 
 use crate::error::AppError;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("migrations/0001_workspace.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("migrations/0001_workspace.sql")),
+    (2, include_str!("migrations/0002_materials.sql")),
+];
 
 /// 打开数据库连接并应用全部迁移。
 /// SQLite 连接、迁移与 pragma 规则由 Rust 独占,TS 不接触数据库路径与 SQL。
@@ -97,6 +101,7 @@ mod tests {
         let tables = tables(&connection);
         assert!(tables.contains(&"schema_migrations".to_string()));
         assert!(tables.contains(&"workspace_state".to_string()));
+        assert!(tables.contains(&"materials".to_string()));
     }
 
     #[test]
@@ -110,7 +115,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
     }
 
     #[test]

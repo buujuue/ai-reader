@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import type { TauriInvoke } from '../tauriInvoke';
 import type { WorkspaceRepository } from './workspaceRepository';
 import type { WorkspaceState } from './workspaceState';
 
@@ -7,15 +8,6 @@ export const WORKSPACE_COMMAND_NAMES = {
   loadState: 'load_workspace_state',
   saveState: 'save_workspace_state',
 } as const;
-
-/**
- * Tauri invoke 的窄接口。生产环境绑定 @tauri-apps/api 的 invoke，
- * 测试环境注入伪后端，从而在同一契约下验证命令名与参数边界。
- */
-export type TauriInvoke = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>;
 
 function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   if (typeof raw !== 'object' || raw === null) {

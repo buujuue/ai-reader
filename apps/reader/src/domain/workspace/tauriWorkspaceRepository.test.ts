@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import type { TauriInvoke } from '../tauriInvoke';
 import {
   createTauriWorkspaceRepository,
   WORKSPACE_COMMAND_NAMES,
-  type TauriInvoke,
 } from './tauriWorkspaceRepository';
 import { workspaceRepositoryContract } from './workspaceRepository.contract';
 import {

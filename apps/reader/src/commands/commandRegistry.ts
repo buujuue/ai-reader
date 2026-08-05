@@ -1,5 +1,7 @@
 export const COMMAND_IDS = {
   workbenchTogglePrimarySidebar: 'workbench.togglePrimarySidebar',
+  libraryImportOne: 'library.importOne',
+  libraryRefresh: 'library.refresh',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];

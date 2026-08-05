@@ -23,7 +23,7 @@ describe('阅读工作台外壳', () => {
 
   beforeEach(() => {
     repository = createInMemoryWorkspaceRepository();
-    services = createAppServices(repository);
+    services = createAppServices({ workspaceRepository: repository });
     useWorkspaceStore.getState().resetToDefault();
   });
 
@@ -85,5 +85,18 @@ describe('阅读工作台外壳', () => {
       ).not.toBeInTheDocument();
     });
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
+  });
+
+  it('点击导入按钮后书库侧栏显示导入的阅读材料', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('示例书')).toBeInTheDocument();
+    });
+    expect(screen.getByText('示例作者')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入:示例书/);
   });
 });

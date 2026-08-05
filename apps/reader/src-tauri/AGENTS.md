@@ -6,16 +6,17 @@ Cargo workspace 成员（见根 `Cargo.toml`）。Rust 拥有持久化、文件�
 
 | 路径 | 内容 |
 | --- | --- |
-| `src/lib.rs` | 应用入口 `run()`：在 app data 目录下创建 `ai-reader.db`，打开 SQLite、注入 `DatabaseHandle`，注册 typed 命令 |
+| `src/lib.rs` | 应用入口 `run()`：在 app data 目录下创建 `ai-reader.db`，打开 SQLite、注入 `DatabaseHandle` 与 `LibraryPaths`，注册 typed 命令，启动时恢复中断导入 |
 | `src/main.rs` | 二进制入口 |
 | `src/error.rs` | 统一错误类型 `AppError` |
-| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供 `load_workspace_state` / `save_workspace_state` |
-| `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository` |
-| `src/db/migrations/` | 编号递增的 SQL 迁移文件，当前 `0001_workspace.sql` |
-| `capabilities/default.json` | 最小权限 Capability |
+| `src/fs.rs` | 托管文件布局 `LibraryPaths`（暂存/书库目录）、流式复制 + SHA-256 指纹 |
+| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供 `load_workspace_state` / `save_workspace_state`；`import.rs` 提供 `stage_import` / `read_staged_file` / `commit_import` / `list_materials` / `recover_imports` |
+| `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`；`import.rs` 实现 `ImportRepository`（stage → inspect → commit） |
+| `src/db/migrations/` | 编号递增的 SQL 迁移文件，当前 `0001_workspace.sql`、`0002_materials.sql` |
+| `capabilities/default.json` | 最小权限 Capability（含 导入所需的 `dialog:default`） |
 | `tauri.conf.json` | 窗口、产品标识与打包配置 |
 | `icons/` | 应用图标，由 `scripts/generate-icons.mjs` 生成 |
-| `build.rs` / `Cargo.toml` | 构建配置与 Rust 依赖（tauri、rusqlite、serde） |
+| `build.rs` / `Cargo.toml` | 构建配置与 Rust 依赖（tauri、tauri-plugin-dialog、rusqlite、sha2、uuid、base64、serde） |
 
 ## 命令
 

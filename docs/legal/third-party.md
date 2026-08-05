@@ -16,6 +16,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | Vitest / jsdom / Testing Library | ^4 / ^30 / ^16 | MIT 等 | 前端测试 |
 | Tailwind CSS | ^4 | MIT | 样式 |
 | @tauri-apps/api / @tauri-apps/cli | ^2 | MIT / Apache-2.0 | Tauri IPC 与工具链 |
+| @tauri-apps/plugin-dialog | ^2 | MIT / Apache-2.0 | 托管导入的系统文件选择器 |
 
 精确版本以 `pnpm-lock.yaml` 为准。
 
@@ -24,9 +25,13 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | crate | 版本策略 | 许可证 | 用途 |
 | --- | --- | --- | --- |
 | tauri / tauri-build | ^2 | MIT / Apache-2.0 | 应用框架 |
+| tauri-plugin-dialog | ^2 | MIT / Apache-2.0 | 系统文件选择器 |
 | rusqlite(bundled SQLite) | ^0.40 | MIT | SQLite 绑定;SQLite 本身为公有领域(public domain) |
 | serde / serde_json | ^1 | MIT / Apache-2.0 | typed 命令序列化 |
 | thiserror | ^2 | MIT / Apache-2.0 | 错误类型 |
+| sha2 | ^0.10 | MIT / Apache-2.0 | 完整内容指纹(SHA-256) |
+| uuid | ^1 | MIT / Apache-2.0 | 稳定 BookId 与暂存标识 |
+| base64 | ^0.22 | MIT / Apache-2.0 | 暂存文件字节传输编码 |
 
 精确版本以 `Cargo.lock` 为准。
 
