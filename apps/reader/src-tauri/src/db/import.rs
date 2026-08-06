@@ -81,6 +81,18 @@ impl<'a> ImportRepository<'a> {
         read_file_bytes(&stash_path)
     }
 
+    /// 读取已提交托管文件中某一本的原始字节,交给前端打开阅读。
+    pub fn read_managed(&self, material_id: &str, paths: &LibraryPaths) -> Result<Vec<u8>, AppError> {
+        if self.find_by_id(material_id)?.is_none() {
+            return Err(AppError::ManagedFileMissing(material_id.to_string()));
+        }
+        let managed_path = paths.managed_path(material_id);
+        if !managed_path.is_file() {
+            return Err(AppError::ManagedFileMissing(material_id.to_string()));
+        }
+        read_file_bytes(&managed_path)
+    }
+
     /// 提交导入:按指纹去重;去重命中则清理暂存并返回既有材料;
     /// 否则生成稳定 BookId、原子移动托管文件并写入 ready 记录。
     pub fn commit(
@@ -383,6 +395,33 @@ mod tests {
         assert_eq!(materials.len(), 2);
         assert_eq!(materials[0].title, "甲");
         assert_eq!(materials[1].title, "乙");
+    }
+
+    #[test]
+    fn read_managed_missing_file_returns_typed_error() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+
+        let error = repository.read_managed("no-such", &paths).unwrap_err();
+
+        assert!(matches!(error, AppError::ManagedFileMissing(_)));
+    }
+
+    #[test]
+    fn read_managed_returns_committed_bytes() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"managed-epub-bytes");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        let bytes = repository.read_managed(&material.id, &paths).unwrap();
+
+        assert_eq!(bytes, b"managed-epub-bytes");
     }
 
     #[test]

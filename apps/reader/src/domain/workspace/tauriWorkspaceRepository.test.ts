@@ -7,6 +7,7 @@ import {
 } from './tauriWorkspaceRepository';
 import { workspaceRepositoryContract } from './workspaceRepository.contract';
 import {
+  DEFAULT_EDITOR_GROUP_ID,
   DEFAULT_WORKSPACE_STATE,
   WORKSPACE_STATE_SCHEMA_VERSION,
   type WorkspaceState,
@@ -19,18 +20,17 @@ function createFakeTauriBackend(): TauriInvoke {
   return async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
     switch (command) {
       case 'load_workspace_state':
-        return stored ?? { ...DEFAULT_WORKSPACE_STATE };
+        return stored ?? structuredClone(DEFAULT_WORKSPACE_STATE);
       case 'save_workspace_state': {
         const state = (args as { state?: unknown } | undefined)?.state;
         if (
           typeof state !== 'object' ||
           state === null ||
-          typeof (state as WorkspaceState).schemaVersion !== 'number' ||
-          typeof (state as WorkspaceState).primarySidebarVisible !== 'boolean'
+          typeof (state as WorkspaceState).schemaVersion !== 'number'
         ) {
           throw new Error('invalid workspace state payload');
         }
-        stored = { ...(state as WorkspaceState) };
+        stored = structuredClone(state as WorkspaceState);
         return null;
       }
       default:
@@ -48,11 +48,11 @@ describe('TauriWorkspaceRepository 边界映射', () => {
     const calls: string[] = [];
     const invoke: TauriInvoke = async (command) => {
       calls.push(command);
-      return { schemaVersion: 1, primarySidebarVisible: true };
+      return structuredClone(DEFAULT_WORKSPACE_STATE);
     };
 
     const repository = createTauriWorkspaceRepository(invoke);
-    await repository.saveState({ schemaVersion: 1, primarySidebarVisible: false });
+    await repository.saveState(DEFAULT_WORKSPACE_STATE);
     await repository.loadState();
 
     expect(calls).toEqual([
@@ -71,11 +71,9 @@ describe('TauriWorkspaceRepository 边界映射', () => {
     };
 
     const repository = createTauriWorkspaceRepository(invoke);
-    await repository.saveState({ schemaVersion: 1, primarySidebarVisible: false });
+    await repository.saveState(DEFAULT_WORKSPACE_STATE);
 
-    expect(receivedArgs).toEqual({
-      state: { schemaVersion: 1, primarySidebarVisible: false },
-    });
+    expect(receivedArgs).toEqual({ state: DEFAULT_WORKSPACE_STATE });
   });
 
   it('后端返回异常结构时拒绝加载', async () => {
@@ -87,9 +85,10 @@ describe('TauriWorkspaceRepository 边界映射', () => {
   });
 
   it('线格式与 Rust 端锁定的 camelCase DTO 一致', () => {
-    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(1);
+    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(2);
+    expect(DEFAULT_WORKSPACE_STATE.activeEditorGroupId).toBe(DEFAULT_EDITOR_GROUP_ID);
     expect(JSON.stringify(DEFAULT_WORKSPACE_STATE)).toBe(
-      '{"schemaVersion":1,"primarySidebarVisible":true}',
+      '{"schemaVersion":2,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}]}',
     );
   });
 });

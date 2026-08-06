@@ -53,6 +53,19 @@ pub fn list_materials(
     database.with_connection(|connection| ImportRepository::new(connection).list_materials())
 }
 
+/// 读取已提交托管文件的原始字节(base64),交给前端 BookDocument 打开阅读。
+#[tauri::command]
+pub fn read_managed_file(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+) -> Result<String, AppError> {
+    let bytes = database.with_connection(|connection| {
+        ImportRepository::new(connection).read_managed(&material_id, &paths)
+    })?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 /// 启动时恢复:清理暂存目录与孤儿托管文件。
 #[tauri::command]
 pub fn recover_imports(

@@ -1,16 +1,87 @@
-import { BookOpen } from 'lucide-react';
+import { BookOpen, X } from 'lucide-react';
+
+import { useAppServices } from '../app/AppServicesContext';
+import { COMMAND_IDS } from '../commands/commandRegistry';
+import { useLibraryStore } from '../workbench/libraryStore';
+import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { ReadingView } from './ReadingView';
 
 export function EditorArea() {
+  const { commands } = useAppServices();
+  const editorGroups = useWorkspaceStore((state) => state.editorGroups);
+  const activeEditorGroupId = useWorkspaceStore((state) => state.activeEditorGroupId);
+  const materials = useLibraryStore((state) => state.materials);
+
+  const group = editorGroups.find((group) => group.id === activeEditorGroupId);
+  const activeView = group?.views.find((view) => view.id === group.activeViewId);
+
+  const handleCloseView = (viewId: string) => {
+    void commands.execute(COMMAND_IDS.readerCloseView, viewId).catch(() => undefined);
+  };
+
+  const handleActivateView = (viewId: string) => {
+    if (group?.activeViewId === viewId) return;
+    useWorkspaceStore.getState().setActiveView(activeEditorGroupId, viewId);
+  };
+
+  if (!group || group.views.length === 0) {
+    return (
+      <section
+        aria-label="编辑器区"
+        className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-950 px-6"
+      >
+        <BookOpen size={36} aria-hidden className="text-zinc-600" />
+        <h1 className="text-lg font-semibold text-zinc-200">AI Reader</h1>
+        <p className="max-w-md text-center text-sm leading-6 text-zinc-500">
+          从左侧书库选择一本 EPUB 打开,在此处以标签形式阅读。
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section
       aria-label="编辑器区"
-      className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-950 px-6"
+      className="flex min-w-0 flex-1 flex-col bg-zinc-950"
     >
-      <BookOpen size={36} aria-hidden className="text-zinc-600" />
-      <h1 className="text-lg font-semibold text-zinc-200">AI Reader</h1>
-      <p className="max-w-md text-center text-sm leading-6 text-zinc-500">
-        阅读工作区底座已就绪。阅读材料打开后,将在此处以标签与编辑器组的形式呈现。
-      </p>
+      <div
+        role="tablist"
+        aria-label="阅读标签"
+        className="flex shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-900/40 px-2"
+      >
+        {group.views.map((view) => {
+          const material = materials.find((material) => material.id === view.materialId);
+          const isActive = view.id === group.activeViewId;
+          return (
+            <div
+              key={view.id}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => handleActivateView(view.id)}
+              className={`group flex max-w-56 cursor-pointer items-center gap-2 rounded-t-md border-b-2 px-3 py-2 text-sm transition-colors ${
+                isActive
+                  ? 'border-sky-500 bg-zinc-900 text-zinc-100'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <span className="truncate">{material?.title ?? '阅读中'}</span>
+              <button
+                type="button"
+                aria-label={`关闭标签 ${material?.title ?? ''}`}
+                onClick={() => handleCloseView(view.id)}
+                className="rounded p-0.5 text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100 focus-visible:opacity-100 focus-visible:outline"
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {activeView ? (
+        <div className="min-h-0 flex-1">
+          <ReadingView key={activeView.id} viewId={activeView.id} />
+        </div>
+      ) : null}
     </section>
   );
 }

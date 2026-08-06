@@ -60,6 +60,26 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
 
     await expect(repository.readStagedFile(staged)).rejects.toThrow();
   });
+
+  it('读取已提交托管文件返回提交时的原始字节', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.epub', encodeUtf8('managed-bytes'));
+    const material = await repository.commitImport(staged, {
+      title: '甲',
+      author: null,
+      language: null,
+    });
+
+    const bytes = await repository.readManagedFile(material.id);
+
+    expect(new TextDecoder().decode(bytes)).toBe('managed-bytes');
+  });
+
+  it('读取不存在的托管文件抛出错误', async () => {
+    const repository = harness.createRepository();
+
+    await expect(repository.readManagedFile('no-such-id')).rejects.toThrow();
+  });
 }
 
 function encodeUtf8(text: string): Uint8Array {

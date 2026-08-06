@@ -16,6 +16,8 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error("暂存文件不存在:{0}")]
     StagedFileMissing(String),
+    #[error("托管书库中不存在该阅读材料:{0}")]
+    ManagedFileMissing(String),
     #[error("导入提交失败:{0}")]
     ImportCommit(String),
 }

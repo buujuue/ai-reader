@@ -16,6 +16,9 @@ importers:
       '@tauri-apps/plugin-dialog':
         specifier: ^2.2.2
         version: 2.7.2
+      foliate-js:
+        specifier: ^1.0.1
+        version: 1.0.1
       lucide-react:
         specifier: ^1.28.0
         version: 1.28.0(react@19.2.8)
@@ -857,6 +860,9 @@ packages:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
     engines: {node: '>=18'}
 
+  construct-style-sheets-polyfill@3.1.0:
+    resolution: {integrity: sha512-HBLKP0chz8BAY6rBdzda11c3wAZeCZ+kIG4weVC2NM3AXzxx09nhe8t0SQNdloAvg5GLuHwq/0SPOOSPvtCcKw==}
+
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
@@ -938,6 +944,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  foliate-js@1.0.1:
+    resolution: {integrity: sha512-Cj4h2ub5aVA+yUgbhvVhCyxwi0GPF4pyNBa6Lw9+6WKY1ReBxipItn2kEBO6u7Vu/xYXjK711R74+t+yW/0u5w==}
 
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
@@ -1996,6 +2005,8 @@ snapshots:
 
   chai@6.2.2: {}
 
+  construct-style-sheets-polyfill@3.1.0: {}
+
   convert-source-map@2.0.0: {}
 
   css-tree@3.2.1:
@@ -2079,6 +2090,10 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  foliate-js@1.0.1:
+    dependencies:
+      construct-style-sheets-polyfill: 3.1.0
 
   fsevents@2.3.3:
     optional: true

@@ -1,12 +1,26 @@
 import type { CommandRegistry } from '../commands/commandRegistry';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
-import { WORKSPACE_STATE_SCHEMA_VERSION } from '../domain/workspace/workspaceState';
+import {
+  WORKSPACE_STATE_SCHEMA_VERSION,
+  type WorkspaceState,
+} from '../domain/workspace/workspaceState';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 
 export interface WorkbenchCommandDependencies {
   workspaceRepository: WorkspaceRepository;
+}
+
+/** 从当前 Serialized Store 组装可持久化的工作区状态。 */
+export function serializeWorkspaceState(): WorkspaceState {
+  const store = useWorkspaceStore.getState();
+  return {
+    schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
+    primarySidebarVisible: store.primarySidebarVisible,
+    activeEditorGroupId: store.activeEditorGroupId,
+    editorGroups: store.editorGroups,
+  };
 }
 
 /**
@@ -21,8 +35,9 @@ export function registerWorkbenchCommands(
     const nextVisible = !useWorkspaceStore.getState().primarySidebarVisible;
 
     try {
+      const state = serializeWorkspaceState();
       await dependencies.workspaceRepository.saveState({
-        schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
+        ...state,
         primarySidebarVisible: nextVisible,
       });
     } catch (error) {
@@ -35,5 +50,9 @@ export function registerWorkbenchCommands(
     useShellUiStore
       .getState()
       .setStatusMessage(nextVisible ? '已保存工作区状态:侧栏显示' : '已保存工作区状态:侧栏隐藏');
+  });
+
+  registry.register(COMMAND_IDS.workbenchSaveState, async () => {
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 }

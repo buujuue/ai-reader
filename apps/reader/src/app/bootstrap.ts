@@ -7,6 +7,10 @@ import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryW
 import { createDefaultTauriWorkspaceRepository } from '../domain/workspace/tauriWorkspaceRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { registerLibraryCommands } from '../workbench/libraryCommands';
+import {
+  registerReaderCommands,
+  type ReaderCommandDependencies,
+} from '../workbench/readerCommands';
 import { registerWorkbenchCommands } from '../workbench/workbenchCommands';
 import { createInMemoryFilePicker, createTauriFilePicker, type FilePicker } from './filePicker';
 
@@ -21,6 +25,7 @@ export interface AppServicesOptions {
   workspaceRepository?: WorkspaceRepository;
   importRepository?: ImportRepository;
   filePicker?: FilePicker;
+  viewHostFactory?: ReaderCommandDependencies['viewHostFactory'];
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
@@ -69,6 +74,18 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository });
   registerLibraryCommands(commands, importServices);
+  if (options.viewHostFactory) {
+    registerReaderCommands(commands, {
+      importRepository: importServices.importRepository,
+      workspaceRepository,
+      viewHostFactory: options.viewHostFactory,
+    });
+  } else {
+    registerReaderCommands(commands, {
+      importRepository: importServices.importRepository,
+      workspaceRepository,
+    });
+  }
   return {
     commands,
     workspaceRepository,

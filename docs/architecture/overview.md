@@ -137,6 +137,12 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 
 这个 Seam 跑通前不加入 PDF、Markdown、批注、第二 Editor Group 或其他平台功能。
 
+## 已落地的纵向切片进度
+
+- **第 1 切片**：Windows 阅读工作区底座（Command Registry、Workspace Repository、typed Tauri 命令边界）。
+- **第 2 切片**：托管导入一份 EPUB（stage → inspect → commit、完整内容指纹、SQLite 落库）。
+- **第 3 切片**：安全打开 EPUB 并重启续读（`BookDocument`/`EpubBookDocument` + `foliate-js`、`ReadingLocation`、Editor Group 标签、位置节流写入与 flush、重启恢复、内容清洗）。
+
 ## 后续切片顺序
 
 1. Windows EPUB 导入与恢复。

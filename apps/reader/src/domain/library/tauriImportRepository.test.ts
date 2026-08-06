@@ -20,6 +20,7 @@ function createFakeTauriBackend(): { invoke: TauriInvoke; registerSource: (name:
   const stashed = new Map<string, FakeStaged>();
   const materials = new Map<string, ReadingMaterial>();
   const byFingerprint = new Map<string, ReadingMaterial>();
+  const managedBytes = new Map<string, Uint8Array>();
 
   const invoke: TauriInvoke = async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
     switch (command) {
@@ -61,8 +62,20 @@ function createFakeTauriBackend(): { invoke: TauriInvoke; registerSource: (name:
         };
         materials.set(material.id, material);
         byFingerprint.set(material.fingerprint, material);
+        const bytes = stashed.get(staged.id)?.bytes;
+        if (bytes) {
+          managedBytes.set(material.id, bytes);
+        }
         stashed.delete(staged.id);
         return material;
+      }
+      case IMPORT_COMMAND_NAMES.readManaged: {
+        const materialId = (args as { materialId?: unknown }).materialId as string;
+        const bytes = managedBytes.get(materialId);
+        if (!bytes) {
+          throw new Error('managed file missing');
+        }
+        return btoaBinary(bytes);
       }
       case IMPORT_COMMAND_NAMES.list:
         return [...materials.values()];
@@ -109,6 +122,7 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.readStaged).toBe('read_staged_file');
     expect(IMPORT_COMMAND_NAMES.commit).toBe('commit_import');
     expect(IMPORT_COMMAND_NAMES.list).toBe('list_materials');
+    expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');
     expect(IMPORT_COMMAND_NAMES.recover).toBe('recover_imports');
   });
 
@@ -141,6 +155,20 @@ describe('TauriImportRepository 边界映射', () => {
 
     expect(received?.staged).toEqual({ id: 'x', originalFileName: 'book.epub', fingerprint: 'f' });
     expect(new TextDecoder().decode(bytes)).toBe('hello');
+  });
+
+  it('读取托管文件把 materialId 放入参数并解码 base64', async () => {
+    let received: Record<string, unknown> | undefined;
+    const invoke: TauriInvoke = async (_command, args) => {
+      received = args;
+      return btoaBinary(new TextEncoder().encode('managed'));
+    };
+
+    const repository = createTauriImportRepository(invoke);
+    const bytes = await repository.readManagedFile('mat-1');
+
+    expect(received?.materialId).toBe('mat-1');
+    expect(new TextDecoder().decode(bytes)).toBe('managed');
   });
 
   it('后端返回异常结构时拒绝加载', async () => {

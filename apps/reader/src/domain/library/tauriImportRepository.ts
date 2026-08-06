@@ -9,6 +9,7 @@ export const IMPORT_COMMAND_NAMES = {
   readStaged: 'read_staged_file',
   commit: 'commit_import',
   list: 'list_materials',
+  readManaged: 'read_managed_file',
   recover: 'recover_imports',
 } as const;
 
@@ -88,6 +89,13 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     async listMaterials(): Promise<ReadingMaterial[]> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.list);
       return assertMaterialList(raw);
+    },
+    async readManagedFile(materialId: string): Promise<Uint8Array> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.readManaged, { materialId });
+      if (typeof raw !== 'string') {
+        throw new Error('managed file bytes payload is not a string');
+      }
+      return base64ToBytes(raw);
     },
     async recoverImports(): Promise<void> {
       await invokeFn(IMPORT_COMMAND_NAMES.recover);

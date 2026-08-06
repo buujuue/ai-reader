@@ -7,10 +7,10 @@ export function createInMemoryWorkspaceRepository(): WorkspaceRepository {
   return {
     async loadState(): Promise<WorkspaceState> {
       const source = stored ?? DEFAULT_WORKSPACE_STATE;
-      return { ...source };
+      return structuredClone(source);
     },
     async saveState(state: WorkspaceState): Promise<void> {
-      stored = { ...state };
+      stored = structuredClone(state);
     },
   };
 }

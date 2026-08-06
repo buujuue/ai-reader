@@ -17,6 +17,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | Tailwind CSS | ^4 | MIT | 样式 |
 | @tauri-apps/api / @tauri-apps/cli | ^2 | MIT / Apache-2.0 | Tauri IPC 与工具链 |
 | @tauri-apps/plugin-dialog | ^2 | MIT / Apache-2.0 | 托管导入的系统文件选择器 |
+| foliate-js | ^1.0.1 | MIT | EPUB 渲染内核;《view.js》《epub.js》《paginator.js》等源自 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js) |
 
 精确版本以 `pnpm-lock.yaml` 为准。
 
@@ -39,10 +40,16 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 
 后续切片将按 `docs/adr/0001` 与规格的选择性复用原则引入:
 
-- **foliate-js**(Readest 分支):MIT 许可。引入时将在 `packages/foliate-js` 保留上游版权声明、许可文本与固定来源记录。
 - **PDF.js**:Apache-2.0 许可。引入时保留版权声明与 NOTICE 要求。
 
 引入任一组件的切片必须同时提交其许可文本与来源记录,不先行创建空包。
+
+## foliate-js 引入记录
+
+- 已于第 3 个切片(安全打开 EPUB 并重启续读)经 npm 引入上游 `foliate-js@1.0.1`(MIT),来源 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js)。
+- 使用范围:通过 `foliate-view` 自定义元素渲染 EPUB;所有直接调用集中在 `apps/reader/src/domain/reader/foliateViewHost.ts`,上层只经 `BookDocument` 窄接口交互。
+- 安全边界:`Loader.allowScript` 默认关闭(参考 Readest 分支的既有加固);`domain/reader/sanitizer.ts` 在内容进入渲染器前移除脚本、iframe、对象嵌入与危险 URL,落实 ADR-0010。
+- upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/foliate-js@1.0.1/node_modules/foliate-js/LICENSE`。
 
 ## 借鉴说明
 

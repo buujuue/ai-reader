@@ -1,7 +1,13 @@
 export const COMMAND_IDS = {
   workbenchTogglePrimarySidebar: 'workbench.togglePrimarySidebar',
+  workbenchSaveState: 'workbench.saveState',
   libraryImportOne: 'library.importOne',
   libraryRefresh: 'library.refresh',
+  libraryOpenBook: 'library.openBook',
+  readerNextPage: 'reader.nextPage',
+  readerPrevPage: 'reader.prevPage',
+  readerCloseView: 'reader.closeView',
+  readerRestoreView: 'reader.restoreView',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];

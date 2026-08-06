@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMMAND_IDS, CommandRegistry } from '../commands/commandRegistry';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
+import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
 import { registerWorkbenchCommands } from './workbenchCommands';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
@@ -24,7 +25,7 @@ describe('工作台命令处理', () => {
 
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
     await expect(repository.loadState()).resolves.toEqual({
-      schemaVersion: 1,
+      ...DEFAULT_WORKSPACE_STATE,
       primarySidebarVisible: false,
     });
   });
@@ -34,10 +35,7 @@ describe('工作台命令处理', () => {
     await registry.execute(COMMAND_IDS.workbenchTogglePrimarySidebar);
 
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(true);
-    await expect(repository.loadState()).resolves.toEqual({
-      schemaVersion: 1,
-      primarySidebarVisible: true,
-    });
+    await expect(repository.loadState()).resolves.toEqual(DEFAULT_WORKSPACE_STATE);
   });
 
   it('持久化成功后状态栏展示保存结果', async () => {
@@ -48,7 +46,7 @@ describe('工作台命令处理', () => {
 
   it('持久化失败时不改变 Store 并向外抛出错误', async () => {
     const failingRepository: WorkspaceRepository = {
-      loadState: () => Promise.resolve({ schemaVersion: 1, primarySidebarVisible: true }),
+      loadState: () => Promise.resolve(DEFAULT_WORKSPACE_STATE),
       saveState: () => Promise.reject(new Error('disk error')),
     };
     const failingRegistry = new CommandRegistry();

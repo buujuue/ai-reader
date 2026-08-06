@@ -10,6 +10,8 @@ export interface ImportRepository {
   commitImport(staged: StagedImport, metadata: SourceMetadata): Promise<ReadingMaterial>;
   /** 列出活跃书库中的阅读材料。 */
   listMaterials(): Promise<ReadingMaterial[]>;
+  /** 读取已提交托管文件的原始字节,交给前端 BookDocument 打开阅读。 */
+  readManagedFile(materialId: string): Promise<Uint8Array>;
   /** 恢复中断的导入:清理暂存区与孤儿托管文件。 */
   recoverImports(): Promise<void>;
 }

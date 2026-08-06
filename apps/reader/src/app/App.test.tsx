@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
+import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
+import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { createAppServices, type AppServices } from './bootstrap';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { useReaderRuntime } from '../workbench/readerRuntime';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
 
@@ -15,6 +18,26 @@ function renderApp(services: AppServices) {
       <App />
     </AppServicesProvider>,
   );
+}
+
+function createFakeViewHost(): FoliateViewHost {
+  return {
+    async open() {},
+    async init() {},
+    async next() {},
+    async prev() {},
+    async goToLocation() {},
+    getCurrentCFI() {
+      return null;
+    },
+    onRelocate() {
+      return () => undefined;
+    },
+    onContentData() {
+      return () => undefined;
+    },
+    close() {},
+  };
 }
 
 describe('阅读工作台外壳', () => {
@@ -48,7 +71,7 @@ describe('阅读工作台外壳', () => {
       expect(screen.queryByRole('complementary', { name: '书库侧栏' })).not.toBeInTheDocument();
     });
     await expect(repository.loadState()).resolves.toEqual({
-      schemaVersion: 1,
+      ...DEFAULT_WORKSPACE_STATE,
       primarySidebarVisible: false,
     });
     expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(
@@ -76,7 +99,10 @@ describe('阅读工作台外壳', () => {
   });
 
   it('启动时恢复此前持久化的侧栏隐藏状态', async () => {
-    await repository.saveState({ schemaVersion: 1, primarySidebarVisible: false });
+    await repository.saveState({
+      ...structuredClone(DEFAULT_WORKSPACE_STATE),
+      primarySidebarVisible: false,
+    });
 
     renderApp(services);
     await waitFor(() => {
@@ -98,5 +124,72 @@ describe('阅读工作台外壳', () => {
     });
     expect(screen.getByText('示例作者')).toBeInTheDocument();
     expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入:示例书/);
+  });
+});
+
+describe('打开 EPUB 并重启续读', () => {
+  let repository: WorkspaceRepository;
+  let services: AppServices;
+
+  beforeEach(() => {
+    repository = createInMemoryWorkspaceRepository();
+    services = createAppServices({
+      workspaceRepository: repository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    useWorkspaceStore.getState().resetToDefault();
+  });
+
+  it('从书库打开一本书后会新增阅读标签', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /示例书/ });
+
+    await user.click(openButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument();
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+  });
+
+  it('重启后从持久化状态恢复阅读标签与位置', async () => {
+    // 先模拟一次会话:打开一本书并记录一个阅读位置。
+    const user = userEvent.setup();
+    const firstRender = renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /示例书/ });
+    await user.click(openButton);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+
+    const materialId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.materialId;
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    useWorkspaceStore.getState().setViewLocation(viewId, {
+      kind: 'epub',
+      cfi: 'epubcfi(/6/4)',
+    });
+    const workspace = useWorkspaceStore.getState();
+    await repository.saveState({
+      schemaVersion: 2,
+      primarySidebarVisible: workspace.primarySidebarVisible,
+      activeEditorGroupId: workspace.activeEditorGroupId,
+      editorGroups: workspace.editorGroups,
+    });
+
+    // 模拟重启:卸载旧会话,重置 Store 与运行时,用同一 Repository 重新渲染。
+    firstRender.unmount();
+    useWorkspaceStore.getState().resetToDefault();
+    useReaderRuntime.setState({ documents: new Map() });
+    renderApp(services);
+    await waitFor(() => {
+      const views = useWorkspaceStore.getState().editorGroups.flatMap((group) => group.views);
+      expect(views).toHaveLength(1);
+      expect(views[0]!.materialId).toBe(materialId);
+      expect(views[0]!.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/4)' });
+    });
   });
 });

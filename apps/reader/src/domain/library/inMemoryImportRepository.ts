@@ -10,6 +10,7 @@ export function createInMemoryImportRepository(
 ): ImportRepository {
   const materials = new Map<string, ReadingMaterial>();
   const byFingerprint = new Map<string, ReadingMaterial>();
+  const managedBytes = new Map<string, Uint8Array>();
   const stagedBytes = new Map<string, Uint8Array>();
 
   return {
@@ -52,12 +53,24 @@ export function createInMemoryImportRepository(
       };
       materials.set(material.id, material);
       byFingerprint.set(material.fingerprint, material);
+      const bytes = stagedBytes.get(stagedImport.id);
+      if (bytes) {
+        managedBytes.set(material.id, bytes);
+      }
       stagedBytes.delete(stagedImport.id);
       return { ...material };
     },
 
     async listMaterials(): Promise<ReadingMaterial[]> {
       return [...materials.values()].map((material) => ({ ...material }));
+    },
+
+    async readManagedFile(materialId): Promise<Uint8Array> {
+      const bytes = managedBytes.get(materialId);
+      if (!bytes) {
+        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+      }
+      return new Uint8Array(bytes);
     },
 
     async recoverImports(): Promise<void> {

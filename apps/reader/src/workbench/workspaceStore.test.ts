@@ -12,6 +12,7 @@ describe('Workspace Store', () => {
     const state = useWorkspaceStore.getState();
 
     expect(state.primarySidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.primarySidebarVisible);
+    expect(state.editorGroups).toEqual(DEFAULT_WORKSPACE_STATE.editorGroups);
   });
 
   it('更新主侧栏期望可见状态', () => {
@@ -21,8 +22,42 @@ describe('Workspace Store', () => {
   });
 
   it('用已持久化的工作区状态还原 Store', () => {
-    useWorkspaceStore.getState().hydrate({ schemaVersion: 1, primarySidebarVisible: false });
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      primarySidebarVisible: false,
+    });
 
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
+  });
+
+  it('打开一本书会在活动组新增标签并设为活动视图', () => {
+    useWorkspaceStore.getState().openView('material-1');
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(group.views).toHaveLength(1);
+    expect(group.views[0]!.materialId).toBe('material-1');
+    expect(group.views[0]!.location).toBeNull();
+    expect(group.activeViewId).toBe(group.views[0]!.id);
+  });
+
+  it('关闭活动标签后切换活动视图到相邻标签', () => {
+    const first = useWorkspaceStore.getState().openView('material-1');
+    const second = useWorkspaceStore.getState().openView('material-2');
+
+    useWorkspaceStore.getState().closeView(first);
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(group.views).toHaveLength(1);
+    expect(group.views[0]!.id).toBe(second);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.activeViewId).toBe(second);
+  });
+
+  it('记录某个阅读视图的可序列化位置', () => {
+    const viewId = useWorkspaceStore.getState().openView('material-1');
+    const location = { kind: 'epub' as const, cfi: 'epubcfi(/6/1)' };
+
+    useWorkspaceStore.getState().setViewLocation(viewId, location);
+
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(location);
   });
 });

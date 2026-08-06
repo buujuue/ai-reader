@@ -1,13 +1,57 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { isReadingLocation } from '../reader/readingLocation';
 import type { TauriInvoke } from '../tauriInvoke';
 import type { WorkspaceRepository } from './workspaceRepository';
-import type { WorkspaceState } from './workspaceState';
+import {
+  DEFAULT_EDITOR_GROUP_ID,
+  DEFAULT_WORKSPACE_STATE,
+  WORKSPACE_STATE_SCHEMA_VERSION,
+  type EditorGroupState,
+  type ReadingViewState,
+  type WorkspaceState,
+} from './workspaceState';
 
 export const WORKSPACE_COMMAND_NAMES = {
   loadState: 'load_workspace_state',
   saveState: 'save_workspace_state',
 } as const;
+
+function assertViewShape(raw: unknown): ReadingViewState {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error('reading view payload is not an object');
+  }
+  const candidate = raw as Partial<ReadingViewState>;
+  if (typeof candidate.id !== 'string' || typeof candidate.materialId !== 'string') {
+    throw new Error('reading view payload is malformed');
+  }
+  if (candidate.location !== null && candidate.location !== undefined && !isReadingLocation(candidate.location)) {
+    throw new Error('reading view location payload is malformed');
+  }
+  return {
+    id: candidate.id,
+    materialId: candidate.materialId,
+    location: candidate.location ?? null,
+  };
+}
+
+function assertEditorGroupShape(raw: unknown): EditorGroupState {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error('editor group payload is not an object');
+  }
+  const candidate = raw as Partial<EditorGroupState>;
+  if (typeof candidate.id !== 'string' || !Array.isArray(candidate.views)) {
+    throw new Error('editor group payload is malformed');
+  }
+  if (candidate.activeViewId !== null && typeof candidate.activeViewId !== 'string') {
+    throw new Error('editor group active view payload is malformed');
+  }
+  return {
+    id: candidate.id,
+    views: candidate.views.map(assertViewShape),
+    activeViewId: candidate.activeViewId ?? null,
+  };
+}
 
 function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   if (typeof raw !== 'object' || raw === null) {
@@ -16,13 +60,21 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   const candidate = raw as Partial<WorkspaceState>;
   if (
     typeof candidate.schemaVersion !== 'number' ||
-    typeof candidate.primarySidebarVisible !== 'boolean'
+    typeof candidate.primarySidebarVisible !== 'boolean' ||
+    (typeof candidate.activeEditorGroupId !== 'string' &&
+      candidate.activeEditorGroupId !== undefined)
   ) {
     throw new Error('workspace state payload is malformed');
   }
+  // 版本 1 的载荷没有 editorGroups,迁移为默认单组,保证旧数据可继续加载。
+  const editorGroups = Array.isArray(candidate.editorGroups)
+    ? candidate.editorGroups.map(assertEditorGroupShape)
+    : structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups);
   return {
     schemaVersion: candidate.schemaVersion,
     primarySidebarVisible: candidate.primarySidebarVisible,
+    activeEditorGroupId: candidate.activeEditorGroupId ?? DEFAULT_EDITOR_GROUP_ID,
+    editorGroups,
   };
 }
 
@@ -41,3 +93,5 @@ export function createTauriWorkspaceRepository(invoke: TauriInvoke): WorkspaceRe
 export function createDefaultTauriWorkspaceRepository(): WorkspaceRepository {
   return createTauriWorkspaceRepository((command, args) => invoke(command, args));
 }
+
+export { WORKSPACE_STATE_SCHEMA_VERSION };

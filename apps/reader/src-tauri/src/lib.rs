@@ -41,6 +41,7 @@ pub fn run() {
             commands::import::read_staged_file,
             commands::import::commit_import,
             commands::import::list_materials,
+            commands::import::read_managed_file,
             commands::import::recover_imports,
         ])
         .run(tauri::generate_context!())
