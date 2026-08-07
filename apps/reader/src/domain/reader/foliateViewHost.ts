@@ -14,6 +14,12 @@ export const createFoliateViewHostFactory = (): FoliateViewHostFactory => {
       viewModule = import('foliate-js/view.js');
     }
     const element = document.createElement('foliate-view') as unknown as ExtendedFoliateView;
+    // foliate-view 自定义元素本身没有尺寸样式,默认 display:inline 会令内部
+    // paginator 的 height:100% 失效,导致整本书空白。这里显式铺满容器。
+    element.style.display = 'block';
+    element.style.width = '100%';
+    element.style.height = '100%';
+    element.style.overflow = 'hidden';
     container.appendChild(element);
     return new UpstreamFoliateViewHost(element, viewModule);
   };

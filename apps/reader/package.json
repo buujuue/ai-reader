@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:real-render": "node scripts/verify-real-render.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tauri": "tauri"
   },
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.1",
     "jsdom": "^30.0.1",
+    "puppeteer-core": "^25.5.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "vite": "^7.3.5",

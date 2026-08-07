@@ -1,22 +1,13 @@
-# Dependencies
-node_modules/
+# 依赖
+node_modules
 
-# Build outputs
-dist/
+# 前端构建产物
+apps/reader/dist/
+
+# Tauri 生成产物
+apps/reader/src-tauri/gen/
+apps/reader/src-tauri/target/
 target/
 
-# Environment and local secrets
-.env
-.env.*
-!.env.example
-
-# Editor and OS noise
-.DS_Store
-Thumbs.db
-*.local
-.vscode/*
-!.vscode/extensions.json
-.idea/
-
-# Tauri generated artifacts
-apps/reader/src-tauri/gen/schemas
+# 真实渲染冒烟测试的截图产物,不入库
+apps/reader/scripts/artifacts/

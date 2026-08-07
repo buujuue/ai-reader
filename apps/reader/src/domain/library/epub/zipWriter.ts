@@ -69,15 +69,36 @@ export function buildEpub(options: {
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
     ${options.withCover ? '<item id="cover-image" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>' : ''}
   </manifest>
+  <spine>
+    <itemref idref="chapter1"/>
+    <itemref idref="chapter2"/>
+  </spine>
 </package>`;
 
   return buildStoredZip([
     { name: 'mimetype', data: new TextEncoder().encode('application/epub+zip') },
     { name: 'META-INF/container.xml', data: encode(containerXml()) },
     { name: 'OEBPS/content.opf', data: encode(opf) },
-    { name: 'OEBPS/nav.xhtml', data: encode('<html><body><h1>nav</h1></body></html>') },
+    {
+      name: 'OEBPS/nav.xhtml',
+      data: encode('<html><head><title>目录</title></head><body><nav><ol><li><a href="chapter1.xhtml">第一章</a></li><li><a href="chapter2.xhtml">第二章</a></li></ol></nav></body></html>'),
+    },
+    {
+      name: 'OEBPS/chapter1.xhtml',
+      data: encode(
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head><body><h1>第一章</h1><p>这是第一章的正文内容,用于验证真实渲染。</p></body></html>',
+      ),
+    },
+    {
+      name: 'OEBPS/chapter2.xhtml',
+      data: encode(
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第二章</title></head><body><h1>第二章</h1><p>这是第二章的正文内容,用于验证翻页。</p></body></html>',
+      ),
+    },
   ]);
 }
 

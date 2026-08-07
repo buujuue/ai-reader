@@ -1,0 +1,13 @@
+# apps/reader/scripts — 应用级验证脚本
+
+不属于 `src/` 前端源码,仅包含需要在真实浏览器/进程中运行的验证脚本。
+
+| 脚本 | 用途 | 运行 |
+| --- | --- | --- |
+| `verify-real-render.mjs` | 真实浏览器渲染冒烟测试:启动 Vite → 用系统 Chrome(puppeteer-core)打开应用 → 导入示例书 → 断言 foliate 真实渲染出阅读位置(CFI)且容器/渲染器尺寸非零。 | `pnpm test:real-render` |
+
+## 约定
+
+- 依赖 `puppeteer-core`(devDependency),不下载浏览器,连接系统 Chrome;可用 `CHROME_PATH` 环境变量指定。
+- 截图产物写入 `scripts/artifacts/`,已由仓库根 `.gitignore` 排除,不入库。
+- 该脚本是对 jsdom 单元测试的补充:jsdom 无法运行 foliate 的真实分页布局,因此用真实浏览器验证"EPUB 确实能打开并渲染"这一端到端 Seam。
