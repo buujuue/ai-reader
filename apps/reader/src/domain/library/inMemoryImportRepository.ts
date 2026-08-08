@@ -12,6 +12,8 @@ export function createInMemoryImportRepository(
   const byFingerprint = new Map<string, ReadingMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
   const stagedBytes = new Map<string, Uint8Array>();
+  /** pending 记录:id → 暂存句柄。stage 时写入,commit/discard/recover 时移除。 */
+  const pending = new Map<string, { originalFileName: string; fingerprint: string }>();
 
   return {
     async stageImport(sourcePath): Promise<StagedImport> {
@@ -21,12 +23,10 @@ export function createInMemoryImportRepository(
       }
       const fingerprint = await sha256Hex(bytes);
       const id = crypto.randomUUID();
+      const originalFileName = basename(sourcePath);
       stagedBytes.set(id, bytes);
-      return {
-        id,
-        originalFileName: basename(sourcePath),
-        fingerprint,
-      };
+      pending.set(id, { originalFileName, fingerprint });
+      return { id, originalFileName, fingerprint };
     },
 
     async readStagedFile(stagedImport): Promise<Uint8Array> {
@@ -39,16 +39,18 @@ export function createInMemoryImportRepository(
 
     async discardImport(stagedImport): Promise<void> {
       stagedBytes.delete(stagedImport.id);
+      pending.delete(stagedImport.id);
     },
 
     async commitImport(stagedImport, metadata): Promise<ReadingMaterial> {
       const existing = byFingerprint.get(stagedImport.fingerprint);
       if (existing) {
         stagedBytes.delete(stagedImport.id);
+        pending.delete(stagedImport.id);
         return existing;
       }
       const material: ReadingMaterial = {
-        id: crypto.randomUUID(),
+        id: stagedImport.id,
         title: metadata.title,
         author: metadata.author,
         language: metadata.language,
@@ -62,6 +64,7 @@ export function createInMemoryImportRepository(
         managedBytes.set(material.id, bytes);
       }
       stagedBytes.delete(stagedImport.id);
+      pending.delete(stagedImport.id);
       return { ...material };
     },
 
@@ -78,6 +81,8 @@ export function createInMemoryImportRepository(
     },
 
     async recoverImports(): Promise<void> {
+      // 回滚所有未提交的 pending 导入:清理暂存字节与 pending 记录。
+      pending.clear();
       stagedBytes.clear();
     },
   };

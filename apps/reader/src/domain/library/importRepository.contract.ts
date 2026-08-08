@@ -97,6 +97,38 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
 
     await expect(repository.readManagedFile('no-such-id')).rejects.toThrow();
   });
+
+  it('暂存一个不存在的源文件抛出错误(磁盘错误边界)', async () => {
+    const repository = harness.createRepository();
+
+    await expect(repository.stageImport('/no/such/source.epub')).rejects.toThrow();
+  });
+
+  it('启动恢复会回滚未提交的 pending 导入且不产生任何记录', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('pending.epub', encodeUtf8('pending-content'));
+
+    await repository.recoverImports();
+
+    expect(await repository.listMaterials()).toHaveLength(0);
+    await expect(repository.readStagedFile(staged)).rejects.toThrow();
+  });
+
+  it('启动恢复不会删除已提交的 ready 阅读材料', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('keep.epub', encodeUtf8('keep-me'));
+    const material = await repository.commitImport(staged, {
+      title: '保留',
+      author: null,
+      language: null,
+    });
+
+    await repository.recoverImports();
+
+    expect(await repository.listMaterials()).toHaveLength(1);
+    const bytes = await repository.readManagedFile(material.id);
+    expect(new TextDecoder().decode(bytes)).toBe('keep-me');
+  });
 }
 
 function encodeUtf8(text: string): Uint8Array {

@@ -47,8 +47,9 @@ impl<'a> ImportRepository<'a> {
         Self { connection }
     }
 
-    /// 把外部源文件全部字节流式复制到暂存区,并计算完整内容指纹。
-    /// 外部原文件只读,不会被修改或删除。
+    /// 把外部源文件全部字节流式复制到暂存区,计算完整内容指纹,并写入一条 pending 记录。
+    /// 外部原文件只读,不会被修改或删除。stage 失败(复制中断)时不会写 pending,
+    /// 残留的暂存文件由启动恢复器作为孤儿清理。
     pub fn stage(
         &self,
         source_path: &Path,
@@ -61,6 +62,11 @@ impl<'a> ImportRepository<'a> {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        self.connection.execute(
+            "INSERT INTO materials (id, status, fingerprint, title, author, language, source_file_name)
+             VALUES (?1, 'pending', ?2, '', NULL, NULL, ?3)",
+            params![id, fingerprint, original_file_name],
+        )?;
         Ok(StagedImport {
             id,
             original_file_name,
@@ -81,8 +87,11 @@ impl<'a> ImportRepository<'a> {
         read_file_bytes(&stash_path)
     }
 
-    /// 丢弃一份不再需要的暂存文件(检查失败或用户中止时调用)。幂等:暂存文件不存在不报错。
+    /// 丢弃一份不再需要的暂存导入(检查失败或用户中止时调用)。删除 pending 记录并移除暂存文件。
+    /// 幂等:暂存文件或记录不存在时不报错。
     pub fn discard(&self, staged: &StagedImport, paths: &LibraryPaths) -> Result<(), AppError> {
+        self.connection
+            .execute("DELETE FROM materials WHERE id = ?1", [&staged.id])?;
         let stash_path = paths.stash_path(&staged.id);
         if stash_path.is_file() {
             std::fs::remove_file(&stash_path).map_err(classify_io_error)?;
@@ -102,42 +111,49 @@ impl<'a> ImportRepository<'a> {
         read_file_bytes(&managed_path)
     }
 
-    /// 提交导入:按指纹去重;去重命中则清理暂存并返回既有材料;
-    /// 否则生成稳定 BookId、原子移动托管文件并写入 ready 记录。
+    /// 提交导入:按 ready 状态指纹去重;去重命中则清理暂存与 pending 记录并返回既有材料;
+    /// 否则移动托管文件并把 pending 记录升级为 ready。复用暂存 id 作为稳定 BookId,保证恢复、覆盖与应用升级中身份稳定。
+    /// 顺序:先把来源元数据写入 pending 记录、再移动托管文件、最后置 ready。
+    /// 若在移动与置 ready 之间异常终止,启动恢复器会基于「存在托管文件」这一事实完成该 pending,
+    /// 且此时元数据已与暂存记录持久化,恢复出的材料不会缺失标题作者。
     pub fn commit(
         &self,
         staged: &StagedImport,
         metadata: &MaterialMetadata,
         paths: &LibraryPaths,
     ) -> Result<ReadingMaterial, AppError> {
-        if let Some(existing) = self.find_by_fingerprint(&staged.fingerprint)? {
+        if let Some(existing) = self.find_ready_by_fingerprint(&staged.fingerprint)? {
+            self.connection
+                .execute("DELETE FROM materials WHERE id = ?1", [&staged.id])?;
             let _ = std::fs::remove_file(paths.stash_path(&staged.id));
             return Ok(existing);
         }
 
-        let id = uuid::Uuid::new_v4().to_string();
-        let managed_path = paths.managed_path(&id);
-        std::fs::rename(paths.stash_path(&staged.id), &managed_path)
-            .map_err(classify_io_error)?;
+        self.connection.execute(
+            "UPDATE materials SET title=?1, author=?2, language=?3 WHERE id = ?4",
+            params![metadata.title, metadata.author, metadata.language, staged.id],
+        )?;
+
+        let managed_path = paths.managed_path(&staged.id);
+        if let Err(error) = std::fs::rename(paths.stash_path(&staged.id), &managed_path) {
+            // 移动失败说明暂存仍可回滚,清理已写入的 pending 元数据以保持一致性。
+            let _ = self
+                .connection
+                .execute("DELETE FROM materials WHERE id = ?1", [&staged.id]);
+            return Err(classify_io_error(error));
+        }
 
         if let Err(error) = self.connection.execute(
-            "INSERT INTO materials (id, status, fingerprint, title, author, language, source_file_name)
-             VALUES (?1, 'ready', ?2, ?3, ?4, ?5, ?6)",
-            params![
-                id,
-                staged.fingerprint,
-                metadata.title,
-                metadata.author,
-                metadata.language,
-                staged.original_file_name
-            ],
+            "UPDATE materials SET status='ready', updated_at=datetime('now')
+             WHERE id = ?1",
+            params![staged.id],
         ) {
             let _ = std::fs::remove_file(&managed_path);
             return Err(error.into());
         }
 
         Ok(ReadingMaterial {
-            id,
+            id: staged.id.clone(),
             title: metadata.title.clone(),
             author: metadata.author.clone(),
             language: metadata.language.clone(),
@@ -169,12 +185,34 @@ impl<'a> ImportRepository<'a> {
         Ok(materials)
     }
 
-    /// 启动恢复:清空暂存目录,并移除没有数据库记录的孤儿托管文件。
-    /// 崩溃若发生在移动与落库之间,此函数保证不残留半本书或半条记录。
+    /// 启动恢复:处理 pending 记录,并清理确认无主的暂存与托管文件。
+    ///
+    /// 对每条 pending 记录:
+    /// - 若对应托管文件已存在 → 说明崩溃发生在「移动文件之后、置 ready 之前」,安全完成(置 ready)。
+    /// - 否则 → 说明崩溃发生在暂存或检查阶段,回滚(删除 pending 记录与暂存文件)。
+    ///
+    /// 之后再清理没有任何数据库记录引用的孤儿暂存/托管文件。
+    /// 绝不删除 ready 阅读材料或外部原文件。
     pub fn recover(&self, paths: &LibraryPaths) -> Result<(), AppError> {
+        let pending_ids = self.list_pending_ids()?;
+        for id in pending_ids {
+            if paths.managed_path(&id).is_file() {
+                self.connection.execute(
+                    "UPDATE materials SET status='ready', updated_at=datetime('now') WHERE id = ?1",
+                    [&id],
+                )?;
+                let _ = std::fs::remove_file(paths.stash_path(&id));
+            } else {
+                self.connection
+                    .execute("DELETE FROM materials WHERE id = ?1", [&id])?;
+                let _ = std::fs::remove_file(paths.stash_path(&id));
+            }
+        }
+
         for entry in std::fs::read_dir(&paths.stash_dir)? {
             let entry = entry?;
-            if entry.path().is_file() {
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            if entry.path().is_file() && self.find_by_id(&file_name)?.is_none() {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -188,7 +226,19 @@ impl<'a> ImportRepository<'a> {
         Ok(())
     }
 
-    fn find_by_fingerprint(&self, fingerprint: &str) -> Result<Option<ReadingMaterial>, AppError> {
+    fn list_pending_ids(&self) -> Result<Vec<String>, AppError> {
+        let mut statement =
+            self.connection
+                .prepare("SELECT id FROM materials WHERE status = 'pending'")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        Ok(ids)
+    }
+
+    fn find_ready_by_fingerprint(&self, fingerprint: &str) -> Result<Option<ReadingMaterial>, AppError> {
         let mut statement = self.connection.prepare(
             "SELECT id, title, author, language, fingerprint, source_file_name
              FROM materials
@@ -238,6 +288,9 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(include_str!("migrations/0002_materials.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0003_import_pending.sql"))
             .unwrap();
         connection
     }
@@ -504,5 +557,122 @@ mod tests {
 
         assert!(paths.managed_path(&material.id).is_file());
         assert!(!paths.stash_path("orphan").exists());
+    }
+
+    #[test]
+    fn stage_creates_pending_record_and_list_excludes_it() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"pending-bytes");
+        let staged = repository.stage(&source, &paths).unwrap();
+
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM materials WHERE id = ?1",
+                params![staged.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "pending");
+        assert!(repository.list_materials().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recover_rolls_back_pending_without_managed_file() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"abandoned");
+        let staged = repository.stage(&source, &paths).unwrap();
+        assert!(paths.stash_path(&staged.id).is_file());
+
+        repository.recover(&paths).unwrap();
+
+        assert!(!paths.stash_path(&staged.id).exists());
+        let rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM materials WHERE id = ?1",
+                params![staged.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn recover_completes_pending_that_already_has_managed_file() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"crash-content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        // 模拟崩溃发生在「移动文件之后、置 ready 之前」:托管文件已存在、元数据已写入 pending 记录。
+        std::fs::rename(
+            paths.stash_path(&staged.id),
+            paths.managed_path(&staged.id),
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE materials SET title='崩溃书', author='作者', language='zh' WHERE id = ?1",
+                [&staged.id],
+            )
+            .unwrap();
+
+        repository.recover(&paths).unwrap();
+
+        let row = repository.list_materials().unwrap().remove(0);
+        assert_eq!(row.id, staged.id);
+        assert_eq!(row.title, "崩溃书");
+        assert_eq!(row.author.as_deref(), Some("作者"));
+        assert!(paths.managed_path(&staged.id).is_file());
+        assert!(!paths.stash_path(&staged.id).exists());
+    }
+
+    #[test]
+    fn commit_dedup_removes_pending_record_of_duplicate_staged_import() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"dedup-content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let metadata = MaterialMetadata {
+            title: "甲".to_string(),
+            ..Default::default()
+        };
+        let first = repository.commit(&staged, &metadata, &paths).unwrap();
+
+        let source2 = write_source(&paths, "copy.epub", b"dedup-content");
+        let staged2 = repository.stage(&source2, &paths).unwrap();
+        let second = repository.commit(&staged2, &metadata, &paths).unwrap();
+
+        assert_eq!(second.id, first.id);
+        let pending_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM materials WHERE status = 'pending'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending_count, 0);
+    }
+
+    #[test]
+    fn recover_does_not_delete_ready_material_or_external_source() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let external = paths.stash_dir.join("..").join("external-source.epub");
+        std::fs::write(&external, b"keep-me").unwrap();
+        let staged = repository.stage(&external, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        repository.recover(&paths).unwrap();
+
+        assert!(paths.managed_path(&material.id).is_file());
+        assert_eq!(std::fs::read(&external).unwrap(), b"keep-me");
     }
 }

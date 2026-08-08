@@ -10,6 +10,7 @@ use crate::error::AppError;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("migrations/0001_workspace.sql")),
     (2, include_str!("migrations/0002_materials.sql")),
+    (3, include_str!("migrations/0003_import_pending.sql")),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -115,7 +116,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
     }
 
     #[test]
