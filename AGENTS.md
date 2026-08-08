@@ -34,6 +34,8 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 
 规格与事项使用 GitHub Issues 管理。详见 `docs/agents/issue-tracker.md`。
 
+工单实现完成、验证通过并推送后，必须关闭对应的 GitHub Issue（`gh issue close <编号>`），并在回复中告知老大；无法交付时应保持 OPEN 并说明原因。
+
 ### Triage labels
 
 使用 `needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix` 五类默认状态。详见 `docs/agents/triage-labels.md`。

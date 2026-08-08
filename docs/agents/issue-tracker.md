@@ -9,6 +9,7 @@
 - 技能要求“发布到事项追踪器”时，创建一个 GitHub Issue。
 - 技能要求“读取相关工单”时，读取 Issue 正文、评论和标签。
 - Pull Request 不作为需求或分诊入口。
+- 工单实现完成、验证通过并推送后，必须关闭对应 GitHub Issue（`gh issue close <编号>`）；无法交付时保持 OPEN 并说明原因。
 
 ## 依赖关系
 
