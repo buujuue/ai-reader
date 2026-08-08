@@ -1,17 +1,23 @@
-import { LibraryBig, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LibraryBig, ListTree, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useLibraryStore } from '../workbench/libraryStore';
+import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 
 export function ActivityBar() {
   const { commands } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const importing = useLibraryStore((state) => state.importing);
+  const tocVisible = useShellUiStore((state) => state.tocVisible);
 
   const handleTogglePrimarySidebar = () => {
     void commands.execute(COMMAND_IDS.workbenchTogglePrimarySidebar).catch(() => undefined);
+  };
+
+  const handleToggleToc = () => {
+    void commands.execute(COMMAND_IDS.workbenchToggleToc).catch(() => undefined);
   };
 
   const handleImport = () => {
@@ -46,6 +52,16 @@ export function ActivityBar() {
         ) : (
           <PanelLeftOpen size={18} aria-hidden />
         )}
+      </button>
+      <button
+        type="button"
+        aria-label="切换目录"
+        aria-pressed={tocVisible}
+        title={tocVisible ? '隐藏目录' : '显示目录'}
+        onClick={handleToggleToc}
+        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+      >
+        <ListTree size={18} aria-hidden />
       </button>
     </nav>
   );

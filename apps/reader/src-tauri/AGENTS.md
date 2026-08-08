@@ -13,10 +13,10 @@ Cargo workspace 成员（见根 `Cargo.toml`）。Rust 拥有持久化、文件�
 | `src/commands/` | typed Tauri 命令；`workspace.rs` 提供 `load_workspace_state` / `save_workspace_state`；`import.rs` 提供 `stage_import` / `read_staged_file` / `discard_import` / `commit_import` / `list_materials` / `read_managed_file` / `recover_imports`，以及元数据覆盖 `apply_material_metadata` / `set_material_cover` / `remove_material_cover` / `restore_source_metadata` / `read_material_cover` |
 | `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`（含 Editor Group / 阅读视图 / 阅读位置 DTO）；`import.rs` 实现 `ImportRepository`（stage 写 pending 记录 → inspect → commit 完成/去重，含 `discard` 丢弃暂存、`recover` 完成或回滚 pending 导入，以及来源快照 + 覆盖值的有效元数据合并与托管封面管理） |
 | `src/db/migrations/` | 编号递增的 SQL 迁移文件，当前 `0001_workspace.sql`、`0002_materials.sql`、`0003_import_pending.sql`、`0004_material_overrides.sql` |
-| `capabilities/default.json` | 最小权限 Capability（含 导入所需的 `dialog:default`） |
+| `capabilities/default.json` | 最小权限 Capability（含 导入所需的 `dialog:default` 与外部链接 `opener:default`） |
 | `tauri.conf.json` | 窗口、产品标识与打包配置 |
 | `icons/` | 应用图标，由 `scripts/generate-icons.mjs` 生成 |
-| `build.rs` / `Cargo.toml` | 构建配置与 Rust 依赖（tauri、tauri-plugin-dialog、rusqlite、sha2、uuid、base64、serde） |
+| `build.rs` / `Cargo.toml` | 构建配置与 Rust 依赖（tauri、tauri-plugin-dialog、tauri-plugin-opener、rusqlite、sha2、uuid、base64、serde） |
 
 ## 命令
 

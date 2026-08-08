@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
@@ -28,10 +28,20 @@ function createFakeViewHost(): FoliateViewHost {
     async next() {},
     async prev() {},
     async goToLocation() {},
+    async goToHref() {},
+    getTOC() {
+      return [];
+    },
     getCurrentCFI() {
       return null;
     },
     onRelocate() {
+      return () => undefined;
+    },
+    onInternalLink() {
+      return () => undefined;
+    },
+    onExternalLink() {
       return () => undefined;
     },
     onContentData() {
@@ -294,7 +304,7 @@ describe('打开 EPUB 并重启续读', () => {
     });
     const workspace = useWorkspaceStore.getState();
     await repository.saveState({
-      schemaVersion: 2,
+      schemaVersion: 3,
       primarySidebarVisible: workspace.primarySidebarVisible,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,
@@ -311,5 +321,158 @@ describe('打开 EPUB 并重启续读', () => {
       expect(views[0]!.materialId).toBe(materialId);
       expect(views[0]!.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/4)' });
     });
+  });
+
+  it('标签栏后退/前进按钮执行导航历史命令', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
+    await user.click(openButton);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/1)' });
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/2)' });
+
+    await user.click(screen.getByRole('button', { name: '后退' }));
+
+    await waitFor(() => {
+      const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
+      expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/1)' });
+    });
+
+    await user.click(screen.getByRole('button', { name: '前进' }));
+
+    await waitFor(() => {
+      const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
+      expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/2)' });
+    });
+  });
+
+  it('重启后导航历史随工作区状态恢复', async () => {
+    const user = userEvent.setup();
+    const firstRender = renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
+    await user.click(openButton);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/1)' });
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/2)' });
+    const workspace = useWorkspaceStore.getState();
+    await repository.saveState({
+      schemaVersion: 3,
+      primarySidebarVisible: workspace.primarySidebarVisible,
+      activeEditorGroupId: workspace.activeEditorGroupId,
+      editorGroups: workspace.editorGroups,
+    });
+
+    firstRender.unmount();
+    useWorkspaceStore.getState().resetToDefault();
+    useReaderRuntime.setState({ documents: new Map() });
+    renderApp(services);
+    await waitFor(() => {
+      const views = useWorkspaceStore.getState().editorGroups.flatMap((group) => group.views);
+      expect(views).toHaveLength(1);
+      expect(views[0]!.history.positions).toEqual([
+        { kind: 'epub', cfi: 'epubcfi(/6/1)' },
+        { kind: 'epub', cfi: 'epubcfi(/6/2)' },
+      ]);
+      expect(views[0]!.history.index).toBe(1);
+    });
+  });
+});
+
+describe('目录与外部链接', () => {
+  let repository: WorkspaceRepository;
+  let services: AppServices;
+
+  function createTocFakeViewHost(): FoliateViewHost & { emitExternalLink: (href: string) => void } {
+    const externalLinkListeners: Array<(href: string) => void> = [];
+    const host = {
+      ...createFakeViewHost(),
+      getTOC: () => [
+        { label: '第一章', href: 'chapter1.xhtml', subitems: null },
+        {
+          label: '第二章',
+          href: 'chapter2.xhtml',
+          subitems: [
+            { label: '第二节', href: 'chapter2.xhtml#s2', subitems: null },
+          ],
+        },
+      ],
+      onExternalLink: (listener: (href: string) => void) => {
+        externalLinkListeners.push(listener);
+        return () => {
+          const index = externalLinkListeners.indexOf(listener);
+          if (index >= 0) externalLinkListeners.splice(index, 1);
+        };
+      },
+      emitExternalLink: (href: string) => {
+        for (const listener of externalLinkListeners) listener(href);
+      },
+    };
+    return host;
+  }
+
+  beforeEach(() => {
+    repository = createInMemoryWorkspaceRepository();
+    services = createAppServices({
+      workspaceRepository: repository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    useWorkspaceStore.getState().resetToDefault();
+  });
+
+  it('活动栏目录按钮切换目录侧栏', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    const toggle = screen.getByRole('button', { name: '切换目录' });
+    await user.click(toggle);
+
+    expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(screen.queryByRole('complementary', { name: '目录侧栏' })).not.toBeInTheDocument();
+  });
+
+  it('书内外部链接先展示目标对话框,确认后经 Command 交给系统浏览器', async () => {
+    const host = createTocFakeViewHost();
+    const opener = { open: vi.fn() };
+    services = createAppServices({
+      workspaceRepository: repository,
+      viewHostFactory: () => host,
+      externalUrlOpener: opener,
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
+    await user.click(openButton);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+
+    host.emitExternalLink('https://example.com');
+
+    const dialog = await screen.findByRole('dialog', { name: '打开外部链接' });
+    expect(dialog).toHaveTextContent('https://example.com');
+
+    await user.click(screen.getByRole('button', { name: '在浏览器打开' }));
+
+    await waitFor(() => {
+      expect(opener.open).toHaveBeenCalledWith('https://example.com');
+    });
+    expect(screen.queryByRole('dialog', { name: '打开外部链接' })).not.toBeInTheDocument();
   });
 });

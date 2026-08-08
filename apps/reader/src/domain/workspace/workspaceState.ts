@@ -1,6 +1,7 @@
 import type { ReadingLocation } from '../reader/readingLocation';
+import type { NavigationHistory } from '../reader/navigationHistory';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 2;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 3;
 
 /** 一个编辑器组内的一次阅读视图(标签)的可序列化描述。 */
 export interface ReadingViewState {
@@ -10,6 +11,8 @@ export interface ReadingViewState {
   materialId: string;
   /** 可恢复的阅读位置;尚未产生时为空。 */
   location: ReadingLocation | null;
+  /** 本视图的导航历史(可序列化,最多 50 个节点)。 */
+  history: NavigationHistory;
 }
 
 /** 一个编辑器组的可序列化状态。第一版最多两个组。 */

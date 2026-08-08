@@ -52,6 +52,10 @@ export function registerWorkbenchCommands(
       .setStatusMessage(nextVisible ? '已保存工作区状态:侧栏显示' : '已保存工作区状态:侧栏隐藏');
   });
 
+  registry.register(COMMAND_IDS.workbenchToggleToc, async () => {
+    useShellUiStore.getState().toggleToc();
+  });
+
   registry.register(COMMAND_IDS.workbenchSaveState, async () => {
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });

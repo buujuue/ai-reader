@@ -17,6 +17,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | Tailwind CSS | ^4 | MIT | 样式 |
 | @tauri-apps/api / @tauri-apps/cli | ^2 | MIT / Apache-2.0 | Tauri IPC 与工具链 |
 | @tauri-apps/plugin-dialog | ^2 | MIT / Apache-2.0 | 托管导入的系统文件选择器 |
+| @tauri-apps/plugin-opener | ^2 | MIT / Apache-2.0 | 外部链接交给系统浏览器 |
 | foliate-js | ^1.0.1 | MIT | EPUB 渲染内核;《view.js》《epub.js》《paginator.js》等源自 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js) |
 
 精确版本以 `pnpm-lock.yaml` 为准。
@@ -27,6 +28,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | --- | --- | --- | --- |
 | tauri / tauri-build | ^2 | MIT / Apache-2.0 | 应用框架 |
 | tauri-plugin-dialog | ^2 | MIT / Apache-2.0 | 系统文件选择器 |
+| tauri-plugin-opener | ^2 | MIT / Apache-2.0 | 外部链接交给系统浏览器 |
 | rusqlite(bundled SQLite) | ^0.40 | MIT | SQLite 绑定;SQLite 本身为公有领域(public domain) |
 | serde / serde_json | ^1 | MIT / Apache-2.0 | typed 命令序列化 |
 | thiserror | ^2 | MIT / Apache-2.0 | 错误类型 |

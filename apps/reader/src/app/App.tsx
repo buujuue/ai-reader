@@ -2,10 +2,12 @@ import { useEffect } from 'react';
 
 import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
+import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
 import { PurgeConfirmDialog } from '../components/PurgeConfirmDialog';
 import { StatusBar } from '../components/StatusBar';
+import { TocSidebar } from '../components/TocSidebar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { WorkspaceState } from '../domain/workspace/workspaceState';
 import { useShellUiStore } from '../workbench/shellUiStore';
@@ -15,6 +17,7 @@ import { useAppServices } from './AppServicesContext';
 export function App() {
   const { commands, workspaceRepository, importRepository } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
+  const tocVisible = useShellUiStore((state) => state.tocVisible);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,12 +70,14 @@ export function App() {
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
+        {tocVisible ? <TocSidebar /> : null}
         {primarySidebarVisible ? <PrimarySidebar /> : null}
         <EditorArea />
       </div>
       <StatusBar />
       <MetadataEditorDialog />
       <PurgeConfirmDialog />
+      <ExternalLinkDialog />
     </div>
   );
 }

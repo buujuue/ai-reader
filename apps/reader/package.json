@@ -17,6 +17,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.2.2",
+    "@tauri-apps/plugin-opener": "^2.5.3",
     "foliate-js": "^1.0.1",
     "lucide-react": "^1.28.0",
     "react": "^19.2.0",

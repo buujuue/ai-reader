@@ -2,7 +2,7 @@
 
 ## 功能
 
-- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + `primarySidebarVisible` + `activeEditorGroupId` + `editorGroups`）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location`）与 `activeViewId`；`ReadingLocation` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`。
+- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + `primarySidebarVisible` + `activeEditorGroupId` + `editorGroups`）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history`）与 `activeViewId`；`ReadingLocation` 与 `NavigationHistory` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`。
 - `workspaceRepository.ts`：typed Repository 接口（`loadState` / `saveState`），是前端调用 Rust 持久化能力的窄边界。
 - `tauriWorkspaceRepository.ts`：Tauri Adapter，经 `@tauri-apps/api/core` 的 `invoke` 调用 `load_workspace_state` / `save_workspace_state` 命令；注入伪 `TauriInvoke` 供测试，附 `assertWorkspaceStateShape` 载荷校验。
 - `inMemoryWorkspaceRepository.ts`：内存 Adapter，浏览器降级开发用。
@@ -13,7 +13,7 @@
 
 ```
 domain/workspace/
-└── domain/reader/   ReadingLocation 类型(阅读视图位置)
+└── domain/reader/   ReadingLocation 与 NavigationHistory 类型(阅读视图位置与导航历史)
 ```
 
 ## 被谁依赖（树）

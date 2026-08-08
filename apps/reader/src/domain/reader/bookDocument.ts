@@ -1,4 +1,5 @@
 import type { ReadingLocation } from './readingLocation';
+import type { Toc } from './toc';
 
 /** BookDocument 对外暴露的书籍来源元数据。 */
 export interface BookDocumentMetadata {
@@ -28,11 +29,23 @@ export interface BookDocument {
   /** 恢复到指定阅读位置。 */
   goToLocation(location: ReadingLocation): Promise<void>;
 
+  /** 解析并跳到书内 href(目录节点或书内链接)。 */
+  goToHref(href: string): Promise<void>;
+
+  /** 读取分层目录。 */
+  getTOC(): Toc;
+
   /** 下一页。 */
   next(): Promise<void>;
 
   /** 上一页。 */
   prev(): Promise<void>;
+
+  /** 订阅书内链接点击,收到待跳转的 href。返回取消订阅函数。 */
+  onInternalLink(listener: (href: string) => void): () => void;
+
+  /** 订阅书内点击的外部链接,收到目标 URL。返回取消订阅函数。 */
+  onExternalLink(listener: (href: string) => void): () => void;
 
   /** 订阅阅读位置变化。返回取消订阅函数。 */
   onLocationChange(listener: (location: ReadingLocation) => void): () => void;

@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 
 import {
+  createNavigationHistory,
+  pushExplicit,
+  replaceCurrent,
+  type NavigationHistory,
+} from '../domain/reader/navigationHistory';
+import type { ReadingLocation } from '../domain/reader/readingLocation';
+import {
   DEFAULT_WORKSPACE_STATE,
   type EditorGroupState,
   type ReadingViewState,
@@ -20,12 +27,27 @@ export interface WorkspaceStoreState {
   closeView: (viewId: string) => void;
   setActiveView: (groupId: string, viewId: string) => void;
   setViewLocation: (viewId: string, location: WorkspaceState['editorGroups'][number]['views'][number]['location']) => void;
+  pushViewLocation: (viewId: string, location: ReadingLocation) => void;
+  setViewHistory: (viewId: string, history: NavigationHistory) => void;
   hydrate: (state: WorkspaceState) => void;
   resetToDefault: () => void;
 }
 
 function nextViewId(): string {
   return crypto.randomUUID();
+}
+
+function updateView(
+  state: Pick<WorkspaceStoreState, 'editorGroups'>,
+  viewId: string,
+  update: (view: ReadingViewState) => ReadingViewState,
+): Pick<WorkspaceStoreState, 'editorGroups'> {
+  return {
+    editorGroups: state.editorGroups.map((group) => ({
+      ...group,
+      views: group.views.map((view) => (view.id === viewId ? update(view) : view)),
+    })),
+  };
 }
 
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
@@ -41,6 +63,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       id: nextViewId(),
       materialId,
       location: null,
+      history: createNavigationHistory(),
     };
     set((state) => ({
       editorGroups: state.editorGroups.map((group) =>
@@ -75,14 +98,34 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   },
 
   setViewLocation: (viewId, location) => {
-    set((state) => ({
-      editorGroups: state.editorGroups.map((group) => ({
-        ...group,
-        views: group.views.map((view) =>
-          view.id === viewId ? { ...view, location } : view,
-        ),
+    set((state) =>
+      updateView(state, viewId, (view) => {
+        const history = location
+          ? replaceCurrent(view.history, location)
+          : view.history;
+        return { ...view, location, history };
+      }),
+    );
+  },
+
+  pushViewLocation: (viewId, location) => {
+    set((state) =>
+      updateView(state, viewId, (view) => ({
+        ...view,
+        location,
+        history: pushExplicit(view.history, location),
       })),
-    }));
+    );
+  },
+
+  setViewHistory: (viewId, history) => {
+    set((state) =>
+      updateView(state, viewId, (view) => ({
+        ...view,
+        history,
+        location: history.positions[history.index] ?? null,
+      })),
+    );
   },
 
   hydrate: (state) =>

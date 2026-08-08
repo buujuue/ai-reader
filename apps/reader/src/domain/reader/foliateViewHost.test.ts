@@ -10,7 +10,7 @@ interface FakeViewElement {
   goTo: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   lastLocation?: { cfi?: string };
-  book?: { transformTarget?: EventTarget };
+  book?: { transformTarget?: EventTarget; toc?: Array<{ label?: string; href?: string; subitems?: unknown }> };
   addEventListener: ReturnType<typeof vi.fn>;
   removeEventListener: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
@@ -68,6 +68,68 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     const event = new Event('external-link', { cancelable: true });
     externalHandler?.(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('外部链接被转发给订阅者并以 preventDefault 阻止默认导航', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    const externalListener = vi.fn();
+    host.onExternalLink(externalListener);
+    await host.open({});
+
+    const externalHandler = element.addEventListener.mock.calls.find(
+      ([type]) => type === 'external-link',
+    )?.[1] as EventListener | undefined;
+    const event = new CustomEvent('external-link', {
+      cancelable: true,
+      detail: { href: 'https://example.com' },
+    });
+    externalHandler?.(event);
+
+    expect(externalListener).toHaveBeenCalledWith('https://example.com');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('书内链接被转发给订阅者并阻止 foliate 默认导航', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    const internalListener = vi.fn();
+    host.onInternalLink(internalListener);
+    await host.open({});
+
+    const linkHandler = element.addEventListener.mock.calls.find(
+      ([type]) => type === 'link',
+    )?.[1] as EventListener | undefined;
+    expect(linkHandler).toBeDefined();
+    const event = new CustomEvent('link', {
+      cancelable: true,
+      detail: { href: 'chapter2.xhtml' },
+    });
+    linkHandler?.(event);
+
+    expect(internalListener).toHaveBeenCalledWith('chapter2.xhtml');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('goToHref 委托给 foliate goTo', async () => {
+    const element = createFakeElement();
+    element.book = { toc: [{ label: '第一章', href: 'c1.xhtml', subitems: null }] };
+    const host = createHost(element);
+    await host.open({});
+
+    await host.goToHref('c1.xhtml');
+    expect(element.goTo).toHaveBeenCalledWith('c1.xhtml');
+  });
+
+  it('getTOC 返回整理后的分层目录', async () => {
+    const element = createFakeElement();
+    element.book = {
+      toc: [{ label: '第一章', href: 'c1.xhtml', subitems: null }],
+    };
+    const host = createHost(element);
+    await host.open({});
+
+    expect(host.getTOC()).toEqual([{ label: '第一章', href: 'c1.xhtml', subitems: null }]);
   });
 
   it('close 释放渲染器并移除元素', async () => {

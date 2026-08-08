@@ -10,12 +10,16 @@ interface FakeHost extends FoliateViewHost {
   contentData: Array<{ type: string; data: string }>;
   emitRelocate: (cfi: string) => void;
   emitContentData: (type: string, data: string) => void;
+  emitInternalLink: (href: string) => void;
+  emitExternalLink: (href: string) => void;
   closed: boolean;
 }
 
 function createFakeHost(): FakeHost {
   const relocateListeners: Array<(cfi: string) => void> = [];
   const contentListeners: Array<(type: string, data: string) => string> = [];
+  const internalLinkListeners: Array<(href: string) => void> = [];
+  const externalLinkListeners: Array<(href: string) => void> = [];
   const host: FakeHost = {
     openedBytes: undefined,
     initLocation: undefined,
@@ -33,6 +37,15 @@ function createFakeHost(): FakeHost {
     async goToLocation(location: unknown) {
       this.cfis.push(location as string);
     },
+    async goToHref(href: string) {
+      this.cfis.push(href);
+    },
+    getTOC() {
+      return [
+        { label: '第一章', href: 'chapter1.xhtml', subitems: null },
+        { label: '第二章', href: 'chapter2.xhtml', subitems: null },
+      ];
+    },
     getCurrentCFI() {
       return this.cfis.at(-1) ?? null;
     },
@@ -41,6 +54,20 @@ function createFakeHost(): FakeHost {
       return () => {
         const index = relocateListeners.indexOf(listener);
         if (index >= 0) relocateListeners.splice(index, 1);
+      };
+    },
+    onInternalLink(listener: (href: string) => void) {
+      internalLinkListeners.push(listener);
+      return () => {
+        const index = internalLinkListeners.indexOf(listener);
+        if (index >= 0) internalLinkListeners.splice(index, 1);
+      };
+    },
+    onExternalLink(listener: (href: string) => void) {
+      externalLinkListeners.push(listener);
+      return () => {
+        const index = externalLinkListeners.indexOf(listener);
+        if (index >= 0) externalLinkListeners.splice(index, 1);
       };
     },
     onContentData(listener: (type: string, data: string) => string) {
@@ -60,6 +87,12 @@ function createFakeHost(): FakeHost {
       for (const listener of contentListeners) {
         this.contentData.push({ type, data: listener(type, data) });
       }
+    },
+    emitInternalLink(href: string) {
+      for (const listener of internalLinkListeners) listener(href);
+    },
+    emitExternalLink(href: string) {
+      for (const listener of externalLinkListeners) listener(href);
     },
   };
   return host;
@@ -125,6 +158,43 @@ describe('EpubBookDocument', () => {
 
     expect(nextSpy).toHaveBeenCalledOnce();
     expect(prevSpy).toHaveBeenCalledOnce();
+  });
+
+  it('goToHref 委托宿主导航到书内链接', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    await book.open(document.createElement('div'));
+
+    await book.goToHref('chapter1.xhtml');
+
+    expect(host.cfis).toContain('chapter1.xhtml');
+  });
+
+  it('getTOC 返回宿主的分层目录', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    await book.open(document.createElement('div'));
+
+    expect(book.getTOC()).toEqual([
+      { label: '第一章', href: 'chapter1.xhtml', subitems: null },
+      { label: '第二章', href: 'chapter2.xhtml', subitems: null },
+    ]);
+  });
+
+  it('书内链接与外部链接事件被转发给上层订阅者', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    const internalListener = vi.fn();
+    const externalListener = vi.fn();
+    book.onInternalLink(internalListener);
+    book.onExternalLink(externalListener);
+    await book.open(document.createElement('div'));
+
+    host.emitInternalLink('chapter2.xhtml');
+    host.emitExternalLink('https://example.com');
+
+    expect(internalListener).toHaveBeenCalledWith('chapter2.xhtml');
+    expect(externalListener).toHaveBeenCalledWith('https://example.com');
   });
 
   it('close 销毁宿主并清空状态', async () => {

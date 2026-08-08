@@ -60,4 +60,42 @@ describe('Workspace Store', () => {
 
     expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(location);
   });
+
+  it('显式跳转把位置压入历史节点', () => {
+    const viewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/1)' });
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/2)' });
+
+    const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
+    expect(view.history.positions).toEqual([
+      { kind: 'epub', cfi: 'epubcfi(/6/1)' },
+      { kind: 'epub', cfi: 'epubcfi(/6/2)' },
+    ]);
+    expect(view.history.index).toBe(1);
+    expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/2)' });
+  });
+
+  it('普通翻页只替换当前历史节点', () => {
+    const viewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/1)' });
+    useWorkspaceStore.getState().setViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/1#a)' });
+
+    const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
+    expect(view.history.positions).toEqual([{ kind: 'epub', cfi: 'epubcfi(/6/1#a)' }]);
+    expect(view.history.index).toBe(0);
+  });
+
+  it('设置历史后当前阅读位置跟随历史索引', () => {
+    const viewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().setViewHistory(viewId, {
+      positions: [
+        { kind: 'epub', cfi: 'epubcfi(/6/1)' },
+        { kind: 'epub', cfi: 'epubcfi(/6/2)' },
+      ],
+      index: 0,
+    });
+
+    const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
+    expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/1)' });
+  });
 });

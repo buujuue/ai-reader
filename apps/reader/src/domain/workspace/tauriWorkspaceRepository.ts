@@ -1,6 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { isReadingLocation } from '../reader/readingLocation';
+import {
+  createNavigationHistory,
+  type NavigationHistory,
+} from '../reader/navigationHistory';
 import type { TauriInvoke } from '../tauriInvoke';
 import type { WorkspaceRepository } from './workspaceRepository';
 import {
@@ -17,6 +21,27 @@ export const WORKSPACE_COMMAND_NAMES = {
   saveState: 'save_workspace_state',
 } as const;
 
+function isNavigationHistory(value: unknown): value is NavigationHistory {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Partial<NavigationHistory>;
+  if (!Array.isArray(candidate.positions) || typeof candidate.index !== 'number') {
+    return false;
+  }
+  if (!candidate.positions.every((position) => isReadingLocation(position))) {
+    return false;
+  }
+  return candidate.index >= -1 && candidate.index < candidate.positions.length;
+}
+
+function normalizeHistory(raw: unknown): NavigationHistory {
+  if (isNavigationHistory(raw)) {
+    return raw;
+  }
+  return createNavigationHistory();
+}
+
 function assertViewShape(raw: unknown): ReadingViewState {
   if (typeof raw !== 'object' || raw === null) {
     throw new Error('reading view payload is not an object');
@@ -32,6 +57,7 @@ function assertViewShape(raw: unknown): ReadingViewState {
     id: candidate.id,
     materialId: candidate.materialId,
     location: candidate.location ?? null,
+    history: normalizeHistory(candidate.history),
   };
 }
 

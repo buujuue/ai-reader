@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 
+import type { ReadingLocation } from '../reader/readingLocation';
 import type { WorkspaceRepository } from './workspaceRepository';
 import { DEFAULT_WORKSPACE_STATE } from './workspaceState';
 
@@ -14,8 +15,9 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
 
   it('保存后能够加载同一份工作区状态', async () => {
     const repository = makeRepository();
+    const location: ReadingLocation = { kind: 'epub', cfi: 'epubcfi(/6/4[chap])!/4/2/2/1:0' };
     const state: typeof DEFAULT_WORKSPACE_STATE = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       primarySidebarVisible: false,
       activeEditorGroupId: 'group-1',
       editorGroups: [
@@ -25,7 +27,11 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
             {
               id: 'view-1',
               materialId: 'mat-1',
-              location: { kind: 'epub', cfi: 'epubcfi(/6/4[chap])!/4/2/2/1:0' },
+              location,
+              history: {
+                positions: [{ kind: 'epub', cfi: 'epubcfi(/6/3)' }, location],
+                index: 1,
+              },
             },
           ],
           activeViewId: 'view-1',
@@ -41,21 +47,21 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
   it('再次保存会覆盖先前的工作区状态', async () => {
     const repository = makeRepository();
     await repository.saveState({
-      schemaVersion: 2,
+      schemaVersion: 3,
       primarySidebarVisible: false,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
     });
 
     await repository.saveState({
-      schemaVersion: 2,
+      schemaVersion: 3,
       primarySidebarVisible: true,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
     });
 
     await expect(repository.loadState()).resolves.toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       primarySidebarVisible: true,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,

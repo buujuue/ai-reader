@@ -1,4 +1,4 @@
-import { BookOpen, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -22,6 +22,14 @@ export function EditorArea() {
   const handleActivateView = (viewId: string) => {
     if (group?.activeViewId === viewId) return;
     useWorkspaceStore.getState().setActiveView(activeEditorGroupId, viewId);
+  };
+
+  const handleBack = () => {
+    void commands.execute(COMMAND_IDS.readerBack).catch(() => undefined);
+  };
+
+  const handleForward = () => {
+    void commands.execute(COMMAND_IDS.readerForward).catch(() => undefined);
   };
 
   if (!group || group.views.length === 0) {
@@ -49,6 +57,26 @@ export function EditorArea() {
         aria-label="阅读标签"
         className="flex shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-900/40 px-2"
       >
+        <div className="mr-1 flex shrink-0 items-center gap-0.5 border-r border-zinc-800 pr-2">
+          <button
+            type="button"
+            aria-label="后退"
+            title="后退到上一个位置"
+            onClick={handleBack}
+            className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+          >
+            <ArrowLeft size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            aria-label="前进"
+            title="前进到下一个位置"
+            onClick={handleForward}
+            className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+          >
+            <ArrowRight size={15} aria-hidden />
+          </button>
+        </div>
         {group.views.map((view) => {
           const material = materials.find((material) => material.id === view.materialId);
           const isActive = view.id === group.activeViewId;

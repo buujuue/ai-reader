@@ -60,4 +60,14 @@ describe('工作台命令处理', () => {
     expect(useShellUiStore.getState().statusMessage).toContain('保存工作区状态失败');
     spy.mockRestore();
   });
+
+  it('切换目录命令切换目录侧栏的运行时可见状态', async () => {
+    expect(useShellUiStore.getState().tocVisible).toBe(false);
+
+    await registry.execute(COMMAND_IDS.workbenchToggleToc);
+    expect(useShellUiStore.getState().tocVisible).toBe(true);
+
+    await registry.execute(COMMAND_IDS.workbenchToggleToc);
+    expect(useShellUiStore.getState().tocVisible).toBe(false);
+  });
 });

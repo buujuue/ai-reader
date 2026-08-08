@@ -1,6 +1,7 @@
 import type { BookDocument, BookDocumentMetadata } from './bookDocument';
 import type { ReadingLocation } from './readingLocation';
 import { sanitizeEpubContent } from './sanitizer';
+import type { Toc } from './toc';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 
 export interface EpubBookDocumentOptions {
@@ -29,6 +30,8 @@ export class EpubBookDocument implements BookDocument {
   private container: HTMLElement | null = null;
   private currentLocation: ReadingLocation | null = null;
   private locationListeners = new Set<(location: ReadingLocation) => void>();
+  private internalLinkListeners = new Set<(href: string) => void>();
+  private externalLinkListeners = new Set<(href: string) => void>();
 
   constructor(options: EpubBookDocumentOptions) {
     this.bytes = options.bytes;
@@ -73,6 +76,24 @@ export class EpubBookDocument implements BookDocument {
     await this.host?.prev();
   }
 
+  async goToHref(href: string): Promise<void> {
+    await this.host?.goToHref(href);
+  }
+
+  getTOC(): Toc {
+    return this.host?.getTOC() ?? [];
+  }
+
+  onInternalLink(listener: (href: string) => void): () => void {
+    this.internalLinkListeners.add(listener);
+    return () => this.internalLinkListeners.delete(listener);
+  }
+
+  onExternalLink(listener: (href: string) => void): () => void {
+    this.externalLinkListeners.add(listener);
+    return () => this.externalLinkListeners.delete(listener);
+  }
+
   onLocationChange(listener: (location: ReadingLocation) => void): () => void {
     this.locationListeners.add(listener);
     return () => this.locationListeners.delete(listener);
@@ -84,6 +105,8 @@ export class EpubBookDocument implements BookDocument {
     this.container = null;
     this.currentLocation = null;
     this.locationListeners.clear();
+    this.internalLinkListeners.clear();
+    this.externalLinkListeners.clear();
   }
 
   private wireSecurity(): void {
@@ -105,6 +128,18 @@ export class EpubBookDocument implements BookDocument {
       this.currentLocation = location;
       for (const listener of this.locationListeners) {
         listener(location);
+      }
+    });
+    // 书内链接:把 href 面向上层,由上层统一导航(压入历史)。
+    this.host.onInternalLink((href) => {
+      for (const listener of this.internalLinkListeners) {
+        listener(href);
+      }
+    });
+    // 外部链接:把目标 URL 面向上层,由上层交给系统浏览器。
+    this.host.onExternalLink((href) => {
+      for (const listener of this.externalLinkListeners) {
+        listener(href);
       }
     });
   }

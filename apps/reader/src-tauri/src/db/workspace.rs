@@ -12,6 +12,23 @@ pub struct ReadingLocation {
     pub cfi: String,
 }
 
+/// 导航历史节点结构。Rust 只原样存取,不理解导航语义。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationHistory {
+    pub positions: Vec<ReadingLocation>,
+    pub index: i64,
+}
+
+impl Default for NavigationHistory {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            index: -1,
+        }
+    }
+}
+
 /// 一个编辑器组内的一次阅读视图(标签)的可序列化描述。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +36,8 @@ pub struct ReadingViewState {
     pub id: String,
     pub material_id: String,
     pub location: Option<ReadingLocation>,
+    #[serde(default)]
+    pub history: NavigationHistory,
 }
 
 /// 一个编辑器组的可序列化状态。
@@ -44,7 +63,7 @@ pub struct WorkspaceState {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             primary_sidebar_visible: true,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
@@ -115,7 +134,7 @@ mod tests {
 
     fn sample_state() -> WorkspaceState {
         WorkspaceState {
-            schema_version: 2,
+            schema_version: 3,
             primary_sidebar_visible: false,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
@@ -127,6 +146,13 @@ mod tests {
                         kind: "epub".to_string(),
                         cfi: "epubcfi(/6/4[chap])!/4/2/2/1:0".to_string(),
                     }),
+                    history: NavigationHistory {
+                        positions: vec![ReadingLocation {
+                            kind: "epub".to_string(),
+                            cfi: "epubcfi(/6/3)".to_string(),
+                        }],
+                        index: 0,
+                    },
                 }],
                 active_view_id: Some("view-1".to_string()),
             }],
@@ -158,7 +184,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":2,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}]}"#
+            r#"{"schemaVersion":3,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}]}"#
         );
     }
 

@@ -11,8 +11,10 @@ status: accepted
 ## 决策
 
 - 经 npm 引入上游 `foliate-js@1.0.1`（MIT），通过 `foliate-view` 自定义元素渲染 EPUB。所有对具体渲染器的直接调用都集中在 `domain/reader/foliateViewHost.ts`；上层只经 `BookDocument` 窄接口交互（落实 ADR-0004）。
-- `BookDocument` 暴露元数据、打开、位置读写、下一页/上一页、位置订阅与关闭；`EpubBookDocument` 是 EPUB 实现。
+- `BookDocument` 暴露元数据、打开、位置读写、目录读取、href 导航、书内/外部链接事件、下一页/上一页、位置订阅与关闭；`EpubBookDocument` 是 EPUB 实现。
 - 阅读位置用可序列化的 `ReadingLocation`（EPUB 为 CFI）表达，进入 `WorkspaceState.editorGroups[].views[].location`，随工作区持久化。
+- 每个阅读视图维护可序列化的导航历史（`readerViewState.history`）：显式跳转（目录、书内链接、搜索结果、批注）压入节点，普通翻页/滚动仅替换当前节点，最多 50 个节点，随工作区持久化并在重启后恢复。
+- 书内点击的 `link`/`external-link` 事件由宿主 `preventDefault` 阻止默认导航：书内链接交给统一导航命令（压入历史），外部链接先展示目标、确认后经统一 Command 由系统浏览器打开，阅读 WebView 不导航到外部站点（ADR-0010）。
 - 自带上游 `Loader.allowScript = false`（不起脚本）；另外在内容进入渲染器前用 `domain/reader/sanitizer.ts` 清洗 XHTML，移除 script、iframe、object、embed、frame、base、form、事件处理器属性与危险 URL（含 javascript:、vbscript:、data: 非图片），落实 ADR-0010。不提供“信任此书”开关。
   - 接线方式：foliate 的 Loader 在 `book.transformTarget` 上派发 `data` 事件，`foliateViewHost.ts` 在该事件改写 XHTML 内容后再交给渲染器；并监听 `external-link` 事件取消默认行为，阻止阅读帧导航到远程资源。
 - 阅读位置高频写入由 `ThrottledPositionPersister` 节流合并，关闭视图或应用卸载时强制 flush。

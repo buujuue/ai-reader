@@ -13,12 +13,17 @@ import {
 } from '../workbench/readerCommands';
 import { registerWorkbenchCommands } from '../workbench/workbenchCommands';
 import { createInMemoryFilePicker, createTauriFilePicker, type FilePicker } from './filePicker';
+import {
+  createDefaultExternalUrlOpener,
+  type ExternalUrlOpener,
+} from './externalUrlOpener';
 
 export interface AppServices {
   commands: CommandRegistry;
   workspaceRepository: WorkspaceRepository;
   importRepository: ImportRepository;
   filePicker: FilePicker;
+  externalUrlOpener: ExternalUrlOpener;
 }
 
 export interface AppServicesOptions {
@@ -26,6 +31,7 @@ export interface AppServicesOptions {
   importRepository?: ImportRepository;
   filePicker?: FilePicker;
   viewHostFactory?: ReaderCommandDependencies['viewHostFactory'];
+  externalUrlOpener?: ExternalUrlOpener;
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
@@ -70,6 +76,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     options.importRepository && options.filePicker
       ? { importRepository: options.importRepository, filePicker: options.filePicker }
       : createImportServices();
+  const externalUrlOpener = options.externalUrlOpener ?? createDefaultExternalUrlOpener();
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository });
@@ -79,11 +86,13 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       importRepository: importServices.importRepository,
       workspaceRepository,
       viewHostFactory: options.viewHostFactory,
+      externalUrlOpener,
     });
   } else {
     registerReaderCommands(commands, {
       importRepository: importServices.importRepository,
       workspaceRepository,
+      externalUrlOpener,
     });
   }
   return {
@@ -91,5 +100,6 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     workspaceRepository,
     importRepository: importServices.importRepository,
     filePicker: importServices.filePicker,
+    externalUrlOpener,
   };
 }

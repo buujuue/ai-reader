@@ -36,7 +36,24 @@ interface ExtendedFoliateView extends HTMLElement {
   lastLocation?: { cfi?: string };
   book?: {
     transformTarget?: EventTarget;
+    toc?: Array<{ label?: string; href?: string; subitems?: unknown }>;
   };
+}
+
+/** foliate 目录节点到项目 TocItem 的映射。 */
+interface FoliateTocNode {
+  label?: string;
+  href?: string;
+  subitems?: FoliateTocNode[];
+}
+
+function toToc(items: unknown): import('./toc').Toc {
+  const source = Array.isArray(items) ? (items as FoliateTocNode[]) : [];
+  return source.map((item) => ({
+    label: item.label ?? '',
+    href: item.href ?? '',
+    subitems: Array.isArray(item.subitems) ? toToc(item.subitems) : null,
+  }));
 }
 
 /**
@@ -54,6 +71,8 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private readonly viewModule: Promise<typeof import('foliate-js/view.js')>;
   private opened = false;
   private contentListeners = new Set<(type: string, data: string) => string>();
+  private internalLinkListeners = new Set<(href: string) => void>();
+  private externalLinkListeners = new Set<(href: string) => void>();
 
   constructor(
     element: ExtendedFoliateView,
@@ -68,6 +87,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     await this.element.open(book);
     this.opened = true;
     this.wireContentSanitization();
+    this.wireInternalLinkHandling();
     this.wireExternalLinkBlocking();
   }
 
@@ -89,6 +109,14 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     await this.element.goTo(location);
   }
 
+  async goToHref(href: string): Promise<void> {
+    await this.element.goTo(href);
+  }
+
+  getTOC(): import('./toc').Toc {
+    return toToc(this.element.book?.toc);
+  }
+
   getCurrentCFI(): string | null {
     if (!this.opened) {
       return null;
@@ -107,6 +135,16 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     return () => this.element.removeEventListener('relocate', handler);
   }
 
+  onInternalLink(listener: (href: string) => void): () => void {
+    this.internalLinkListeners.add(listener);
+    return () => this.internalLinkListeners.delete(listener);
+  }
+
+  onExternalLink(listener: (href: string) => void): () => void {
+    this.externalLinkListeners.add(listener);
+    return () => this.externalLinkListeners.delete(listener);
+  }
+
   onContentData(listener: (type: string, data: string) => string): () => void {
     this.contentListeners.add(listener);
     return () => this.contentListeners.delete(listener);
@@ -118,6 +156,8 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     }
     this.element.remove();
     this.contentListeners.clear();
+    this.internalLinkListeners.clear();
+    this.externalLinkListeners.clear();
     this.opened = false;
   }
 
@@ -140,10 +180,34 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.contentCleanup = () => target.removeEventListener('data', handler);
   }
 
-  /** 阻止外部链接在阅读帧内导航,改由系统浏览器打开(由上层处理)。 */
+  /**
+   * 书内链接:阻止 foliate 默认导航(它会把 href 压进自己的历史),把 href
+   * 面向上层,由上层统一导航并送给本项目的历史。
+   */
+  private wireInternalLinkHandling(): void {
+    const handler: EventListener = (event) => {
+      event.preventDefault();
+      const href = (event as CustomEvent<{ href?: string }>).detail?.href;
+      if (typeof href === 'string') {
+        for (const listener of this.internalLinkListeners) {
+          listener(href);
+        }
+      }
+    };
+    this.element.addEventListener('link', handler);
+    this.internalLinkCleanup = () => this.element.removeEventListener('link', handler);
+  }
+
+  /** 阻止外部链接在阅读帧内导航,把目标 URL 面向上层,由上层交给系统浏览器。 */
   private wireExternalLinkBlocking(): void {
     const handler: EventListener = (event) => {
       event.preventDefault();
+      const href = (event as CustomEvent<{ href?: string }>).detail?.href;
+      if (typeof href === 'string') {
+        for (const listener of this.externalLinkListeners) {
+          listener(href);
+        }
+      }
     };
     this.element.addEventListener('external-link', handler);
     this.externalLinkCleanup = () =>
@@ -151,5 +215,6 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   private contentCleanup: (() => void) | null = null;
+  private internalLinkCleanup: (() => void) | null = null;
   private externalLinkCleanup: (() => void) | null = null;
 }
