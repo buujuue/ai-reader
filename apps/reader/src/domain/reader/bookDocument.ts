@@ -64,6 +64,12 @@ export interface BookDocument {
   /** 订阅书内点击的外部链接,收到目标 URL。返回取消订阅函数。 */
   onExternalLink(listener: (href: string) => void): () => void;
 
+  /** 读取当前已加载的内容文档(iframe 内),用于附加阅读输入监听器。 */
+  getContentDocs(): readonly Document[];
+
+  /** 订阅新内容文档的创建(随翻页/加载出现),用于持续附加输入监听器。 */
+  onContentCreate(listener: (doc: Document) => void): () => void;
+
   /** 订阅阅读位置变化。返回取消订阅函数。 */
   onLocationChange(listener: (location: ReadingLocation) => void): () => void;
 

@@ -52,6 +52,8 @@ interface ExtendedRenderer {
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
   setStyles(styles: string): void;
+  /** 读取当前已排布的内容文档。 */
+  getContents?(): Array<{ doc?: Document }>;
 }
 
 /** foliate 目录节点到项目 TocItem 的映射。 */
@@ -220,6 +222,25 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   onContentData(listener: (type: string, data: string) => string): () => void {
     this.contentListeners.add(listener);
     return () => this.contentListeners.delete(listener);
+  }
+
+  getContentDocs(): readonly Document[] {
+    const contents = this.element.renderer?.getContents?.() ?? [];
+    return contents
+      .map((content: { doc?: Document }) => content.doc)
+      .filter((doc: Document | undefined): doc is Document => !!doc);
+  }
+
+  onContentCreate(listener: (doc: Document) => void): () => void {
+    const handler: EventListener = (event) => {
+      const detail = (event as CustomEvent<{ doc?: Document }>).detail;
+      if (detail?.doc) {
+        listener(detail.doc);
+      }
+    };
+    // foliate-view 在每次内容文档加载后派发 `load` 事件(随章节翻页持续出现)。
+    this.element.addEventListener('load', handler);
+    return () => this.element.removeEventListener('load', handler);
   }
 
   close(): void {

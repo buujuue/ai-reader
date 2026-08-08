@@ -77,6 +77,12 @@ function createFakeHost(): FakeHost {
         if (index >= 0) contentListeners.splice(index, 1);
       };
     },
+    getContentDocs() {
+      return [];
+    },
+    onContentCreate() {
+      return () => undefined;
+    },
     async *search(options: import('./search').SearchOptions) {
       yield { kind: 'progress', progress: 1 } as const;
       yield { kind: 'match', match: { cfi: 'epubcfi(/6/1)', excerpt: { pre: '', match: options.query, post: '' } } } as const;

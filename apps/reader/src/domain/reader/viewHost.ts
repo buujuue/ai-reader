@@ -41,6 +41,18 @@ export interface FoliateViewHost {
    * 用于清洗不可信 EPUB 内容。返回取消订阅函数。
    */
   onContentData(listener: (type: string, data: string) => string): () => void;
+
+  /**
+   * 读取当前已加载的内容文档(iframe 内)。用于给阅读内容附加输入监听器。
+   * 渲染器尚未就绪时返回空数组。
+   */
+  getContentDocs(): readonly Document[];
+
+  /**
+   * 订阅新内容文档的创建(随章节翻页/加载而出现)。
+   * 用于把输入监听器附加到每个新内容文档上。返回取消订阅函数。
+   */
+  onContentCreate(listener: (doc: Document) => void): () => void;
   /**
    * 应用排版设置(字体、字号、行距、页边距、主题、分页/滚动)。
    * 只注入固定映射生成的 CSS 与渲染器 attribute,不放开安全边界。

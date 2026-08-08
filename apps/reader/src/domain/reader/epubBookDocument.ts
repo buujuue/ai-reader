@@ -118,6 +118,14 @@ export class EpubBookDocument implements BookDocument {
     return () => this.externalLinkListeners.delete(listener);
   }
 
+  getContentDocs(): readonly Document[] {
+    return this.host?.getContentDocs() ?? [];
+  }
+
+  onContentCreate(listener: (doc: Document) => void): () => void {
+    return this.host?.onContentCreate(listener) ?? (() => undefined);
+  }
+
   onLocationChange(listener: (location: ReadingLocation) => void): () => void {
     this.locationListeners.add(listener);
     return () => this.locationListeners.delete(listener);

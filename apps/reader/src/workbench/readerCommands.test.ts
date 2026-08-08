@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { COMMAND_IDS, CommandRegistry } from '../commands/commandRegistry';
+import { COMMAND_IDS, CommandRegistry, type CommandId } from '../commands/commandRegistry';
 import { createInMemoryImportRepository, addInMemorySource } from '../domain/library/inMemoryImportRepository';
 import { buildEpub } from '../domain/library/epub/zipWriter';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
+import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
 import { mountViewDocument, registerReaderCommands } from './readerCommands';
 import { useWorkspaceStore } from './workspaceStore';
@@ -35,6 +36,12 @@ function createFakeViewHost(): FoliateViewHost {
       return () => undefined;
     },
     onContentData() {
+      return () => undefined;
+    },
+    getContentDocs() {
+      return [];
+    },
+    onContentCreate() {
       return () => undefined;
     },
     async *search() {},
@@ -566,5 +573,88 @@ describe('Reader 排版命令', () => {
     const last = host.applyTypography.mock.calls.at(-1)![0];
     expect(last.fontSize).toBe(21);
     expect(viewId).toBeTruthy();
+  });
+});
+describe('统一阅读输入 -> 翻页 Command -> 渲染器(工单 #12)', () => {
+  let registry: CommandRegistry;
+  let importRepository: ReturnType<typeof createInMemoryImportRepository>;
+  let workspaceRepository: ReturnType<typeof createInMemoryWorkspaceRepository>;
+  let nextSpy: ReturnType<typeof vi.fn<() => Promise<void>>>;
+  let prevSpy: ReturnType<typeof vi.fn<() => Promise<void>>>;
+
+  beforeEach(async () => {
+    useWorkspaceStore.getState().resetToDefault();
+    useReaderRuntime.setState({ documents: new Map() });
+    nextSpy = vi.fn<() => Promise<void>>();
+    prevSpy = vi.fn<() => Promise<void>>();
+    const host = {
+      ...createFakeViewHost(),
+      next: nextSpy,
+      prev: prevSpy,
+    };
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, '演示书/示例书.epub', buildEpub({ title: '示例书' }));
+    importRepository = createInMemoryImportRepository(sources);
+    const staged = await importRepository.stageImport('演示书/示例书.epub');
+    const bytes = await importRepository.readStagedFile(staged);
+    const { inspectEpub } = await import('../domain/library/epub/epubInspector');
+    const { metadata } = await inspectEpub(bytes);
+    const material = await importRepository.commitImport(staged, metadata);
+    workspaceRepository = createInMemoryWorkspaceRepository();
+    registry = new CommandRegistry();
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => host,
+    });
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const openedViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(openedViewId)!;
+    await book.open(globalThis.document.createElement('div'));
+  });
+
+  it('键盘、滚轮、点击与滑动都经同一组 Command ID 到达渲染器', async () => {
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const pending: Array<Promise<unknown>> = [];
+
+    const controller = new ReadingInputController(
+      {
+        nextCommandId: COMMAND_IDS.readerNextPage,
+        prevCommandId: COMMAND_IDS.readerPrevPage,
+        execute: (commandId, targetViewId) => {
+          pending.push(registry.execute(commandId as CommandId, targetViewId));
+        },
+        getFlow: () => 'paginated',
+        wheelCooldownMs: 0,
+      },
+      viewId,
+    );
+
+    // 键盘
+    controller.handleKey({ key: 'ArrowRight', flow: 'paginated', hasModifier: false });
+    controller.handleKey({ key: 'PageUp', flow: 'paginated', hasModifier: false });
+    // 滚轮
+    controller.handle({ type: 'wheel', deltaX: 0, deltaY: 100 });
+    controller.handle({ type: 'wheel', deltaX: 0, deltaY: -100 });
+    // 点击左右区域
+    controller.handle({ type: 'click', clientX: 50, clientWidth: 900, target: null });
+    controller.handle({ type: 'click', clientX: 850, clientWidth: 900, target: null });
+    // 触摸水平滑动
+    controller.handle({ type: 'touch', phase: 'start', x: 300, y: 200, clientWidth: 900, timeStamp: 0 });
+    controller.handle({ type: 'touch', phase: 'end', x: 100, y: 205, clientWidth: 900, timeStamp: 100 });
+    controller.handle({ type: 'touch', phase: 'start', x: 100, y: 200, clientWidth: 900, timeStamp: 0 });
+    controller.handle({ type: 'touch', phase: 'end', x: 300, y: 205, clientWidth: 900, timeStamp: 100 });
+    // 轻触(无滑动位移)按左右区域翻页,证明触摸也走同一 Command。
+    controller.handle({ type: 'touch', phase: 'start', x: 60, y: 200, clientWidth: 900, timeStamp: 0 });
+    controller.handle({ type: 'touch', phase: 'end', x: 62, y: 201, clientWidth: 900, timeStamp: 60 });
+    controller.handle({ type: 'touch', phase: 'start', x: 840, y: 200, clientWidth: 900, timeStamp: 0 });
+    controller.handle({ type: 'touch', phase: 'end', x: 838, y: 201, clientWidth: 900, timeStamp: 60 });
+
+    await Promise.all(pending);
+
+    // 前翻:键盘ArrowRight、滚轮下、点击右侧、滑左、右轻触 = 5 次。
+    // 后翻:PageUp、滚轮上、点击左侧、滑右、左轻触 = 5 次。
+    expect(prevSpy).toHaveBeenCalledTimes(5);
+    expect(nextSpy).toHaveBeenCalledTimes(5);
   });
 });

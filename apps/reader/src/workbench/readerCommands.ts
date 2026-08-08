@@ -181,15 +181,15 @@ export function registerReaderCommands(
     }
   });
 
-  registry.register(COMMAND_IDS.readerNextPage, async () => {
-    const viewId = getActiveViewId();
+  registry.register(COMMAND_IDS.readerNextPage, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     if (!viewId) return;
     navigationIntents.set(viewId, 'replace');
     await useReaderRuntime.getState().getDocument(viewId)?.next();
   });
 
-  registry.register(COMMAND_IDS.readerPrevPage, async () => {
-    const viewId = getActiveViewId();
+  registry.register(COMMAND_IDS.readerPrevPage, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     if (!viewId) return;
     navigationIntents.set(viewId, 'replace');
     await useReaderRuntime.getState().getDocument(viewId)?.prev();
