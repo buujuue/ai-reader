@@ -1,6 +1,7 @@
 import type { PdfFitMode } from '../readingLocation';
 import type { PdfDocumentProxy, PdfJsLib, PdfPage } from './pdfLibrary';
 import { PdfPageRenderer, type PdfPageRasterizer } from './pdfPageRenderer';
+import type { PdfHighlight } from './pdfTextAnchor';
 
 /** 解码页面对象缓存上限(LRU)。解码对象比画布位图廉价,但超出后仍应 `cleanup()` 回收。 */
 export const DEFAULT_MAX_DECODED_PAGES = 16;
@@ -14,6 +15,8 @@ const PAGE_GAP = 20;
 export interface PdfRendererCallbacks {
   onPageChange: (page: number) => void;
   onScroll: (scrollTop: number, page: number) => void;
+  /** 某一页已渲染完成(分页或滚动窗口内),供上层重绘该页高亮。 */
+  onPageRendered?: (page: number) => void;
 }
 
 export interface PdfRendererOptions {
@@ -109,6 +112,16 @@ export class PdfRenderer {
     return this.container.scrollTop;
   }
 
+  /** 读取指定页的渲染器(仅当该页已挂载时存在)。 */
+  getPageRenderer(pageNumber: number): PdfPageRenderer | null {
+    return this.pageRenderers.get(pageNumber) ?? null;
+  }
+
+  /** 把指定页面的高亮矩形(归一化)交给该页渲染器绘制。 */
+  setPageHighlights(pageNumber: number, highlights: PdfHighlight[]): void {
+    this.getPageRenderer(pageNumber)?.setHighlights(highlights);
+  }
+
   /** 挂载并开始监听容器尺寸。 */
   async mount(): Promise<void> {
     this.resizeObserver = new ResizeObserver(() => this.relayout());
@@ -187,6 +200,7 @@ export class PdfRenderer {
     renderer.element.style.width = `${viewport.width}px`;
     renderer.element.style.height = `${viewport.height}px`;
     await renderer.render(page, viewport, this.getDpr());
+    this.callbacks.onPageRendered?.(this.currentPage);
   }
 
   private async renderScrolled(clientWidth: number): Promise<void> {
@@ -257,6 +271,10 @@ export class PdfRenderer {
     // 当前页码由调用方(setScrollTop / goToPage)在 handleScroll 中维护,这里不回调,
     // 避免 relayout → renderScrolled → handleScroll → relayout 的无限递归。
     await Promise.all(renderPromises);
+    // 滚动窗口渲染完成后逐一重绘各页高亮,保证离开窗口再回来时批注/搜索高亮不丢失。
+    for (const layout of visible) {
+      this.callbacks.onPageRendered?.(layout.pageNumber);
+    }
   }
 
   /** 滚动模式下页面显示缩放:非 actual 一律按容器宽度适配。 */

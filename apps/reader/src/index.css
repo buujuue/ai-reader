@@ -20,3 +20,23 @@ body {
   background-color: #09090b;
   color: #fafafa;
 }
+
+/* PDF 文本层:透明的可选择/复制文本,与 Canvas 正交对齐(工单 #15)。 */
+.pdf-text-layer {
+  z-index: 1;
+  color: transparent;
+}
+
+.pdf-text-layer .pdf-text-span {
+  user-select: text;
+}
+
+/* PDF 高亮覆盖层:置于文本层之上,半透明表现批注/搜索命中。 */
+.pdf-highlight-layer {
+  z-index: 2;
+}
+
+.pdf-renderer {
+  -webkit-user-select: text;
+  user-select: text;
+}

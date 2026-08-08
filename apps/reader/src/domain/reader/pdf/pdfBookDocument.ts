@@ -13,6 +13,14 @@ import { loadPdfLib } from './pdfLibrary';
 import type { PdfPageRasterizer } from './pdfPageRenderer';
 import { createConcurrentRangeTransport, type RangeFileLike } from './pdfRangeTransport';
 import { PdfRenderer } from './pdfRenderer';
+import { searchPdf } from './pdfSearch';
+import {
+  decodePdfTextAnchor,
+  encodePdfTextAnchor,
+  normalizeRectFromRangeRect,
+  type PdfHighlight,
+  type PdfNormalizedRect,
+} from './pdfTextAnchor';
 
 export interface PdfBookDocumentOptions {
   /** PDF 字节内容。 */
@@ -74,6 +82,12 @@ export class PdfBookDocument implements BookDocument {
   private currentLocation: PdfReadingLocationLike | null = null;
   private locationListeners = new Set<(location: ReadingLocation) => void>();
   private toc: Toc | null = null;
+  /** 已绘制的高亮批注(按锚点值 → 页码 + 归一化矩形)。 */
+  private annotationHighlights = new Map<string, { page: number; rect: PdfHighlight['rect']; color: string }>();
+  /** 搜索命中高亮(按页码聚合)。 */
+  private searchHighlights = new Map<number, PdfHighlight[]>();
+  /** 高亮覆盖层点击监听器。 */
+  private showAnnotationListeners = new Set<(value: string) => void>();
 
   constructor(options: PdfBookDocumentOptions) {
     this.bytes = options.bytes;
@@ -121,6 +135,7 @@ export class PdfBookDocument implements BookDocument {
       {
         onPageChange: (page) => this.handlePageChange(page),
         onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
+        onPageRendered: (page) => this.redrawPage(page),
       },
     );
     this.renderer = renderer;
@@ -131,6 +146,7 @@ export class PdfBookDocument implements BookDocument {
     );
     this.applyTheme(this.typography.theme);
     await renderer.mount();
+    this.wireHighlightClick();
   }
 
   getLocation(): ReadingLocation | null {
@@ -207,13 +223,67 @@ export class PdfBookDocument implements BookDocument {
     this.notifyLocation();
   }
 
-  search(_options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
-    // PDF 文本选择与搜索属于后续切片(#15);当前返回空生成器。
-    return (async function* searchPdf() {})();
+  /**
+   * 跳到某 PDF 文本锚点:分页模式转到对应页;滚动模式额外滚动到命中矩形,
+   * 使搜索结果/批注跳转落到正文对应位置而非页顶。
+   */
+  async goToPdfAnchor(value: string): Promise<void> {
+    const loc = decodePdfTextAnchor(value);
+    if (!loc || !this.renderer) {
+      return;
+    }
+    const current = this.currentLocation;
+    const zoom = current?.zoom ?? this.renderer.getViewportState().zoom;
+    const fit = current?.fit ?? this.renderer.getViewportState().fit;
+    this.goToLocationBase(loc.page, 0, zoom, fit);
+    await this.renderer.goToPage(loc.page);
+    if (this.typography.flow !== 'paginated' && this.container) {
+      // 滚动模式:把命中矩形顶部滚动到容器顶部附近(留出少量边距)。
+      const pageRenderer = this.renderer.getPageRenderer(loc.page);
+      const pageElement = pageRenderer?.element;
+      if (pageElement) {
+        const pageTop = pageElement.offsetTop;
+        const target = pageTop + loc.rect.y * pageElement.offsetHeight - 24;
+        this.renderer.setScrollTop(Math.max(0, target));
+      }
+    }
+    this.notifyLocation();
+  }
+
+  /** 写入阅读位置而不触发渲染(供 goToPdfAnchor 组合使用)。 */
+  private goToLocationBase(page: number, scrollTop: number, zoom: number, fit: PdfFitModeLike): void {
+    this.currentLocation = { kind: 'pdf', page, scrollTop, zoom, fit };
+  }
+
+  search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
+    if (!this.pdf) {
+      return (async function* searchNoDoc() {})();
+    }
+    return this.searchWithHighlights(options);
+  }
+
+  /** 搜索并边产出边把命中画到对应页(命中矩形即锚点矩形)。 */
+  private async *searchWithHighlights(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
+    if (!this.pdf) {
+      return;
+    }
+    for await (const event of searchPdf(this.pdf, options)) {
+      if (event.kind === 'match') {
+        const loc = decodePdfTextAnchor(event.match.cfi);
+        if (loc) {
+          const existing = this.searchHighlights.get(loc.page) ?? [];
+          existing.push({ rect: loc.rect, color: '#2196f3' });
+          this.searchHighlights.set(loc.page, existing);
+          this.redrawPage(loc.page);
+        }
+      }
+      yield event;
+    }
   }
 
   clearSearch(): void {
-    // PDF 无搜索高亮(#15 实现)。
+    this.searchHighlights.clear();
+    this.redrawHighlights();
   }
 
   applyTypography(settings: ReadingTypography): void {
@@ -230,24 +300,43 @@ export class PdfBookDocument implements BookDocument {
     }
   }
 
-  getCFI(): string {
-    return '';
+  getCFI(_index: number, range: Range): string {
+    // 把选区 Range 换算成「页码 + 归一化矩形」的 PDF 文本锚点。
+    const pageNumber = this.currentPageNumber();
+    const rect = this.rangeToNormalizedRect(range);
+    if (!rect) {
+      return '';
+    }
+    return encodePdfTextAnchor({ page: pageNumber, rect });
   }
 
   getCurrentIndex(): number | null {
-    return null;
+    return this.renderer?.getCurrentPage() ?? null;
   }
 
-  addAnnotation(): void {
-    // PDF 批注属后续切片(#16)。
+  addAnnotation(annotation: { value: string; color: string }): void {
+    const loc = decodePdfTextAnchor(annotation.value);
+    if (!loc) {
+      return;
+    }
+    this.annotationHighlights.set(annotation.value, {
+      page: loc.page,
+      rect: loc.rect,
+      color: annotation.color,
+    });
+    this.redrawHighlights();
   }
 
-  removeAnnotation(): void {
-    // PDF 批注属后续切片(#16)。
+  removeAnnotation(value: string): void {
+    if (!this.annotationHighlights.delete(value)) {
+      return;
+    }
+    this.redrawHighlights();
   }
 
-  onShowAnnotation(): () => void {
-    return () => undefined;
+  onShowAnnotation(listener: (value: string) => void): () => void {
+    this.showAnnotationListeners.add(listener);
+    return () => this.showAnnotationListeners.delete(listener);
   }
 
   onInternalLink(): () => void {
@@ -259,10 +348,15 @@ export class PdfBookDocument implements BookDocument {
   }
 
   getContentDocs(): readonly Document[] {
-    return [];
+    return this.container && this.container.ownerDocument
+      ? [this.container.ownerDocument]
+      : [];
   }
 
-  onContentCreate(): () => void {
+  onContentCreate(listener: (doc: Document) => void): () => void {
+    if (this.container && this.container.ownerDocument) {
+      listener(this.container.ownerDocument);
+    }
     return () => undefined;
   }
 
@@ -305,13 +399,103 @@ export class PdfBookDocument implements BookDocument {
       void this.pdf.destroy().catch(() => undefined);
       this.pdf = null;
     }
+    this.container?.removeEventListener('click', this.handleContainerClick);
     this.container = null;
     this.currentLocation = null;
     this.locationListeners.clear();
+    this.showAnnotationListeners.clear();
+    this.annotationHighlights.clear();
+    this.searchHighlights.clear();
     this.toc = null;
   }
 
   // ---- 内部 ----
+
+  /** 把选区 Range 的显示矩形换算成页面内归一化矩形(用于构建文本锚点)。 */
+  private rangeToNormalizedRect(range: Range): PdfNormalizedRect | null {
+    const renderer = this.renderer?.getPageRenderer(this.currentPageNumber());
+    const pageElement = renderer?.element;
+    if (!pageElement) {
+      return null;
+    }
+    const rangeRect = range.getBoundingClientRect();
+    const pageRect = pageElement.getBoundingClientRect();
+    return normalizeRectFromRangeRect(rangeRect, pageRect);
+  }
+
+  /** 当前页码(优先已记录位置,其次渲染器)。 */
+  private currentPageNumber(): number {
+    return this.currentLocation?.page ?? this.renderer?.getCurrentPage() ?? 1;
+  }
+
+  /** 把某页的批注 + 搜索高亮合并后交给渲染器绘制。 */
+  private redrawPage(page: number): void {
+    const highlights: PdfHighlight[] = [];
+    for (const annotation of this.annotationHighlights.values()) {
+      if (annotation.page === page) {
+        highlights.push({ rect: annotation.rect, color: annotation.color });
+      }
+    }
+    const search = this.searchHighlights.get(page);
+    if (search) {
+      highlights.push(...search);
+    }
+    this.renderer?.setPageHighlights(page, highlights);
+  }
+
+  /** 重绘全部已挂载页面的高亮(批注 + 搜索)。 */
+  private redrawHighlights(): void {
+    if (!this.renderer) {
+      return;
+    }
+    const pages = new Set<number>();
+    for (const annotation of this.annotationHighlights.values()) {
+      pages.add(annotation.page);
+    }
+    for (const page of this.searchHighlights.keys()) {
+      pages.add(page);
+    }
+    // 始终重绘当前页,确保移除最后一条批注/清空搜索后覆盖层被清除。
+    pages.add(this.renderer.getCurrentPage());
+    for (const page of pages) {
+      this.redrawPage(page);
+    }
+  }
+
+  /** 接线容器点击:命中高亮矩形时按锚点值通知订阅者(打开笔记编辑器)。 */
+  private wireHighlightClick(): void {
+    this.container?.addEventListener('click', this.handleContainerClick);
+  }
+
+  private handleContainerClick = (event: MouseEvent): void => {
+    if (this.showAnnotationListeners.size === 0 || !this.container) {
+      return;
+    }
+    const pageNumber = this.currentPageNumber();
+    const renderer = this.renderer?.getPageRenderer(pageNumber);
+    const pageElement = renderer?.element;
+    if (!pageElement) {
+      return;
+    }
+    const pageRect = pageElement.getBoundingClientRect();
+    if (pageRect.width <= 0 || pageRect.height <= 0) {
+      return;
+    }
+    const x = (event.clientX - pageRect.left) / pageRect.width;
+    const y = (event.clientY - pageRect.top) / pageRect.height;
+    for (const [value, annotation] of this.annotationHighlights) {
+      if (annotation.page !== pageNumber) {
+        continue;
+      }
+      const r = annotation.rect;
+      if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) {
+        for (const listener of this.showAnnotationListeners) {
+          listener(value);
+        }
+        return;
+      }
+    }
+  };
 
   private async readMetadata(document: PdfDocumentProxy): Promise<void> {
     const { info, metadata } = await document.getMetadata();
@@ -337,6 +521,7 @@ export class PdfBookDocument implements BookDocument {
       fit: base.fit,
     };
     this.notifyLocation();
+    this.redrawPage(page);
   }
 
   private handleScroll(scrollTop: number, page: number): void {

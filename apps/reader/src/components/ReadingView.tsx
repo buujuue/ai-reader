@@ -68,8 +68,14 @@ export function ReadingView({ viewId }: { viewId: string }) {
     );
 
     // 把输入监听器附加到每个内容文档(含后续随章节加载出现的新文档)。
+    // PDF 的内容文档就是应用主文档:由窗口级键盘与 PDF 渲染器自身处理滚轮/点击,
+    // 不再附加会抢占全局输入的 ReadingInputController,避免滚轮/点击劫持整个工作台。
     const detachList: Array<() => void> = [];
+    const isTopLevelDocument = (doc: Document) => doc.defaultView === window;
     const attachDoc = (doc: Document) => {
+      if (isTopLevelDocument(doc)) {
+        return;
+      }
       detachList.push(controller.attach(doc));
     };
     for (const doc of book.getContentDocs()) {

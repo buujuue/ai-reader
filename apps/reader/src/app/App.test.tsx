@@ -568,4 +568,48 @@ describe('导入并阅读固定版式 PDF', () => {
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
     });
   });
+
+  it('带文字层的 PDF 支持当前材料搜索并跳转到对应页', async () => {
+    // 给伪 PDF 首页注入带文字层的文本,使搜索能真正命中。
+    const { makeFakePage } = await import('../domain/reader/pdf/pdfTestFakes');
+    const textPage = makeFakePage({ width: 200, height: 300 }, [
+      { str: '这段是关键词正文', transform: [10, 0, 0, 10, 20, 30], width: 60 },
+    ]);
+    const pdfDocument = makeFakeDocument(3);
+    (pdfDocument.getPage as ReturnType<typeof vi.fn>).mockImplementation(async (n: number) =>
+      n === 1 ? textPage : makeFakePage({ width: 200, height: 300 }, []),
+    );
+
+    const withTextServices = createAppServices({
+      workspaceRepository: repository,
+      importRepository: createInMemoryImportRepository(
+        new Map([['演示书/示例PDF.pdf', new TextEncoder().encode('%PDF-1.7\n')]]),
+      ),
+      filePicker: createInMemoryFilePicker(['演示书/示例PDF.pdf']),
+      viewHostFactory: () => createFakeViewHost(),
+      pdfLib: makeFakeLib(pdfDocument),
+      pdfRasterize: makeFakeRasterizer(),
+    });
+    useReaderRuntime.setState({ documents: new Map() });
+
+    const user = userEvent.setup();
+    renderApp(withTextServices);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByText('示例 PDF')).toBeInTheDocument());
+    await user.click(await screen.findByRole('button', { name: /打开 示例 PDF/ }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /示例 PDF/ })).toBeInTheDocument());
+
+    // 触发 Ctrl+F 打开搜索栏并输入关键词;搜索命中后应产生结果。
+    await user.keyboard('{Control>}f{/Control}');
+    const input = await screen.findByLabelText('搜索关键词');
+    await user.type(input, '关键词');
+    await waitFor(() => {
+      expect(screen.getByRole('search')).toBeInTheDocument();
+    });
+    // 带文字层的 PDF 首页应产生命中显示(共 1 个命中)。
+    await waitFor(() => {
+      expect(screen.getByRole('search')).toHaveTextContent(/\/1\b/);
+    });
+  });
 });

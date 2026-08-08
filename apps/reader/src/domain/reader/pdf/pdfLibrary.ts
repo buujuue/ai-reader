@@ -26,11 +26,23 @@ export interface PdfRenderTask {
 /** PDF.js 文本内容项(用于文本层;扫描页无文字层时为空)。 */
 export interface PdfTextItem {
   readonly str: string;
+  /** 文本空间到 PDF 用户空间的 2D 仿射变换 [a,b,c,d,e,f],用于文本层定位。 */
+  readonly transform?: number[];
+  /** 该文本片段的渲染宽度(PDF 用户空间单位)。 */
+  readonly width?: number;
+  /** 该文本片段的高度(PDF 用户空间单位)。 */
+  readonly height?: number;
+  /** 字体名(文本层样式缓存键)。 */
+  readonly fontName?: string;
+  /** 是否在片段后换行(文本层据此插入 <br>)。 */
+  readonly hasEOL?: boolean;
 }
 
 /** PDF.js 文本内容。 */
 export interface PdfTextContent {
   readonly items: PdfTextItem[];
+  /** 字体样式映射(按 fontName 索引),用于文本层定位。 */
+  readonly styles?: Record<string, { fontFamily?: string; vertical?: boolean }>;
 }
 
 /** PDF.js 页面对象(窄接口)。 */

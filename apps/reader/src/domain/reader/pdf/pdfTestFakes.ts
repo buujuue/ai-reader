@@ -20,6 +20,16 @@ export interface FakePageSpec {
   height: number;
 }
 
+/** 伪页面文本项(带几何,供文本层/搜索测试)。 */
+export interface FakeTextItem {
+  str: string;
+  transform?: number[];
+  width?: number;
+  height?: number;
+  fontName?: string;
+  hasEOL?: boolean;
+}
+
 /** 可追踪的渲染任务(可取消、可标记已取消)。 */
 export interface FakeRenderTask extends PdfRenderTask {
   readonly cancelled: boolean;
@@ -53,14 +63,14 @@ export function makePendingRenderTask(): FakeRenderTask {
 }
 
 /** 构造伪 PDF 页面:getViewport 按 scale 线性放大,渲染/文本层为安全空实现。 */
-export function makeFakePage(spec: FakePageSpec): PdfPage {
+export function makeFakePage(spec: FakePageSpec, textItems: FakeTextItem[] = []): PdfPage {
   return {
     getViewport(options: { scale: number }): PdfViewport {
       return { width: spec.width * options.scale, height: spec.height * options.scale };
     },
     render: vi.fn((): PdfRenderTask => makeFakeRenderTask()),
-    streamTextContent: vi.fn(async () => ({ items: [] })),
-    getTextContent: vi.fn(async () => ({ items: [] })),
+    streamTextContent: vi.fn(async () => ({ items: textItems, styles: {} })),
+    getTextContent: vi.fn(async () => ({ items: textItems, styles: {} })),
     getAnnotations: vi.fn(async () => []),
     cleanup: vi.fn(),
   };

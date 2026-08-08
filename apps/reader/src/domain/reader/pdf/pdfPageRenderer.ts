@@ -1,4 +1,6 @@
 import type { PdfPage, PdfRenderTask, PdfViewport } from './pdfLibrary';
+import { buildPdfTextLayer, type PositionedTextSpan } from './pdfTextLayer';
+import type { PdfHighlight } from './pdfTextAnchor';
 
 /** 页面光栅化函数:把某一页以给定缩放绘制到 canvas。生产用 PDF.js page.render,
  *  测试注入伪实现以在无真实 canvas 2d 环境下验证协调逻辑。返回渲染任务(可取消)。 */
@@ -37,12 +39,16 @@ export class PdfPageRenderer {
   readonly element: HTMLElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly textLayer: HTMLElement;
+  private readonly highlightLayer: HTMLElement;
 
   private page: PdfPage | null = null;
   private displayScale = 1;
+  private pageBaseDims = { width: 0, height: 0 };
   private renderTask: PdfRenderTask | null = null;
   private generation = 0;
   private disposed = false;
+  /** 本页待绘制的高亮矩形(归一化)。重渲染后据此重绘覆盖层。 */
+  private pendingHighlights: PdfHighlight[] = [];
 
   constructor(
     pageNumber: number,
@@ -51,14 +57,28 @@ export class PdfPageRenderer {
     this.element = document.createElement('div');
     this.element.className = 'pdf-page';
     this.element.dataset.page = String(pageNumber);
+    this.element.style.position = 'relative';
 
     this.canvas = document.createElement('canvas');
     this.canvas.setAttribute('aria-hidden', 'true');
+    this.canvas.style.position = 'absolute';
+    this.canvas.style.top = '0';
+    this.canvas.style.left = '0';
     this.element.appendChild(this.canvas);
 
     this.textLayer = document.createElement('div');
     this.textLayer.className = 'pdf-text-layer';
     this.element.appendChild(this.textLayer);
+
+    this.highlightLayer = document.createElement('div');
+    this.highlightLayer.className = 'pdf-highlight-layer';
+    this.highlightLayer.style.position = 'absolute';
+    this.highlightLayer.style.top = '0';
+    this.highlightLayer.style.left = '0';
+    this.highlightLayer.style.width = '100%';
+    this.highlightLayer.style.height = '100%';
+    this.highlightLayer.style.pointerEvents = 'none';
+    this.element.appendChild(this.highlightLayer);
   }
 
   /**
@@ -70,7 +90,9 @@ export class PdfPageRenderer {
       return;
     }
     this.page = page;
-    this.displayScale = viewport.width / (page.getViewport({ scale: 1 }).width || 1);
+    const base = page.getViewport({ scale: 1 });
+    this.pageBaseDims = { width: base.width, height: base.height };
+    this.displayScale = viewport.width / (base.width || 1);
 
     const generation = ++this.generation;
     if (this.renderTask) {
@@ -128,17 +150,76 @@ export class PdfPageRenderer {
     }
 
     // 文本层:扫描页无文字层时 streamTextContent 返回空,仍正常显示页面图像。
+    this.textLayer.replaceChildren();
+    this.textLayer.style.position = 'absolute';
+    this.textLayer.style.top = '0';
+    this.textLayer.style.left = '0';
+    this.textLayer.style.width = `${viewport.width}px`;
+    this.textLayer.style.height = `${viewport.height}px`;
     try {
       const textContent = await page.streamTextContent();
-      for (const item of textContent.items) {
-        if (item.str) {
-          const span = document.createElement('span');
-          span.textContent = item.str;
-          this.textLayer.appendChild(span);
-        }
-      }
+      const items = textContent.items
+        .filter((item) => item.transform !== undefined)
+        .map((item) => {
+          const geometry: { str: string; transform: number[]; width?: number; height?: number; hasEOL?: boolean } = {
+            str: item.str,
+            transform: item.transform as number[],
+          };
+          if (item.width !== undefined) geometry.width = item.width;
+          if (item.height !== undefined) geometry.height = item.height;
+          if (item.hasEOL !== undefined) geometry.hasEOL = item.hasEOL;
+          return geometry;
+        });
+      buildPdfTextLayer({
+        pageElement: this.textLayer,
+        items,
+        pageDims: this.pageBaseDims,
+        scale: this.displayScale,
+      });
     } catch {
       // 文本层失败不影响页面图像显示。
+    }
+
+    // 重渲染后按归一化矩形重绘批注/搜索高亮,保证缩放或适配变化后仍对齐正文。
+    this.redrawHighlights();
+  }
+
+  /** 设置本页待绘制的高亮矩形列表(归一化),并立即重绘覆盖层。 */
+  setHighlights(highlights: PdfHighlight[]): void {
+    this.pendingHighlights = highlights;
+    this.redrawHighlights();
+  }
+
+  /** 读取本页当前的显示尺寸(供上层换算归一化矩形)。 */
+  getDisplayDims(): { displayWidth: number; displayHeight: number } {
+    return {
+      displayWidth: this.canvas.style.width ? parseFloat(this.canvas.style.width) || 0 : 0,
+      displayHeight: this.canvas.style.height ? parseFloat(this.canvas.style.height) || 0 : 0,
+    };
+  }
+
+  /** 按归一化矩形重绘高亮覆盖层(幂等:先清空再绘制)。 */
+  private redrawHighlights(): void {
+    this.highlightLayer.replaceChildren();
+    if (this.pendingHighlights.length === 0) {
+      return;
+    }
+    const { displayWidth, displayHeight } = this.getDisplayDims();
+    if (displayWidth <= 0 || displayHeight <= 0) {
+      return;
+    }
+    for (const { rect, color } of this.pendingHighlights) {
+      const el = document.createElement('div');
+      el.className = 'pdf-highlight';
+      el.style.position = 'absolute';
+      el.style.left = `${(rect.x * displayWidth).toFixed(2)}px`;
+      el.style.top = `${(rect.y * displayHeight).toFixed(2)}px`;
+      el.style.width = `${(rect.width * displayWidth).toFixed(2)}px`;
+      el.style.height = `${(rect.height * displayHeight).toFixed(2)}px`;
+      el.style.backgroundColor = color;
+      el.style.opacity = '0.35';
+      el.style.pointerEvents = 'none';
+      this.highlightLayer.appendChild(el);
     }
   }
 

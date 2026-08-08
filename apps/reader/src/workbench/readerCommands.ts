@@ -15,6 +15,7 @@ import { inspectPdf } from '../domain/reader/pdf/pdfInspector';
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import { loadPdfLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
+import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import type { ReadingTypography } from '../domain/reader/typography';
 import { resolveTypography } from '../domain/reader/typography';
 import { inspectEpub } from '../domain/library/epub/epubInspector';
@@ -522,7 +523,22 @@ async function jumpToCfi(
   const document = useReaderRuntime.getState().getDocument(viewId);
   if (!document) return;
   navigationIntents.set(viewId, 'push');
-  await document.goToLocation({ kind: 'epub', cfi });
+  if (isPdfTextAnchor(cfi)) {
+    if (document instanceof PdfBookDocument) {
+      await document.goToPdfAnchor(cfi);
+    } else {
+      const loc = decodePdfTextAnchor(cfi);
+      await document.goToLocation({
+        kind: 'pdf',
+        page: loc?.page ?? 1,
+        scrollTop: 0,
+        zoom: 100,
+        fit: 'width',
+      });
+    }
+  } else {
+    await document.goToLocation({ kind: 'epub', cfi });
+  }
   await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
 }
 
