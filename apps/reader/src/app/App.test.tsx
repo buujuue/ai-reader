@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
-import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
+import {
+  DEFAULT_WORKSPACE_STATE,
+  WORKSPACE_STATE_SCHEMA_VERSION,
+} from '../domain/workspace/workspaceState';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { createAppServices, type AppServices } from './bootstrap';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
@@ -49,6 +52,7 @@ function createFakeViewHost(): FoliateViewHost {
     },
     async *search() {},
     clearSearch() {},
+    applyTypography() {},
     close() {},
   };
 }
@@ -306,10 +310,12 @@ describe('打开 EPUB 并重启续读', () => {
     });
     const workspace = useWorkspaceStore.getState();
     await repository.saveState({
-      schemaVersion: 3,
+      schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,
+      globalReadingTypography: workspace.globalReadingTypography,
+      materialTypography: workspace.materialTypography,
     });
 
     // 模拟重启:卸载旧会话,重置 Store 与运行时,用同一 Repository 重新渲染。
@@ -370,10 +376,12 @@ describe('打开 EPUB 并重启续读', () => {
     useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/2)' });
     const workspace = useWorkspaceStore.getState();
     await repository.saveState({
-      schemaVersion: 3,
+      schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,
+      globalReadingTypography: workspace.globalReadingTypography,
+      materialTypography: workspace.materialTypography,
     });
 
     firstRender.unmount();

@@ -1,6 +1,7 @@
 import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
+import type { ReadingTypography } from './typography';
 
 /** BookDocument 对外暴露的书籍来源元数据。 */
 export interface BookDocumentMetadata {
@@ -44,6 +45,12 @@ export interface BookDocument {
 
   /** 清除搜索产生的命中高亮与临时结果。 */
   clearSearch(): void;
+
+  /**
+   * 应用排版设置(字体、字号、行距、页边距、主题、分页/滚动)。
+   * 可在打开前调用(打开后生效),也可在打开途中调用以实时调整。
+   */
+  applyTypography(settings: ReadingTypography): void;
 
   /** 下一页。 */
   next(): Promise<void>;

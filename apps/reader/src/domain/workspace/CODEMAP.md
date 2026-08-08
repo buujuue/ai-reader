@@ -2,9 +2,9 @@
 
 ## 功能
 
-- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + `primarySidebarVisible` + `activeEditorGroupId` + `editorGroups`）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history`）与 `activeViewId`；`ReadingLocation` 与 `NavigationHistory` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`。
+- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + `primarySidebarVisible` + `activeEditorGroupId` + `editorGroups` + `globalReadingTypography` 全局阅读默认 + `materialTypography` 材料级排版覆盖）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history`）与 `activeViewId`；`ReadingLocation`、`NavigationHistory` 与 `ReadingTypography` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`（当前 4）。
 - `workspaceRepository.ts`：typed Repository 接口（`loadState` / `saveState`），是前端调用 Rust 持久化能力的窄边界。
-- `tauriWorkspaceRepository.ts`：Tauri Adapter，经 `@tauri-apps/api/core` 的 `invoke` 调用 `load_workspace_state` / `save_workspace_state` 命令；注入伪 `TauriInvoke` 供测试，附 `assertWorkspaceStateShape` 载荷校验。
+- `tauriWorkspaceRepository.ts`：Tauri Adapter，经 `@tauri-apps/api/core` 的 `invoke` 调用 `load_workspace_state` / `save_workspace_state` 命令；注入伪 `TauriInvoke` 供测试，附 `assertWorkspaceStateShape` 载荷校验（含排版字段校验与旧数据回退到全局默认）。
 - `inMemoryWorkspaceRepository.ts`：内存 Adapter，浏览器降级开发用。
 - `workspaceRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的契约测试。
 - 对应 `*.test.ts`：Adapter 行为测试。

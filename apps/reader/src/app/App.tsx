@@ -6,6 +6,7 @@ import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
 import { PurgeConfirmDialog } from '../components/PurgeConfirmDialog';
+import { ReaderSettingsDialog } from '../components/ReaderSettingsDialog';
 import { StatusBar } from '../components/StatusBar';
 import { TocSidebar } from '../components/TocSidebar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -93,6 +94,7 @@ export function App() {
       <MetadataEditorDialog />
       <PurgeConfirmDialog />
       <ExternalLinkDialog />
+      <ReaderSettingsDialog />
     </div>
   );
 }

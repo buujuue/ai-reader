@@ -1,4 +1,6 @@
 import type { SearchEvent, SearchOptions } from './search';
+import type { ReadingTypography } from './typography';
+import { buildTypographyCss } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 
 export type { FoliateViewHostFactory } from './viewHost';
@@ -41,6 +43,15 @@ interface ExtendedFoliateView extends HTMLElement {
     transformTarget?: EventTarget;
     toc?: Array<{ label?: string; href?: string; subitems?: unknown }>;
   };
+  /** foliate-view 打开后创建的 `foliate-paginator` 渲染器。 */
+  renderer?: ExtendedRenderer;
+}
+
+/** `foliate-paginator` 渲染器的窄描述:排版通过 attribute 与 setStyles 应用。 */
+interface ExtendedRenderer {
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+  setStyles(styles: string): void;
 }
 
 /** foliate 目录节点到项目 TocItem 的映射。 */
@@ -137,6 +148,22 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       return null;
     }
     return this.element.lastLocation?.cfi ?? null;
+  }
+
+  applyTypography(settings: ReadingTypography): void {
+    const renderer = this.element.renderer;
+    if (!renderer) {
+      return;
+    }
+    // 分页/滚动、分栏间距、页边距与最大画布尺寸经渲染器 attribute 应用。
+    renderer.setAttribute('flow', settings.flow);
+    renderer.setAttribute('gap', `${settings.gap}%`);
+    renderer.setAttribute('margin', `${settings.margin}px`);
+    renderer.setAttribute('max-inline-size', '720px');
+    renderer.setAttribute('max-block-size', '1440px');
+    renderer.setAttribute('max-column-count', '2');
+    // 字体、字号、行距与主题经 setStyles 注入文档 CSS。
+    renderer.setStyles(buildTypographyCss(settings));
   }
 
   async *search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {

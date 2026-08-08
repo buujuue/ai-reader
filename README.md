@@ -2,7 +2,7 @@
 
 独立、轻量、跨 PC 与平板的本地阅读器。第一版先跑通类 VS Code 的阅读工作区与 EPUB、PDF、Markdown 阅读链路;不实现 AI、账号、云同步或 OCR。
 
-当前进度:第一版底座(工单 #1)已就绪——Windows 原生应用可启动,简体中文工作台外壳、Command Registry 与 typed Repository/Tauri Command 的完整往返可验证。
+当前进度:第一版底座(工单 #1)已就绪——Windows 原生应用可启动,简体中文工作台外壳、Command Registry 与 typed Repository/Tauri Command 的完整往返可验证。随后已落地:EPUB 导入与重启续读、严查重与回收站、书库元数据与封面、目录/搜索/导航历史,以及可调整并持久化的阅读排版(字体、字号、行距、页边距、主题、分页/滚动)。
 
 ## 快速开始
 

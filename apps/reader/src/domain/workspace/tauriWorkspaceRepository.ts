@@ -5,6 +5,11 @@ import {
   createNavigationHistory,
   type NavigationHistory,
 } from '../reader/navigationHistory';
+import {
+  DEFAULT_READING_TYPOGRAPHY,
+  isReadingTypography,
+  isTypographyOverride,
+} from '../reader/typography';
 import type { TauriInvoke } from '../tauriInvoke';
 import type { WorkspaceRepository } from './workspaceRepository';
 import {
@@ -96,11 +101,24 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   const editorGroups = Array.isArray(candidate.editorGroups)
     ? candidate.editorGroups.map(assertEditorGroupShape)
     : structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups);
+  // 版本 4 引入排版设置;旧载荷缺失时回退到全局默认,保证旧数据可继续加载。
+  const globalReadingTypography = isReadingTypography(candidate.globalReadingTypography)
+    ? candidate.globalReadingTypography
+    : DEFAULT_READING_TYPOGRAPHY;
+  const materialTypography: Record<string, unknown> = 
+    typeof candidate.materialTypography === 'object' && candidate.materialTypography !== null
+      ? (candidate.materialTypography as Record<string, unknown>)
+      : {};
+  const materialOverrideEntries = Object.entries(materialTypography)
+    .filter((entry): entry is [string, unknown] => isTypographyOverride(entry[1]))
+    .map(([materialId, override]) => [materialId, override]);
   return {
     schemaVersion: candidate.schemaVersion,
     primarySidebarVisible: candidate.primarySidebarVisible,
     activeEditorGroupId: candidate.activeEditorGroupId ?? DEFAULT_EDITOR_GROUP_ID,
     editorGroups,
+    globalReadingTypography,
+    materialTypography: Object.fromEntries(materialOverrideEntries),
   };
 }
 

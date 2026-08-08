@@ -85,10 +85,10 @@ describe('TauriWorkspaceRepository 边界映射', () => {
   });
 
   it('线格式与 Rust 端锁定的 camelCase DTO 一致', () => {
-    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(3);
+    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(4);
     expect(DEFAULT_WORKSPACE_STATE.activeEditorGroupId).toBe(DEFAULT_EDITOR_GROUP_ID);
     expect(JSON.stringify(DEFAULT_WORKSPACE_STATE)).toBe(
-      '{"schemaVersion":3,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}]}',
+      '{"schemaVersion":4,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{}}',
     );
   });
 });

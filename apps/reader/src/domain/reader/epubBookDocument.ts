@@ -3,6 +3,8 @@ import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
 import { sanitizeEpubContent } from './sanitizer';
 import type { Toc } from './toc';
+import type { ReadingTypography } from './typography';
+import { DEFAULT_READING_TYPOGRAPHY } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 
 export interface EpubBookDocumentOptions {
@@ -27,6 +29,7 @@ export class EpubBookDocument implements BookDocument {
   private readonly bytes: Uint8Array;
   private readonly viewHostFactory: FoliateViewHostFactory;
   private readonly sanitize: boolean;
+  private typography: ReadingTypography = DEFAULT_READING_TYPOGRAPHY;
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
   private currentLocation: ReadingLocation | null = null;
@@ -54,6 +57,8 @@ export class EpubBookDocument implements BookDocument {
     });
     await view.open(file);
     this.wireSecurity();
+    // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
+    view.applyTypography(this.typography);
     await view.init(null);
   }
 
@@ -96,6 +101,11 @@ export class EpubBookDocument implements BookDocument {
 
   clearSearch(): void {
     this.host?.clearSearch();
+  }
+
+  applyTypography(settings: ReadingTypography): void {
+    this.typography = settings;
+    this.host?.applyTypography(settings);
   }
 
   onInternalLink(listener: (href: string) => void): () => void {

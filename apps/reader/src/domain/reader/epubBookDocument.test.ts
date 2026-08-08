@@ -82,6 +82,7 @@ function createFakeHost(): FakeHost {
       yield { kind: 'match', match: { cfi: 'epubcfi(/6/1)', excerpt: { pre: '', match: options.query, post: '' } } } as const;
     },
     clearSearch() {},
+    applyTypography() {},
     close() {
       this.closed = true;
     },

@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 
 import type { ReadingLocation } from '../reader/readingLocation';
 import type { WorkspaceRepository } from './workspaceRepository';
-import { DEFAULT_WORKSPACE_STATE } from './workspaceState';
+import { DEFAULT_WORKSPACE_STATE, WORKSPACE_STATE_SCHEMA_VERSION } from './workspaceState';
 
 export type WorkspaceRepositoryFactory = () => WorkspaceRepository;
 
@@ -17,7 +17,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     const repository = makeRepository();
     const location: ReadingLocation = { kind: 'epub', cfi: 'epubcfi(/6/4[chap])!/4/2/2/1:0' };
     const state: typeof DEFAULT_WORKSPACE_STATE = {
-      schemaVersion: 3,
+      schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
       activeEditorGroupId: 'group-1',
       editorGroups: [
@@ -37,6 +37,10 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
           activeViewId: 'view-1',
         },
       ],
+      globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
+      materialTypography: {
+        'mat-1': { fontSize: 22, flow: 'scrolled' },
+      },
     };
 
     await repository.saveState(state);
@@ -47,24 +51,30 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
   it('再次保存会覆盖先前的工作区状态', async () => {
     const repository = makeRepository();
     await repository.saveState({
-      schemaVersion: 3,
+      schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
+      globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
+      materialTypography: {},
     });
 
     await repository.saveState({
-      schemaVersion: 3,
+      schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
+      globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
+      materialTypography: {},
     });
 
     await expect(repository.loadState()).resolves.toEqual({
-      schemaVersion: 3,
+      schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
+      globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
+      materialTypography: {},
     });
   });
 }

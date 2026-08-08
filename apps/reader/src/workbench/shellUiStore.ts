@@ -9,6 +9,8 @@ export interface ShellUiStoreState {
   purgeMaterialId: string | null;
   /** 等待确认打开的外部链接目标;null 表示未打开外部链接确认对话框。 */
   externalLinkUrl: string | null;
+  /** 正在编辑排版的阅读视图 id;null 表示未打开排版设置对话框。 */
+  typographyEditorViewId: string | null;
   /** 目录面板是否可见(运行时状态,不持久化)。 */
   tocVisible: boolean;
   setStatusMessage: (message: string) => void;
@@ -19,6 +21,8 @@ export interface ShellUiStoreState {
   closePurgeConfirm: () => void;
   openExternalLinkConfirm: (url: string) => void;
   closeExternalLinkConfirm: () => void;
+  openTypographyEditor: (viewId: string) => void;
+  closeTypographyEditor: () => void;
   setTocVisible: (visible: boolean) => void;
   toggleToc: () => void;
 }
@@ -28,6 +32,7 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   metadataEditorMaterialId: null,
   purgeMaterialId: null,
   externalLinkUrl: null,
+  typographyEditorViewId: null,
   tocVisible: false,
   setStatusMessage: (message) => set({ statusMessage: message }),
   clearStatusMessage: () => set({ statusMessage: '' }),
@@ -37,6 +42,8 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   closePurgeConfirm: () => set({ purgeMaterialId: null }),
   openExternalLinkConfirm: (url) => set({ externalLinkUrl: url }),
   closeExternalLinkConfirm: () => set({ externalLinkUrl: null }),
+  openTypographyEditor: (viewId) => set({ typographyEditorViewId: viewId }),
+  closeTypographyEditor: () => set({ typographyEditorViewId: null }),
   setTocVisible: (visible) => set({ tocVisible: visible }),
   toggleToc: () => set((state) => ({ tocVisible: !state.tocVisible })),
 }));

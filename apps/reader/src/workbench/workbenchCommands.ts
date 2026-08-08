@@ -20,6 +20,8 @@ export function serializeWorkspaceState(): WorkspaceState {
     primarySidebarVisible: store.primarySidebarVisible,
     activeEditorGroupId: store.activeEditorGroupId,
     editorGroups: store.editorGroups,
+    globalReadingTypography: store.globalReadingTypography,
+    materialTypography: store.materialTypography,
   };
 }
 

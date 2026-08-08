@@ -1,8 +1,9 @@
-import { ArrowLeft, ArrowRight, BookOpen, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Settings2, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useLibraryStore } from '../workbench/libraryStore';
+import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { ReadingView } from './ReadingView';
 
@@ -30,6 +31,12 @@ export function EditorArea() {
 
   const handleForward = () => {
     void commands.execute(COMMAND_IDS.readerForward).catch(() => undefined);
+  };
+
+  const handleOpenTypography = () => {
+    if (!group?.activeViewId) return;
+    useWorkspaceStore.getState().setActiveView(activeEditorGroupId, group.activeViewId);
+    useShellUiStore.getState().openTypographyEditor(group.activeViewId);
   };
 
   if (!group || group.views.length === 0) {
@@ -75,6 +82,15 @@ export function EditorArea() {
             className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
           >
             <ArrowRight size={15} aria-hidden />
+          </button>
+          <button
+            type="button"
+            aria-label="阅读排版"
+            title="调整阅读排版(字体、字号、行距、页边距、主题、分页/滚动)"
+            onClick={handleOpenTypography}
+            className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+          >
+            <Settings2 size={15} aria-hidden />
           </button>
         </div>
         {group.views.map((view) => {

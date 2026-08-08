@@ -39,6 +39,7 @@ function createFakeViewHost(): FoliateViewHost {
     },
     async *search() {},
     clearSearch() {},
+    applyTypography() {},
     close() {},
   };
 }
@@ -457,5 +458,113 @@ describe('Reader 搜索命令', () => {
     expect(useSearchStore.getState().getView(viewId).active).toBe(false);
     expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(0);
     expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(0);
+  });
+});
+
+describe('Reader 排版命令', () => {
+  let registry: CommandRegistry;
+  let importRepository: ReturnType<typeof createInMemoryImportRepository>;
+  let workspaceRepository: ReturnType<typeof createInMemoryWorkspaceRepository>;
+
+  function createTypographyHost() {
+    const applyTypography = vi.fn();
+    const host = {
+      ...createFakeViewHost(),
+      open: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      onRelocate: () => () => undefined,
+      applyTypography,
+    };
+    return host;
+  }
+
+  async function setupWithHost(host: ReturnType<typeof createTypographyHost>) {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, '演示书/示例书.epub', buildEpub({ title: '示例书' }));
+    importRepository = createInMemoryImportRepository(sources);
+    const staged = await importRepository.stageImport('演示书/示例书.epub');
+    const bytes = await importRepository.readStagedFile(staged);
+    const { inspectEpub } = await import('../domain/library/epub/epubInspector');
+    const { metadata } = await inspectEpub(bytes);
+    const material = await importRepository.commitImport(staged, metadata);
+    workspaceRepository = createInMemoryWorkspaceRepository();
+    registry = new CommandRegistry();
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => host,
+    });
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(viewId)!;
+    const container = globalThis.document.createElement('div');
+    mountViewDocument(book, viewId, container, null, { importRepository, workspaceRepository });
+    await vi.waitFor(() => expect(host.open).toHaveBeenCalled());
+    return { material, viewId };
+  }
+
+  beforeEach(() => {
+    useWorkspaceStore.getState().resetToDefault();
+    useReaderRuntime.setState({ documents: new Map() });
+  });
+
+  it('应用排版命令把材料级覆盖写入 Store 并应用到 BookDocument', async () => {
+    const host = createTypographyHost();
+    const { material, viewId } = await setupWithHost(host);
+
+    await registry.execute(COMMAND_IDS.readerApplyTypography, viewId, {
+      fontSize: 24,
+      theme: 'dark',
+    });
+
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toMatchObject({
+      fontSize: 24,
+      theme: 'dark',
+    });
+    // 挂载时已应用一次全局默认,再加这次 patch,共两次且最后一次为合并结果。
+    const last = host.applyTypography.mock.calls.at(-1)![0];
+    expect(last.fontSize).toBe(24);
+    expect(last.theme).toBe('dark');
+    expect(last.fontFamily).toBe(useWorkspaceStore.getState().globalReadingTypography.fontFamily);
+  });
+
+  it('应用排版命令把数值字段收敛到合理区间', async () => {
+    const host = createTypographyHost();
+    const { material, viewId } = await setupWithHost(host);
+
+    await registry.execute(COMMAND_IDS.readerApplyTypography, viewId, {
+      fontSize: 9999,
+      lineHeight: 99,
+      margin: -50,
+    });
+
+    const override = useWorkspaceStore.getState().materialTypography[material.id]!;
+    expect(override.fontSize).toBe(48);
+    expect(override.lineHeight).toBe(3);
+    expect(override.margin).toBe(0);
+  });
+
+  it('恢复排版命令清除材料级覆盖并回退到全局默认', async () => {
+    const host = createTypographyHost();
+    const { material, viewId } = await setupWithHost(host);
+    await registry.execute(COMMAND_IDS.readerApplyTypography, viewId, { fontSize: 24 });
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toBeDefined();
+
+    await registry.execute(COMMAND_IDS.readerResetTypography, viewId);
+
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toBeUndefined();
+    const last = host.applyTypography.mock.calls.at(-1)![0];
+    expect(last.fontSize).toBe(useWorkspaceStore.getState().globalReadingTypography.fontSize);
+  });
+
+  it('设置全局排版命令更新全局默认并应用到无覆盖的开放视图', async () => {
+    const host = createTypographyHost();
+    const { viewId } = await setupWithHost(host);
+
+    await registry.execute(COMMAND_IDS.readerSetGlobalTypography, { fontSize: 21 });
+
+    expect(useWorkspaceStore.getState().globalReadingTypography.fontSize).toBe(21);
+    const last = host.applyTypography.mock.calls.at(-1)![0];
+    expect(last.fontSize).toBe(21);
+    expect(viewId).toBeTruthy();
   });
 });

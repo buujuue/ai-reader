@@ -1,7 +1,9 @@
 import type { ReadingLocation } from '../reader/readingLocation';
 import type { NavigationHistory } from '../reader/navigationHistory';
+import type { ReadingTypography } from '../reader/typography';
+import { DEFAULT_READING_TYPOGRAPHY } from '../reader/typography';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 3;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 4;
 
 /** 一个编辑器组内的一次阅读视图(标签)的可序列化描述。 */
 export interface ReadingViewState {
@@ -28,6 +30,10 @@ export interface WorkspaceState {
   primarySidebarVisible: boolean;
   activeEditorGroupId: string;
   editorGroups: EditorGroupState[];
+  /** 全局阅读默认设置(所有材料共享的排版基线)。 */
+  globalReadingTypography: ReadingTypography;
+  /** 阅读材料级排版覆盖;键为 BookId,未出现的材料使用全局默认。 */
+  materialTypography: Record<string, Partial<ReadingTypography>>;
 }
 
 export const DEFAULT_EDITOR_GROUP_ID = 'group-1';
@@ -43,4 +49,6 @@ export const DEFAULT_WORKSPACE_STATE: WorkspaceState = Object.freeze({
       activeViewId: null,
     }),
   ],
+  globalReadingTypography: DEFAULT_READING_TYPOGRAPHY,
+  materialTypography: Object.freeze({}),
 });

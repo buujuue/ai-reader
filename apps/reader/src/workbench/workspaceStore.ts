@@ -7,6 +7,8 @@ import {
   type NavigationHistory,
 } from '../domain/reader/navigationHistory';
 import type { ReadingLocation } from '../domain/reader/readingLocation';
+import type { ReadingTypography } from '../domain/reader/typography';
+import { resolveTypography } from '../domain/reader/typography';
 import {
   DEFAULT_WORKSPACE_STATE,
   type EditorGroupState,
@@ -22,7 +24,15 @@ export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
   activeEditorGroupId: string;
   editorGroups: EditorGroupState[];
+  /** 全局阅读默认设置。 */
+  globalReadingTypography: ReadingTypography;
+  /** 阅读材料级排版覆盖;键为 BookId。 */
+  materialTypography: Record<string, Partial<ReadingTypography>>;
   setPrimarySidebarVisible: (visible: boolean) => void;
+  setGlobalReadingTypography: (settings: ReadingTypography) => void;
+  setMaterialTypography: (materialId: string, override: Partial<ReadingTypography>) => void;
+  resetMaterialTypography: (materialId: string) => void;
+  getEffectiveTypography: (materialId: string) => ReadingTypography;
   openView: (materialId: string) => string;
   closeView: (viewId: string) => void;
   setActiveView: (groupId: string, viewId: string) => void;
@@ -54,8 +64,38 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
   activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
   editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
+  globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
+  materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
 
   setPrimarySidebarVisible: (visible) => set({ primarySidebarVisible: visible }),
+
+  setGlobalReadingTypography: (settings) => set({ globalReadingTypography: settings }),
+
+  setMaterialTypography: (materialId, override) =>
+    set((state) => ({
+      materialTypography: {
+        ...state.materialTypography,
+        [materialId]: { ...state.materialTypography[materialId], ...override },
+      },
+    })),
+
+  resetMaterialTypography: (materialId) =>
+    set((state) => {
+      if (!(materialId in state.materialTypography)) {
+        return state;
+      }
+      const next = { ...state.materialTypography };
+      delete next[materialId];
+      return { materialTypography: next };
+    }),
+
+  getEffectiveTypography: (materialId) => {
+    const state = get();
+    return resolveTypography(
+      state.globalReadingTypography,
+      state.materialTypography[materialId] ?? null,
+    );
+  },
 
   openView: (materialId) => {
     const groupId = get().activeEditorGroupId;
@@ -133,6 +173,8 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       primarySidebarVisible: state.primarySidebarVisible,
       activeEditorGroupId: state.activeEditorGroupId,
       editorGroups: structuredClone(state.editorGroups),
+      globalReadingTypography: state.globalReadingTypography,
+      materialTypography: structuredClone(state.materialTypography),
     }),
 
   resetToDefault: () =>
@@ -140,5 +182,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
+      globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
+      materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
     }),
 }));

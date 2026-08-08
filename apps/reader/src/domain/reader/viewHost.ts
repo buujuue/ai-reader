@@ -1,5 +1,6 @@
 import type { SearchEvent, SearchOptions } from './search';
-import type { Toc, TocItem } from './toc';
+import type { Toc } from './toc';
+import type { ReadingTypography } from './typography';
 
 /**
  * Foliate 视图宿主的窄接口。它把具体渲染器隔离在 BookDocument 的 EPUB 实现内,
@@ -40,6 +41,11 @@ export interface FoliateViewHost {
    * 用于清洗不可信 EPUB 内容。返回取消订阅函数。
    */
   onContentData(listener: (type: string, data: string) => string): () => void;
+  /**
+   * 应用排版设置(字体、字号、行距、页边距、主题、分页/滚动)。
+   * 只注入固定映射生成的 CSS 与渲染器 attribute,不放开安全边界。
+   */
+  applyTypography(settings: ReadingTypography): void;
   /** 销毁并释放渲染器。 */
   close(): void;
 }

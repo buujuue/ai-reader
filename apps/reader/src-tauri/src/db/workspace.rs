@@ -1,7 +1,37 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+
+/// 阅读排版设置(字体、字号、行距、页边距、主题、分页/滚动)。
+/// Rust 只原样存取,不参与排版语义。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingTypography {
+    pub font_family: String,
+    pub font_size: f64,
+    pub line_height: f64,
+    pub margin: f64,
+    pub gap: f64,
+    pub flow: String,
+    pub theme: String,
+}
+
+impl Default for ReadingTypography {
+    fn default() -> Self {
+        Self {
+            font_family: "sansSerif".to_string(),
+            font_size: 18.0,
+            line_height: 1.6,
+            margin: 48.0,
+            gap: 7.0,
+            flow: "paginated".to_string(),
+            theme: "light".to_string(),
+        }
+    }
+}
 
 /// 阅读位置(ReadingLocation):可序列化、可由 BookDocument 恢复的视图位置。
 /// Rust 只原样存取,不理解渲染器语义。
@@ -51,19 +81,45 @@ pub struct EditorGroupState {
 
 /// 工作区状态的持久化 DTO,serde 命名与 TypeScript 端保持一致(camelCase)。
 /// Rust 只负责原样存取该结构,不理解其中的工作台语义。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceState {
     pub schema_version: u32,
     pub primary_sidebar_visible: bool,
     pub active_editor_group_id: String,
     pub editor_groups: Vec<EditorGroupState>,
+    /// 全局阅读默认设置。旧数据缺失时回退到默认值。
+    #[serde(default)]
+    pub global_reading_typography: ReadingTypography,
+    /// 阅读材料级排版覆盖;键为 BookId。旧数据缺失时为空。
+    #[serde(default)]
+    pub material_typography: HashMap<String, PartialTypography>,
+}
+
+/// 材料级排版覆盖:允许只覆盖部分字段,未覆盖字段沿用全局默认。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialTypography {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 3,
+            schema_version: 4,
             primary_sidebar_visible: true,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
@@ -71,6 +127,8 @@ impl Default for WorkspaceState {
                 views: Vec::new(),
                 active_view_id: None,
             }],
+            global_reading_typography: ReadingTypography::default(),
+            material_typography: HashMap::new(),
         }
     }
 }
@@ -133,8 +191,17 @@ mod tests {
     }
 
     fn sample_state() -> WorkspaceState {
+        let mut material_typography = HashMap::new();
+        material_typography.insert(
+            "mat-1".to_string(),
+            PartialTypography {
+                font_size: Some(22.0),
+                flow: Some("scrolled".to_string()),
+                ..PartialTypography::default()
+            },
+        );
         WorkspaceState {
-            schema_version: 3,
+            schema_version: 4,
             primary_sidebar_visible: false,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
@@ -156,6 +223,16 @@ mod tests {
                 }],
                 active_view_id: Some("view-1".to_string()),
             }],
+            global_reading_typography: ReadingTypography {
+                font_family: "serif".to_string(),
+                font_size: 20.0,
+                line_height: 1.8,
+                margin: 40.0,
+                gap: 8.0,
+                flow: "paginated".to_string(),
+                theme: "sepia".to_string(),
+            },
+            material_typography,
         }
     }
 
@@ -184,7 +261,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":3,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}]}"#
+            r#"{"schemaVersion":4,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
         );
     }
 

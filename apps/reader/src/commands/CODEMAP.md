@@ -3,7 +3,7 @@
 ## 功能
 
 - `commandRegistry.ts`：核心命令机制。
-  - `COMMAND_IDS`：稳定 Command ID 的单一来源（如 `workbench.togglePrimarySidebar`、`workbench.saveState`、`library.importOne`、`library.refresh`、`library.openBook`、`reader.nextPage`、`reader.prevPage`、`reader.closeView`、`reader.restoreView`）。
+  - `COMMAND_IDS`：稳定 Command ID 的单一来源（如 `workbench.togglePrimarySidebar`、`workbench.saveState`、`library.importOne`、`library.refresh`、`library.openBook`、`reader.nextPage`、`reader.prevPage`、`reader.closeView`、`reader.restoreView`、`reader.typography.apply`、`reader.typography.reset`、`reader.typography.setGlobal`）。
   - `CommandRegistry`：注册/执行命令，支持 `register`、`has`、`execute`；重复注册抛 `DuplicateCommandError`，未注册执行抛 `UnknownCommandError`。
   - 所有按钮、菜单、键盘、触摸 Adapter 都通过稳定 Command ID 执行用户意图，避免同一意图多套逻辑。
 - `commandRegistry.test.ts`：Registry 行为测试。

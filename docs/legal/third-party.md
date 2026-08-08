@@ -61,3 +61,4 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 
 - 批量文件选择:参照 Readest `apps/readest-app/src/services/nativeAppService.ts` 的 `selectFiles`,对 Tauri dialog 使用 `open({ multiple: true })` 一次选择多份文件;本项目的 `FilePicker.pickEpubs()` 与 `filePicker.ts` 仅复用该模式,不复制其路径作用域、SAF 解析等外围逻辑。
 - 当前材料搜索:搜索能力直接复用已引入的 `foliate-js` 内置 `view.search()`/`clearSearch()`(见 `domain/reader/foliateViewHost.ts` 的归一化),不复制其应用层搜索栏。增量进度、取消与命中跳转的结果编排模式参考 Readest `apps/readest-app/src/app/reader/components/sidebar/SearchBar.tsx`,但本项目为独立的最小实现(见 `workbench/searchRunner.ts` 与 `components/SearchBar.tsx`),不复制其搜索缓存、历史、正则/邻近词等多模式外围逻辑。
+- 阅读排版:由全局默认、材料级覆盖与阅读视图三层排版数据模型及经渲染器注入 CSS 的思路,参考 Readest `apps/readest-app/src/utils/style.ts` 的 `getStyles()`。本项目为独立的最小实现(`domain/reader/typography.ts` 的 `buildTypographyCss` + `foliateViewHost.ts` 的 `applyTypography`),字体与颜色使用固定映射(衬线/无衬线/系统、浅色/护眼/深色),不复制其主题管理、字体列表、段落缩进等外围逻辑。

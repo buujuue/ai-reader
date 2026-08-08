@@ -8,6 +8,8 @@ import {
   type FoliateViewHostFactory,
 } from '../domain/reader/foliateViewHost';
 import { back as historyBack, forward as historyForward } from '../domain/reader/navigationHistory';
+import type { ReadingTypography } from '../domain/reader/typography';
+import { resolveTypography } from '../domain/reader/typography';
 import { inspectEpub } from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
 import type { ReadingMaterial } from '../domain/library/material';
@@ -101,6 +103,15 @@ export function mountViewDocument(
     },
   });
   persisters.set(viewId, persister);
+
+  // 挂载时应用该材料实际生效的排版(材料级覆盖优先,否则回退全局默认)。
+  const materialId = findView(viewId)?.materialId;
+  if (materialId) {
+    const store = useWorkspaceStore.getState();
+    document.applyTypography(
+      resolveTypography(store.globalReadingTypography, store.materialTypography[materialId] ?? null),
+    );
+  }
 
   // 位置变化:按本次导航意图更新当前阅读位置与导航历史。
   document.onLocationChange((next) => {
@@ -311,6 +322,62 @@ export function registerReaderCommands(
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
+  registry.register(COMMAND_IDS.readerApplyTypography, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const patch = (args[1] as Partial<ReadingTypography> | undefined) ?? null;
+    if (!viewId || !patch) return;
+    const view = findView(viewId);
+    if (!view) return;
+
+    const store = useWorkspaceStore.getState();
+    const clamped = clampTypographyPatch(patch);
+    const merged = {
+      ...store.materialTypography[view.materialId],
+      ...clamped,
+    };
+    useWorkspaceStore.getState().setMaterialTypography(view.materialId, merged);
+
+    const effective = resolveTypography(
+      store.globalReadingTypography,
+      useWorkspaceStore.getState().materialTypography[view.materialId],
+    );
+    useReaderRuntime.getState().getDocument(viewId)?.applyTypography(effective);
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+  });
+
+  registry.register(COMMAND_IDS.readerResetTypography, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    if (!viewId) return;
+    const view = findView(viewId);
+    if (!view) return;
+
+    useWorkspaceStore.getState().resetMaterialTypography(view.materialId);
+    const store = useWorkspaceStore.getState();
+    const effective = resolveTypography(store.globalReadingTypography, null);
+    useReaderRuntime.getState().getDocument(viewId)?.applyTypography(effective);
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+  });
+
+  registry.register(COMMAND_IDS.readerSetGlobalTypography, async (...args: unknown[]) => {
+    const patch = (args[0] as Partial<ReadingTypography> | undefined) ?? null;
+    if (!patch) return;
+    const store = useWorkspaceStore.getState();
+    const nextGlobal = {
+      ...store.globalReadingTypography,
+      ...clampTypographyPatch(patch),
+    };
+    useWorkspaceStore.getState().setGlobalReadingTypography(nextGlobal);
+    // 全局默认变化后,所有没有材料级覆盖的开放视图立即跟随生效。
+    for (const viewId of useReaderRuntime.getState().documents.keys()) {
+      const view = findView(viewId);
+      if (!view) continue;
+      const current = useWorkspaceStore.getState();
+      if (current.materialTypography[view.materialId]) continue;
+      useReaderRuntime.getState().getDocument(viewId)?.applyTypography(nextGlobal);
+    }
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+  });
+
   registry.register(COMMAND_IDS.readerRestoreView, async (...args: unknown[]) => {
     const viewId = args[0] as string | undefined;
     const material = args[1] as ReadingMaterial | undefined;
@@ -359,6 +426,29 @@ async function jumpToCfi(
   navigationIntents.set(viewId, 'push');
   await document.goToLocation({ kind: 'epub', cfi });
   await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+}
+
+/**
+ * 把排版补丁中的数值字段收敛到合理区间,防止脏数据把文档字号/行距等
+ * 推到失控范围。只处理已知字段,其它字段原样透传。
+ */
+function clampTypographyPatch(
+  patch: Partial<ReadingTypography>,
+): Partial<ReadingTypography> {
+  const next = { ...patch };
+  if (typeof next.fontSize === 'number') {
+    next.fontSize = Math.min(48, Math.max(10, Math.round(next.fontSize)));
+  }
+  if (typeof next.lineHeight === 'number') {
+    next.lineHeight = Math.min(3, Math.max(1, Math.round(next.lineHeight * 10) / 10));
+  }
+  if (typeof next.margin === 'number') {
+    next.margin = Math.min(160, Math.max(0, Math.round(next.margin)));
+  }
+  if (typeof next.gap === 'number') {
+    next.gap = Math.min(30, Math.max(0, Math.round(next.gap)));
+  }
+  return next;
 }
 
 /** 应用关闭时把当前视图位置 flush、取消搜索并关闭渲染器。 */

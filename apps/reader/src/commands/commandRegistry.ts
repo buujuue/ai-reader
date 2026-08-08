@@ -27,6 +27,9 @@ export const COMMAND_IDS = {
   readerSearchNext: 'reader.search.next',
   readerSearchPrev: 'reader.search.prev',
   readerSearchGoTo: 'reader.search.goTo',
+  readerApplyTypography: 'reader.typography.apply',
+  readerResetTypography: 'reader.typography.reset',
+  readerSetGlobalTypography: 'reader.typography.setGlobal',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];
