@@ -269,7 +269,7 @@ function createTauriBatchHarness(): ImportBatchContractHarness {
     },
     createPicker(paths) {
       return {
-        async pickEpubs() {
+        async pickBooks() {
           return paths ? [...paths] : null;
         },
         async pickImage() {

@@ -19,6 +19,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | @tauri-apps/plugin-dialog | ^2 | MIT / Apache-2.0 | 托管导入的系统文件选择器 |
 | @tauri-apps/plugin-opener | ^2 | MIT / Apache-2.0 | 外部链接交给系统浏览器 |
 | foliate-js | ^1.0.1 | MIT | EPUB 渲染内核;《view.js》《epub.js》《paginator.js》等源自 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js) |
+| pdfjs-dist | ^5.7.284 | Apache-2.0 | PDF 固定版式阅读内核（工单 #14 引入） |
 
 精确版本以 `pnpm-lock.yaml` 为准。
 
@@ -53,6 +54,13 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 安全边界:`Loader.allowScript` 默认关闭(参考 Readest 分支的既有加固);`domain/reader/sanitizer.ts` 在内容进入渲染器前移除脚本、iframe、对象嵌入与危险 URL,落实 ADR-0010。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/foliate-js@1.0.1/node_modules/foliate-js/LICENSE`。
 
+## pdfjs-dist 引入记录
+
+- 已于第 6 个切片(PDF 固定版式阅读, 工单 #14)经 npm 引入上游 `pdfjs-dist@5.7.284`(Apache-2.0), 来源 [mozilla/pdf.js](https://github.com/mozilla/pdf.js)。
+- 使用范围:范围读取、解码、渲染、文本层与封面提取;所有直接调用集中在 `apps/reader/src/domain/reader/pdf/` 子模块, 上层只经 `PdfBookDocument`(实现 `BookDocument`)窄接口交互。
+- 安全边界:加载时关闭 `isEvalSupported`, 不执行 PDF 内脚本;渲染内容不触发远程资源加载。
+- upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/pdfjs-dist@5.7.284/node_modules/pdfjs-dist/LICENSE`。
+
 ## 借鉴说明
 
 本项目架构与阅读行为大量参考 [readest/readest](https://github.com/readest/readest)(AGPL-3.0),但为独立重写,不复制其应用层代码、状态模型或用户数据格式。若未来直接移植任何 Readest 代码片段,将逐处登记来源、许可与署名。
@@ -62,3 +70,4 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 批量文件选择:参照 Readest `apps/readest-app/src/services/nativeAppService.ts` 的 `selectFiles`,对 Tauri dialog 使用 `open({ multiple: true })` 一次选择多份文件;本项目的 `FilePicker.pickEpubs()` 与 `filePicker.ts` 仅复用该模式,不复制其路径作用域、SAF 解析等外围逻辑。
 - 当前材料搜索:搜索能力直接复用已引入的 `foliate-js` 内置 `view.search()`/`clearSearch()`(见 `domain/reader/foliateViewHost.ts` 的归一化),不复制其应用层搜索栏。增量进度、取消与命中跳转的结果编排模式参考 Readest `apps/readest-app/src/app/reader/components/sidebar/SearchBar.tsx`,但本项目为独立的最小实现(见 `workbench/searchRunner.ts` 与 `components/SearchBar.tsx`),不复制其搜索缓存、历史、正则/邻近词等多模式外围逻辑。
 - 阅读排版:由全局默认、材料级覆盖与阅读视图三层排版数据模型及经渲染器注入 CSS 的思路,参考 Readest `apps/readest-app/src/utils/style.ts` 的 `getStyles()`。本项目为独立的最小实现(`domain/reader/typography.ts` 的 `buildTypographyCss` + `foliateViewHost.ts` 的 `applyTypography`),字体与颜色使用固定映射(衬线/无衬线/系统、浅色/护眼/深色),不复制其主题管理、字体列表、段落缩进等外围逻辑。
+- PDF 阅读内核:范围读取并发上限、过期渲染取消、画布内存预算与滚动窗口化思路,参考 Readest 的 `packages/foliate-js/pdf.js` 与 `packages/foliate-js/src/foliate/view/pdf.js`。本项目为独立的最小实现(`domain/reader/pdf/` 的 `pdfRangeTransport.ts`、`pdfPageRenderer.ts`、`pdfRenderer.ts`),不复制其应用层 PDF 工具栏、页面缩略图、双页/连续滚动等外围逻辑。

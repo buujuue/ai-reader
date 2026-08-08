@@ -11,7 +11,7 @@ import { useShellUiStore } from './shellUiStore';
 function makeDeps(overrides: Partial<ImportBookDeps> = {}) {
   const importRepository = createInMemoryImportRepository();
   const filePicker: FilePicker = {
-    pickEpubs: async () => null,
+    pickBooks: async () => null,
     pickImage: async () => null,
   };
   return { importRepository, filePicker, ...overrides };

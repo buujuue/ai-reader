@@ -1,0 +1,114 @@
+/**
+ * PDF.js 的窄接口与懒加载引导。
+ *
+ * 本模块集中所有对 `pdfjs-dist` 引擎的直接调用点(ADR-0004:外部 Module
+ * 不直接操作具体渲染器对象/PDF.js 对象)。PdfBookDocument 与 PdfInspector
+ * 都通过本模块注入的 `PdfJsLib` 交互;测试注入伪实现,生产懒加载真实引擎。
+ *
+ * 安全边界(ADR-0010):PDF 内容不可信。`isEvalSupported` 关闭,避免 PDF.js
+ * 在页面内执行字符串求值;渲染只输出到 Canvas 与文本层 DOM,不执行书内脚本。
+ * 范围读取(HttpsV2Transport)可控并发上限,防止大文件跨引用/对象流请求洪泛
+ * 原生文件桥接(参考 Readest `packages/foliate-js/pdf.js` 的 MAX_CONCURRENT_RANGES)。
+ */
+
+/** PDF.js 页面视口(只读窄描述)。 */
+export interface PdfViewport {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** PDF.js 渲染任务(可取消)。 */
+export interface PdfRenderTask {
+  readonly promise: Promise<unknown>;
+  cancel(): void;
+}
+
+/** PDF.js 文本内容项(用于文本层;扫描页无文字层时为空)。 */
+export interface PdfTextItem {
+  readonly str: string;
+}
+
+/** PDF.js 文本内容。 */
+export interface PdfTextContent {
+  readonly items: PdfTextItem[];
+}
+
+/** PDF.js 页面对象(窄接口)。 */
+export interface PdfPage {
+  getViewport(options: { scale: number }): PdfViewport;
+  render(options: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }): PdfRenderTask;
+  streamTextContent(): Promise<PdfTextContent>;
+  getTextContent(): Promise<PdfTextContent>;
+  getAnnotations(): Promise<unknown[]>;
+  /** 释放页面解码缓存(如字体/字形),用于内存预算回收。 */
+  cleanup(): void;
+}
+
+/** PDF.js 文档代理(窄接口)。 */
+export interface PdfDocumentProxy {
+  readonly numPages: number;
+  getPage(pageNumber: number): Promise<PdfPage>;
+  getMetadata(): Promise<{ info?: Record<string, unknown>; metadata?: PdfMetadata }>;
+  getOutline(): Promise<Array<PdfOutlineItem> | null>;
+  getDestination(name: string): Promise<unknown>;
+  getPageIndex(ref: unknown): Promise<number>;
+  destroy(): Promise<void>;
+}
+
+/** PDF.js 元数据对象(窄接口)。 */
+export interface PdfMetadata {
+  get(name: string): string | null;
+  getRaw(): string | null;
+}
+
+/** PDF.js 目录条目(窄接口)。 */
+export interface PdfOutlineItem {
+  title: string;
+  dest?: unknown;
+  items?: PdfOutlineItem[];
+}
+
+/** PDF.js 范围读取传输:由调用方填充 `requestDataRange`。 */
+export interface PdfDataRangeTransport {
+  onDataRange(begin: number, chunk: ArrayBuffer): void;
+}
+
+/** PDF.js 库的窄接口(用于注入与测试)。 */
+export interface PdfJsLib {
+  GlobalWorkerOptions: { workerSrc: string };
+  PDFDataRangeTransport: new (length: number, initialData: unknown) => PdfDataRangeTransport;
+  getDocument(options: {
+    data?: Uint8Array;
+    range?: PdfDataRangeTransport;
+    isEvalSupported: boolean;
+  }): { promise: Promise<PdfDocumentProxy> };
+}
+
+/** 懒加载并引导 PDF.js 引擎的缓存的 Promise。 */
+let pdfLibPromise: Promise<PdfJsLib> | null = null;
+
+/**
+ * 加载 PDF.js。生产环境懒加载 `pdfjs-dist` 并配置 worker;测试环境不调用本函数
+ * (PdfBookDocument/PdfInspector 注入伪引擎)。worker 经 Vite `?url` 作为独立资源
+ * 输出,避免在渲染线程内联大体积 worker。
+ */
+export function loadPdfLib(): Promise<PdfJsLib> {
+  if (!pdfLibPromise) {
+    pdfLibPromise = import('pdfjs-dist').then((module) => {
+      const lib = module as unknown as PdfJsLib;
+      // Vite 会把 `?url` 资源输出为独立文件,workerSrc 指向它。
+      const workerUrl = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs?url',
+        import.meta.url,
+      ).toString();
+      lib.GlobalWorkerOptions.workerSrc = workerUrl;
+      return lib;
+    });
+  }
+  return pdfLibPromise;
+}
+
+/** 测试用:重置懒加载缓存,便于在测试间替换。 */
+export function resetPdfLibCacheForTest(): void {
+  pdfLibPromise = null;
+}

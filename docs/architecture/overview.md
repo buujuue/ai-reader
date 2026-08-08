@@ -144,11 +144,12 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 3 切片**：安全打开 EPUB 并重启续读（`BookDocument`/`EpubBookDocument` + `foliate-js`、`ReadingLocation`、Editor Group 标签、位置节流写入与 flush、重启恢复、内容清洗）。
 - **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。
 - **第 5 切片**：当前资料目录、搜索、导航历史与基本排版（`TocSidebar`、增量搜索 `searchStore`/`searchRunner`、导航历史后退/前进、阅读排版 `typography.ts` 与 `ReaderSettingsDialog`、排版设置持久化）。
+- **第 6 切片**：PDF 固定版式阅读（`pdf/` 子模块：`PdfBookDocument` + `pdfjs-dist`、范围读取并发上限、过期渲染取消、Canvas 内存预算、缩放/页面适配与视口恢复、扫描页无文字层仍显示、`readerSetPdfViewport`/`readerSetPdfFlow` 命令）。对应工单 #14。
 
 ## 后续切片顺序
 
 1. 普通高亮、笔记与文本锚点恢复。
-2. PDF 阅读、文本批注和扫描页区域锚点。
+2. PDF 文本批注和扫描页区域锚点。
 3. Markdown 阅读、源码编辑、恢复快照和锚点迁移。
 4. 第二 Editor Group、显式主要阅读材料和响应式布局。
 5. 完整备份、整库恢复和单本批注导出。

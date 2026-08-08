@@ -22,6 +22,8 @@ import {
   createDefaultExternalUrlOpener,
   type ExternalUrlOpener,
 } from './externalUrlOpener';
+import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
+import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 
 export interface AppServices {
   commands: CommandRegistry;
@@ -39,6 +41,10 @@ export interface AppServicesOptions {
   filePicker?: FilePicker;
   viewHostFactory?: ReaderCommandDependencies['viewHostFactory'];
   externalUrlOpener?: ExternalUrlOpener;
+  /** 可注入的 PDF.js 库(测试用);缺省由 PdfBookDocument/PdfInspector 懒加载真实引擎。 */
+  pdfLib?: PdfJsLib;
+  /** 可注入的页面光栅化函数(测试用)。 */
+  pdfRasterize?: PdfPageRasterizer;
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
@@ -92,7 +98,10 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository });
-  registerLibraryCommands(commands, importServices);
+  registerLibraryCommands(commands, {
+    ...importServices,
+    pdfLib: options.pdfLib,
+  });
   registerAnnotationCommands(commands, { annotationRepository });
   // 暴露批注 Store 到 window,供真实浏览器验收脚本读取(仅开发/测试用)。
   if (typeof window !== 'undefined') {
@@ -105,6 +114,8 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       annotationRepository,
       viewHostFactory: options.viewHostFactory,
       externalUrlOpener,
+      pdfLib: options.pdfLib,
+      pdfRasterize: options.pdfRasterize,
     });
   } else {
     registerReaderCommands(commands, {
@@ -112,6 +123,8 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       workspaceRepository,
       annotationRepository,
       externalUrlOpener,
+      pdfLib: options.pdfLib,
+      pdfRasterize: options.pdfRasterize,
     });
   }
   return {

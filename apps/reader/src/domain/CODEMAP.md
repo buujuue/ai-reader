@@ -8,7 +8,7 @@
 
 - `workspace/`：工作区状态模型（Editor Group、阅读视图、阅读位置）、Repository 接口及内存/Tauri 两个 Adapter。详见 `workspace/CODEMAP.md`。
 - `library/`：阅读材料领域模型、导入 Repository 接口、内建最小 `EpubInspector`（BookDocument 雏形）及内存/Tauri 两个 Adapter。详见 `library/CODEMAP.md`。
-- `reader/`：`BookDocument` 统一文档接口、`ReadingLocation`、`EpubBookDocument` 实现、Foliate 视图宿主窄缝与 EPUB 内容清洗器。详见 `reader/CODEMAP.md`。
+- `reader/`：`BookDocument` 统一文档接口、`ReadingLocation`、`EpubBookDocument` 与 `PdfBookDocument` 实现、Foliate 视图宿主窄缝、EPUB 内容清洗器与 `pdf/` PDF 阅读子模块。详见 `reader/CODEMAP.md`。
 - `tauriInvoke.ts`：`TauriInvoke` 窄接口类型，供各 Tauri Adapter 复用。
 
 ## 依赖其它文件夹（树）

@@ -8,6 +8,14 @@ import {
   DEFAULT_WORKSPACE_STATE,
   WORKSPACE_STATE_SCHEMA_VERSION,
 } from '../domain/workspace/workspaceState';
+import { addInMemorySource } from '../domain/library/inMemoryImportRepository';
+import { createInMemoryImportRepository } from '../domain/library/inMemoryImportRepository';
+import { createInMemoryFilePicker } from './filePicker';
+import {
+  makeFakeDocument,
+  makeFakeLib,
+  makeFakeRasterizer,
+} from '../domain/reader/pdf/pdfTestFakes';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { createAppServices, type AppServices } from './bootstrap';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
@@ -501,5 +509,63 @@ describe('目录与外部链接', () => {
       expect(opener.open).toHaveBeenCalledWith('https://example.com');
     });
     expect(screen.queryByRole('dialog', { name: '打开外部链接' })).not.toBeInTheDocument();
+  });
+});
+
+describe('导入并阅读固定版式 PDF', () => {
+  let repository: WorkspaceRepository;
+  let services: AppServices;
+
+  // 含 PDF 头的字节即可:伪 PDF.js 引擎负责解析,不依赖真实 PDF 结构。
+  const pdfBytes = new TextEncoder().encode('%PDF-1.7\n');
+
+  beforeEach(() => {
+    repository = createInMemoryWorkspaceRepository();
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, '演示书/示例PDF.pdf', pdfBytes);
+    const pdfDocument = makeFakeDocument(3);
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository: createInMemoryImportRepository(sources),
+      filePicker: createInMemoryFilePicker(['演示书/示例PDF.pdf']),
+      viewHostFactory: () => createFakeViewHost(),
+      pdfLib: makeFakeLib(pdfDocument),
+      pdfRasterize: makeFakeRasterizer(),
+    });
+    useWorkspaceStore.getState().resetToDefault();
+    useLibraryStore.getState().resetToDefault();
+    useReaderRuntime.setState({ documents: new Map() });
+
+    // PDF 渲染器在容器挂载时使用 ResizeObserver 与 canvas 2d 上下文。
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      {} as CanvasRenderingContext2D,
+    );
+  });
+
+  it('导入固定版式 PDF 后可从书库打开并创建阅读标签', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => {
+      expect(screen.getByText('示例 PDF')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入 1 份文件/);
+
+    const openButton = await screen.findByRole('button', { name: /打开 示例 PDF/ });
+    await user.click(openButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /示例 PDF/ })).toBeInTheDocument();
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
   });
 });

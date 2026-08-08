@@ -19,8 +19,14 @@ export interface BookDocumentMetadata {
  * 都集中在 BookDocument 的 EPUB 实现内,不泄漏到上层。
  */
 export interface BookDocument {
-  readonly format: 'epub';
+  readonly format: 'epub' | 'pdf';
   readonly metadata: BookDocumentMetadata;
+
+  /**
+   * 生成封面图像(Blob)。EPUB 封面提取由托管封面系统承担,本接口为可选;
+   * PDF 实现渲染首页为封面。不可用或尚未实现时返回 null。
+   */
+  getCover?(): Promise<Blob | null>;
 
   /** 挂载到给定容器并打开文档。容器必须是已插入 DOM 的元素。 */
   open(container: HTMLElement): Promise<void>;

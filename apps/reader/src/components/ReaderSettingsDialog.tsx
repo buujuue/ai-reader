@@ -2,6 +2,8 @@ import { RotateCcw, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import { formatFromSourceFileName } from '../domain/library/materialFormat';
+import type { PdfFitMode } from '../domain/reader/readingLocation';
 import type { FontFamilyKey, ReadingFlow, ReadingTheme, ReadingTypography } from '../domain/reader/typography';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
@@ -19,6 +21,13 @@ const THEME_LABELS: Record<ReadingTheme, string> = {
   dark: '深色',
 };
 
+const PDF_FIT_LABELS: Record<PdfFitMode, string> = {
+  width: '宽度',
+  height: '高度',
+  page: '整页',
+  actual: '实际大小',
+};
+
 /**
  * 排版设置对话框:调整当前激活阅读视图所属材料的字体、字号、行距、页边距、
  * 主题与分页/滚动模式,并可将材料级覆盖恢复为全局默认。
@@ -34,20 +43,23 @@ export function ReaderSettingsDialog() {
 
   const global = useWorkspaceStore((state) => state.globalReadingTypography);
   const materialTypography = useWorkspaceStore((state) => state.materialTypography);
+  const editorGroups = useWorkspaceStore((state) => state.editorGroups);
   const materials = useLibraryStore((state) => state.materials);
 
   if (!viewId) {
     return null;
   }
 
-  const view = useWorkspaceStore
-    .getState()
-    .editorGroups.flatMap((group) => group.views)
-    .find((v) => v.id === viewId);
+  const view = editorGroups.flatMap((group) => group.views).find((v) => v.id === viewId);
   const material = materials.find((m) => m.id === view?.materialId) ?? null;
   if (!view || !material) {
     return null;
   }
+
+  const isPdf = formatFromSourceFileName(material.sourceFileName) === 'pdf';
+  const pdfLocation = view.location?.kind === 'pdf' ? view.location : null;
+  const pdfZoom = pdfLocation?.zoom ?? 100;
+  const pdfFit = pdfLocation?.fit ?? 'width';
 
   const override = materialTypography[material.id] ?? null;
   const effective: ReadingTypography = override
@@ -56,6 +68,27 @@ export function ReaderSettingsDialog() {
 
   const apply = (patch: Partial<ReadingTypography>) => {
     void commands.execute(COMMAND_IDS.readerApplyTypography, viewId, patch).catch(console.error);
+  };
+
+  // PDF 流模式走专用 Command(仅作用于 PDF 阅读视图并持久化);其余格式沿用排版。
+  const applyFlow = (flow: ReadingFlow) => {
+    if (isPdf) {
+      void commands.execute(COMMAND_IDS.readerSetPdfFlow, viewId, flow).catch(console.error);
+    } else {
+      apply({ flow });
+    }
+  };
+
+  const applyPdfZoom = (zoom: number) => {
+    void commands
+      .execute(COMMAND_IDS.readerSetPdfViewport, viewId, zoom, pdfFit)
+      .catch(console.error);
+  };
+
+  const applyPdfFit = (fit: PdfFitMode) => {
+    void commands
+      .execute(COMMAND_IDS.readerSetPdfViewport, viewId, pdfZoom, fit)
+      .catch(console.error);
   };
 
   const handleReset = () => {
@@ -163,7 +196,7 @@ export function ReaderSettingsDialog() {
             <button
               key={flow}
               type="button"
-              onClick={() => apply({ flow })}
+              onClick={() => applyFlow(flow)}
               className={`flex-1 rounded-md border px-3 py-1.5 text-xs transition-colors ${
                 effective.flow === flow
                   ? 'border-sky-500 bg-sky-600/20 text-sky-200'
@@ -174,6 +207,40 @@ export function ReaderSettingsDialog() {
             </button>
           ))}
         </div>
+
+        {isPdf && (
+          <>
+            {/* 页面适配 */}
+            <label className="mb-1 block text-xs text-zinc-400">页面适配</label>
+            <div className="mb-3 flex gap-2">
+              {(Object.keys(PDF_FIT_LABELS) as PdfFitMode[]).map((fit) => (
+                <button
+                  key={fit}
+                  type="button"
+                  onClick={() => applyPdfFit(fit)}
+                  className={`flex-1 rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                    pdfFit === fit
+                      ? 'border-sky-500 bg-sky-600/20 text-sky-200'
+                      : 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'
+                  }`}
+                >
+                  {PDF_FIT_LABELS[fit]}
+                </button>
+              ))}
+            </div>
+
+            {/* 缩放 */}
+            <SliderRow
+              label="缩放"
+              valueLabel={`${pdfZoom}%`}
+              min={25}
+              max={400}
+              step={1}
+              value={pdfZoom}
+              onChange={applyPdfZoom}
+            />
+          </>
+        )}
 
         <div className="flex items-center justify-between gap-2 border-t border-zinc-800 pt-3">
           <p className="text-xs text-zinc-500">

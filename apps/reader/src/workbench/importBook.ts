@@ -1,11 +1,16 @@
 import type { FilePicker } from '../app/filePicker';
 import { EpubInspectError, inspectEpub } from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
-import type { ReadingMaterial } from '../domain/library/material';
+import type { ReadingMaterial, SourceMetadata } from '../domain/library/material';
+import { formatFromSourceFileName } from '../domain/library/materialFormat';
+import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
+import { PdfInspectError, inspectPdf } from '../domain/reader/pdf/pdfInspector';
 
 export interface ImportBookDependencies {
   importRepository: ImportRepository;
   filePicker: FilePicker;
+  /** 可注入的 PDF.js 库(测试用);缺省懒加载真实引擎。 */
+  pdfLib?: PdfJsLib | undefined;
 }
 
 /** 单个文件导入结果。失败时保留可行动的简体中文文案与分类,便于 UI 逐文件汇报。 */
@@ -36,7 +41,7 @@ export interface ImportFailure {
 export async function importBooks(
   dependencies: ImportBookDependencies,
 ): Promise<ImportOutcome[] | null> {
-  const sourcePaths = await dependencies.filePicker.pickEpubs();
+  const sourcePaths = await dependencies.filePicker.pickBooks();
   if (!sourcePaths || sourcePaths.length === 0) {
     return null;
   }
@@ -56,7 +61,7 @@ async function importOneFile(
   try {
     staged = await dependencies.importRepository.stageImport(sourcePath);
     const bytes = await dependencies.importRepository.readStagedFile(staged);
-    const { metadata } = await inspectEpub(bytes);
+    const metadata = await inspectFile(bytes, staged.originalFileName, dependencies.pdfLib);
     const material = await dependencies.importRepository.commitImport(staged, metadata);
     return {
       kind: 'success',
@@ -81,9 +86,27 @@ async function importOneFile(
   }
 }
 
+/** 按源文件扩展名分派检查:EPUB 用 zip 清单解析,PDF 用 PDF.js 元数据解析。 */
+async function inspectFile(
+  bytes: Uint8Array,
+  originalFileName: string,
+  pdfLib?: PdfJsLib,
+): Promise<SourceMetadata> {
+  const format = formatFromSourceFileName(originalFileName);
+  if (format === 'pdf') {
+    const result = await inspectPdf(bytes, pdfLib);
+    return result.metadata;
+  }
+  if (format === 'epub') {
+    const result = await inspectEpub(bytes);
+    return result.metadata;
+  }
+  throw new PdfInspectError('不支持的文件格式:仅支持 EPUB 与 PDF', 'unsupported');
+}
+
 /** 把任意导入阶段的错误归类为带行动提示的领域化失败。 */
 export function classifyImportError(error: unknown): ImportFailure {
-  if (error instanceof EpubInspectError) {
+  if (error instanceof EpubInspectError || error instanceof PdfInspectError) {
     return { kind: error.kind, message: error.message };
   }
   const text = error instanceof Error ? error.message : String(error);

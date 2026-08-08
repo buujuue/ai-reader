@@ -35,11 +35,27 @@ impl Default for ReadingTypography {
 
 /// 阅读位置(ReadingLocation):可序列化、可由 BookDocument 恢复的视图位置。
 /// Rust 只原样存取,不理解渲染器语义。
+///
+/// EPUB 使用 `cfi`;PDF 使用 `page`/`scroll_top`/`zoom`/`fit`。字段均为可选,
+/// 以便同一结构兼容两种格式与旧数据(serde 缺失字段回退 None)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingLocation {
     pub kind: String,
-    pub cfi: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfi: Option<String>,
+    /// 1 起始页码(PDF)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<i64>,
+    /// 滚动模式下的滚动位移像素(PDF)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_top: Option<i64>,
+    /// 缩放百分比整数,如 100 表示 100%(PDF)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<i64>,
+    /// 页面适配模式:`width`|`height`|`page`|`actual`(PDF)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<String>,
 }
 
 /// 导航历史节点结构。Rust 只原样存取,不理解导航语义。
@@ -211,12 +227,20 @@ mod tests {
                     material_id: "mat-1".to_string(),
                     location: Some(ReadingLocation {
                         kind: "epub".to_string(),
-                        cfi: "epubcfi(/6/4[chap])!/4/2/2/1:0".to_string(),
+                        cfi: Some("epubcfi(/6/4[chap])!/4/2/2/1:0".to_string()),
+                        page: None,
+                        scroll_top: None,
+                        zoom: None,
+                        fit: None,
                     }),
                     history: NavigationHistory {
                         positions: vec![ReadingLocation {
                             kind: "epub".to_string(),
-                            cfi: "epubcfi(/6/3)".to_string(),
+                            cfi: Some("epubcfi(/6/3)".to_string()),
+                            page: None,
+                            scroll_top: None,
+                            zoom: None,
+                            fit: None,
                         }],
                         index: 0,
                     },

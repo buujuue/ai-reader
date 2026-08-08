@@ -51,7 +51,7 @@ function createInMemoryBatchHarness(): ImportBatchContractHarness {
 
 function createPicker(paths: string[] | null): FilePicker {
   return {
-    async pickEpubs() {
+    async pickBooks() {
       return paths ? [...paths] : null;
     },
     async pickImage() {

@@ -9,11 +9,18 @@ import {
   type FoliateViewHostFactory,
 } from '../domain/reader/foliateViewHost';
 import { back as historyBack, forward as historyForward } from '../domain/reader/navigationHistory';
+import type { PdfFitMode } from '../domain/reader/readingLocation';
+import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
+import { inspectPdf } from '../domain/reader/pdf/pdfInspector';
+import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
+import { loadPdfLib } from '../domain/reader/pdf/pdfLibrary';
+import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import type { ReadingTypography } from '../domain/reader/typography';
 import { resolveTypography } from '../domain/reader/typography';
 import { inspectEpub } from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
 import type { ReadingMaterial } from '../domain/library/material';
+import { formatFromSourceFileName, type MaterialFormat } from '../domain/library/materialFormat';
 import type { ReadingLocation } from '../domain/reader/readingLocation';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { cancelAllSearches, cancelSearch, clearSearch, runSearch } from './searchRunner';
@@ -31,6 +38,10 @@ export interface ReaderCommandDependencies {
   annotationRepository?: AnnotationRepository;
   viewHostFactory?: FoliateViewHostFactory;
   externalUrlOpener?: ExternalUrlOpener;
+  /** 可注入的 PDF.js 库(测试用);缺省懒加载真实引擎。 */
+  pdfLib?: PdfJsLib | undefined;
+  /** 可注入的页面光栅化函数(测试用)。 */
+  pdfRasterize?: PdfPageRasterizer | undefined;
 }
 
 /**
@@ -82,6 +93,51 @@ async function createEpubDocument(
     metadata,
     viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
   });
+}
+
+/**
+ * 读取并检查托管 PDF 字节,构造 BookDocument。
+ * 返回 null 表示材料不是可读的 PDF。
+ */
+async function createPdfDocument(
+  dependencies: ReaderCommandDependencies,
+  material: ReadingMaterial,
+): Promise<BookDocument | null> {
+  const bytes = await dependencies.importRepository.readManagedFile(material.id);
+  let metadata;
+  try {
+    const result = await inspectPdf(bytes, dependencies.pdfLib);
+    metadata = result.metadata;
+  } catch {
+    return null;
+  }
+  return new PdfBookDocument({
+    bytes,
+    metadata,
+    pdfLib: dependencies.pdfLib,
+    rasterize: dependencies.pdfRasterize,
+  });
+}
+
+/** 按材料格式分派创建对应 BookDocument;未知格式返回 null。 */
+async function createDocumentForMaterial(
+  dependencies: ReaderCommandDependencies,
+  material: ReadingMaterial,
+): Promise<BookDocument | null> {
+  const format = formatFromSourceFileName(material.sourceFileName);
+  switch (format) {
+    case 'pdf':
+      return createPdfDocument(dependencies, material);
+    case 'epub':
+      return createEpubDocument(dependencies, material);
+    default:
+      return null;
+  }
+}
+
+/** 材料格式的展示用途(供 PDF 视口命令判断当前材料是否支持 PDF 视口)。 */
+function materialFormatOf(material: ReadingMaterial): MaterialFormat {
+  return formatFromSourceFileName(material.sourceFileName);
 }
 
 /**
@@ -177,7 +233,7 @@ export function registerReaderCommands(
     }
     const viewId = useWorkspaceStore.getState().openView(material.id);
     try {
-      const document = await createEpubDocument(dependencies, material);
+      const document = await createDocumentForMaterial(dependencies, material);
       if (!document) {
         useWorkspaceStore.getState().closeView(viewId);
         throw new Error(`无法打开阅读材料:${material.title}`);
@@ -390,13 +446,43 @@ export function registerReaderCommands(
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
+  registry.register(COMMAND_IDS.readerSetPdfViewport, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const zoom = args[1] as number | undefined;
+    const fit = args[2] as PdfFitMode | undefined;
+    if (!viewId || typeof zoom !== 'number' || !fit) return;
+    const document = useReaderRuntime.getState().getDocument(viewId);
+    if (!(document instanceof PdfBookDocument)) return;
+    const clamped = Math.min(400, Math.max(25, Math.round(zoom)));
+    document.setViewport(clamped, fit);
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+  });
+
+  registry.register(COMMAND_IDS.readerSetPdfFlow, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const flow = args[1] as 'paginated' | 'scrolled' | undefined;
+    if (!viewId || !flow) return;
+    const view = findView(viewId);
+    const document = useReaderRuntime.getState().getDocument(viewId);
+    if (!view || !(document instanceof PdfBookDocument)) return;
+    const store = useWorkspaceStore.getState();
+    const merged = { ...store.materialTypography[view.materialId], flow };
+    useWorkspaceStore.getState().setMaterialTypography(view.materialId, merged);
+    const effective = resolveTypography(
+      store.globalReadingTypography,
+      useWorkspaceStore.getState().materialTypography[view.materialId],
+    );
+    document.applyTypography(effective);
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+  });
+
   registry.register(COMMAND_IDS.readerRestoreView, async (...args: unknown[]) => {
     const viewId = args[0] as string | undefined;
     const material = args[1] as ReadingMaterial | undefined;
     const location = (args[2] as ReadingLocation | null | undefined) ?? null;
     if (!viewId || !material) return;
 
-    const document = await createEpubDocument(dependencies, material);
+    const document = await createDocumentForMaterial(dependencies, material);
     if (!document) return;
     useReaderRuntime.getState().setDocument(viewId, document);
     if (location) {
