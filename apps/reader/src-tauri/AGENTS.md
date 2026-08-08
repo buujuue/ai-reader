@@ -10,8 +10,8 @@ Cargo workspace 成员（见根 `Cargo.toml`）。Rust 拥有持久化、文件�
 | `src/main.rs` | 二进制入口 |
 | `src/error.rs` | 统一错误类型 `AppError` |
 | `src/fs.rs` | 托管文件布局 `LibraryPaths`（暂存/书库目录）、流式复制 + SHA-256 指纹 |
-| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供 `load_workspace_state` / `save_workspace_state`；`import.rs` 提供 `stage_import` / `read_staged_file` / `commit_import` / `list_materials` / `read_managed_file` / `recover_imports` |
-| `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`（含 Editor Group / 阅读视图 / 阅读位置 DTO）；`import.rs` 实现 `ImportRepository`（stage → inspect → commit，含 `read_managed` 读取托管文件） |
+| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供 `load_workspace_state` / `save_workspace_state`；`import.rs` 提供 `stage_import` / `read_staged_file` / `discard_import` / `commit_import` / `list_materials` / `read_managed_file` / `recover_imports` |
+| `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`（含 Editor Group / 阅读视图 / 阅读位置 DTO）；`import.rs` 实现 `ImportRepository`（stage → inspect → commit，含 `discard` 丢弃暂存、`read_managed` 读取托管文件） |
 | `src/db/migrations/` | 编号递增的 SQL 迁移文件，当前 `0001_workspace.sql`、`0002_materials.sql` |
 | `capabilities/default.json` | 最小权限 Capability（含 导入所需的 `dialog:default`） |
 | `tauri.conf.json` | 窗口、产品标识与打包配置 |

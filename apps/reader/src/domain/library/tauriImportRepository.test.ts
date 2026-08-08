@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { importRepositoryContract, type ImportContractHarness } from './importRepository.contract';
+import { importBatchContract, type ImportBatchContractHarness } from './importBatch.contract';
 import {
   createTauriImportRepository,
   IMPORT_COMMAND_NAMES,
 } from './tauriImportRepository';
 import type { TauriInvoke } from '../tauriInvoke';
 import type { ReadingMaterial, StagedImport } from './material';
+import type { FilePicker } from '../../app/filePicker';
 
 interface FakeStaged {
   bytes: Uint8Array;
@@ -43,6 +45,11 @@ function createFakeTauriBackend(): { invoke: TauriInvoke; registerSource: (name:
           throw new Error('staged file missing');
         }
         return btoaBinary(entry.bytes);
+      }
+      case IMPORT_COMMAND_NAMES.discard: {
+        const staged = (args as { staged?: unknown }).staged as StagedImport;
+        stashed.delete(staged.id);
+        return null;
       }
       case IMPORT_COMMAND_NAMES.commit: {
         const staged = (args as { staged?: unknown }).staged as StagedImport;
@@ -112,14 +119,38 @@ function createTauriHarness(): ImportContractHarness {
   };
 }
 
+function createTauriBatchHarness(): ImportBatchContractHarness {
+  let backend = createFakeTauriBackend();
+  let repository = createTauriImportRepository(backend.invoke);
+
+  return {
+    createRepository() {
+      backend = createFakeTauriBackend();
+      repository = createTauriImportRepository(backend.invoke);
+      return repository;
+    },
+    registerSource(path, bytes) {
+      backend.registerSource(path, bytes);
+    },
+    createPicker(paths) {
+      return { async pickEpubs() { return paths ? [...paths] : null; } } satisfies FilePicker;
+    },
+  };
+}
+
 describe('ImportRepository 契约 · Tauri Adapter', () => {
   importRepositoryContract(createTauriHarness());
+});
+
+describe('批量导入契约 · Tauri Adapter', () => {
+  importBatchContract(createTauriBatchHarness());
 });
 
 describe('TauriImportRepository 边界映射', () => {
   it('使用稳定的 snake_case Tauri 命令名', async () => {
     expect(IMPORT_COMMAND_NAMES.stage).toBe('stage_import');
     expect(IMPORT_COMMAND_NAMES.readStaged).toBe('read_staged_file');
+    expect(IMPORT_COMMAND_NAMES.discard).toBe('discard_import');
     expect(IMPORT_COMMAND_NAMES.commit).toBe('commit_import');
     expect(IMPORT_COMMAND_NAMES.list).toBe('list_materials');
     expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');

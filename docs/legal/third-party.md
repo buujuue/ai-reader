@@ -54,3 +54,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 ## 借鉴说明
 
 本项目架构与阅读行为大量参考 [readest/readest](https://github.com/readest/readest)(AGPL-3.0),但为独立重写,不复制其应用层代码、状态模型或用户数据格式。若未来直接移植任何 Readest 代码片段,将逐处登记来源、许可与署名。
+
+已借鉴的实现模式:
+
+- 批量文件选择:参照 Readest `apps/readest-app/src/services/nativeAppService.ts` 的 `selectFiles`,对 Tauri dialog 使用 `open({ multiple: true })` 一次选择多份文件;本项目的 `FilePicker.pickEpubs()` 与 `filePicker.ts` 仅复用该模式,不复制其路径作用域、SAF 解析等外围逻辑。

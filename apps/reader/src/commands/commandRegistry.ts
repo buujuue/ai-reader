@@ -1,7 +1,7 @@
 export const COMMAND_IDS = {
   workbenchTogglePrimarySidebar: 'workbench.togglePrimarySidebar',
   workbenchSaveState: 'workbench.saveState',
-  libraryImportOne: 'library.importOne',
+  libraryImport: 'library.import',
   libraryRefresh: 'library.refresh',
   libraryOpenBook: 'library.openBook',
   readerNextPage: 'reader.nextPage',

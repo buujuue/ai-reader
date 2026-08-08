@@ -7,6 +7,7 @@ import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
 export const IMPORT_COMMAND_NAMES = {
   stage: 'stage_import',
   readStaged: 'read_staged_file',
+  discard: 'discard_import',
   commit: 'commit_import',
   list: 'list_materials',
   readManaged: 'read_managed_file',
@@ -81,6 +82,9 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
         throw new Error('staged file bytes payload is not a string');
       }
       return base64ToBytes(raw);
+    },
+    async discardImport(staged: StagedImport): Promise<void> {
+      await invokeFn(IMPORT_COMMAND_NAMES.discard, { staged });
     },
     async commitImport(staged: StagedImport, metadata: SourceMetadata): Promise<ReadingMaterial> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.commit, { staged, metadata });

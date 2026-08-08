@@ -37,6 +37,10 @@ export function createInMemoryImportRepository(
       return new Uint8Array(bytes);
     },
 
+    async discardImport(stagedImport): Promise<void> {
+      stagedBytes.delete(stagedImport.id);
+    },
+
     async commitImport(stagedImport, metadata): Promise<ReadingMaterial> {
       const existing = byFingerprint.get(stagedImport.fingerprint);
       if (existing) {

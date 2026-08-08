@@ -9,8 +9,8 @@
 - `shellUiStore.ts`：外壳运行时反馈状态（`statusMessage`），不参与持久化。
 - `libraryStore.ts`：书库可序列化状态（`materials`）与 `importing` 瞬时反馈。
 - `workbenchCommands.ts`：工作台 Command 的唯一实现入口。`registerWorkbenchCommands` 注册 `workbench.togglePrimarySidebar` 与 `workbench.saveState`，先经 Repository 持久化成功后更新 Store。
-- `importBook.ts`：编排 `stage → inspect → commit` 的纯函数。
-- `libraryCommands.ts`：书库 Command 唯一实现入口（`library.importOne`、`library.refresh`）。
+- `importBook.ts`：批量导入编排 `importBooks`（一次多选、顺序 stage → inspect → commit、逐文件结果与失败分类），`classifyImportError` 把失败归类为 empty/unsupported/corrupt/permission/space/other。
+- `libraryCommands.ts`：书库 Command 唯一实现入口（`library.import`、`library.refresh`）。
 - 对应 `*.test.ts`：Store、命令、位置持久化与阅读编排行为测试。
 
 ## 依赖其它文件夹（树）

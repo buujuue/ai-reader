@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::error::AppError;
+use crate::error::{classify_io_error, AppError};
 
 /// 应用托管文件布局。所有阅读材料与暂存文件都位于应用数据目录下的私有空间,
 /// 外部原文件永不被修改或删除。
@@ -39,20 +39,20 @@ impl LibraryPaths {
 /// 以流式方式把源文件全部字节复制到目标路径,同时计算完整内容指纹(SHA-256 十六进制)。
 /// 固定 64 KiB 缓冲,不把大文件整体读入内存。
 pub fn stream_copy_with_fingerprint(source: &Path, destination: &Path) -> Result<String, AppError> {
-    let mut reader = File::open(source)?;
-    let mut writer = File::create(destination)?;
+    let mut reader = File::open(source).map_err(classify_io_error)?;
+    let mut writer = File::create(destination).map_err(classify_io_error)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
 
     loop {
-        let read = reader.read(&mut buffer)?;
+        let read = reader.read(&mut buffer).map_err(classify_io_error)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
-        writer.write_all(&buffer[..read])?;
+        writer.write_all(&buffer[..read]).map_err(classify_io_error)?;
     }
-    writer.flush()?;
+    writer.flush().map_err(classify_io_error)?;
 
     Ok(hex(&hasher.finalize()))
 }
@@ -68,7 +68,7 @@ fn hex(bytes: &[u8]) -> String {
 /// 读取文件全部字节。仅用于把暂存文件交给 TypeScript 端检查格式与提取元数据,
 /// 不用于大文件指纹计算(那部分始终走流式)。
 pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>, AppError> {
-    Ok(std::fs::read(path)?)
+    std::fs::read(path).map_err(classify_io_error)
 }
 
 #[cfg(test)]

@@ -6,6 +6,8 @@ export interface ImportRepository {
   stageImport(sourcePath: string): Promise<StagedImport>;
   /** 读取暂存文件字节,交给 BookDocument 检查格式与提取元数据。 */
   readStagedFile(staged: StagedImport): Promise<Uint8Array>;
+  /** 丢弃一份不再需要的暂存文件(检查失败或用户中止时调用);暂存文件不存在时幂等。 */
+  discardImport(staged: StagedImport): Promise<void>;
   /** 提交导入:去重、生成 BookId、写入 ready 记录并原子移动托管文件。 */
   commitImport(staged: StagedImport, metadata: SourceMetadata): Promise<ReadingMaterial>;
   /** 列出活跃书库中的阅读材料。 */

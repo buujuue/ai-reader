@@ -3,7 +3,7 @@ use std::path::Path;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
+use crate::error::{classify_io_error, AppError};
 use crate::fs::{read_file_bytes, stream_copy_with_fingerprint, LibraryPaths};
 
 /// Rust 暂存后的导入句柄。`id` 同时作为暂存文件名,TS 端据此读取字节检查格式。
@@ -81,6 +81,15 @@ impl<'a> ImportRepository<'a> {
         read_file_bytes(&stash_path)
     }
 
+    /// 丢弃一份不再需要的暂存文件(检查失败或用户中止时调用)。幂等:暂存文件不存在不报错。
+    pub fn discard(&self, staged: &StagedImport, paths: &LibraryPaths) -> Result<(), AppError> {
+        let stash_path = paths.stash_path(&staged.id);
+        if stash_path.is_file() {
+            std::fs::remove_file(&stash_path).map_err(classify_io_error)?;
+        }
+        Ok(())
+    }
+
     /// 读取已提交托管文件中某一本的原始字节,交给前端打开阅读。
     pub fn read_managed(&self, material_id: &str, paths: &LibraryPaths) -> Result<Vec<u8>, AppError> {
         if self.find_by_id(material_id)?.is_none() {
@@ -109,7 +118,7 @@ impl<'a> ImportRepository<'a> {
         let id = uuid::Uuid::new_v4().to_string();
         let managed_path = paths.managed_path(&id);
         std::fs::rename(paths.stash_path(&staged.id), &managed_path)
-            .map_err(|source| AppError::ImportCommit(source.to_string()))?;
+            .map_err(classify_io_error)?;
 
         if let Err(error) = self.connection.execute(
             "INSERT INTO materials (id, status, fingerprint, title, author, language, source_file_name)
@@ -296,6 +305,47 @@ mod tests {
     }
 
     #[test]
+    fn discard_removes_staged_file() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"bytes");
+        let staged = repository.stage(&source, &paths).unwrap();
+        assert!(paths.stash_path(&staged.id).is_file());
+
+        repository.discard(&staged, &paths).unwrap();
+
+        assert!(!paths.stash_path(&staged.id).exists());
+    }
+
+    #[test]
+    fn discard_is_idempotent_when_staged_file_already_gone() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let staged = StagedImport {
+            id: "already-gone".to_string(),
+            original_file_name: "book.epub".to_string(),
+            fingerprint: "abc".to_string(),
+        };
+
+        repository.discard(&staged, &paths).unwrap();
+    }
+
+    #[test]
+    fn stage_missing_source_surfaces_typed_io_error() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+
+        let error = repository
+            .stage(&paths.stash_dir.join("no-such.epub"), &paths)
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::Io(_)));
+    }
+
+    #[test]
     fn commit_moves_file_to_managed_library_writes_ready_record_and_keeps_source() {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
@@ -369,7 +419,7 @@ mod tests {
             .commit(&staged, &MaterialMetadata::default(), &paths)
             .unwrap_err();
 
-        assert!(matches!(error, AppError::ImportCommit(_)));
+        assert!(matches!(error, AppError::Io(_)));
     }
 
     #[test]

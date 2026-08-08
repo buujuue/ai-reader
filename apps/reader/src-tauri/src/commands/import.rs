@@ -32,6 +32,16 @@ pub fn read_staged_file(
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// 丢弃一份不再需要的暂存文件(检查失败或用户中止时由前端调用)。
+#[tauri::command]
+pub fn discard_import(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    staged: StagedImport,
+) -> Result<(), AppError> {
+    database.with_connection(|connection| ImportRepository::new(connection).discard(&staged, &paths))
+}
+
 /// 提交导入:去重、生成 BookId、写入 ready 记录并原子移动托管文件。
 #[tauri::command]
 pub fn commit_import(

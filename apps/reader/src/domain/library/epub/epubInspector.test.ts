@@ -85,4 +85,40 @@ describe('EpubInspector', () => {
       EpubInspectError,
     );
   });
+
+  it('空字节归类为 empty 并给出可行动的文案', async () => {
+    const error = await inspectEpub(new Uint8Array(0)).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(EpubInspectError);
+    expect((error as EpubInspectError).kind).toBe('empty');
+    expect((error as EpubInspectError).message).toMatch(/为空/);
+  });
+
+  it('非 ZIP 字节归类为 unsupported', async () => {
+    const error = await inspectEpub(encode('not a zip at all')).catch((caught) => caught);
+
+    expect((error as EpubInspectError).kind).toBe('unsupported');
+  });
+
+  it('结构损坏的 EPUB 归类为 corrupt', async () => {
+    const zip = buildStoredZip([
+      {
+        name: 'META-INF/container.xml',
+        data: encode('<?xml version="1.0"?><container><rootfiles/></container>'),
+      },
+    ]);
+
+    const error = await inspectEpub(zip).catch((caught) => caught);
+
+    expect((error as EpubInspectError).kind).toBe('corrupt');
+  });
+
+  it('截断的 ZIP 归类为 corrupt', async () => {
+    const epub = buildEpub({ title: '甲' });
+    const truncated = epub.slice(0, Math.floor(epub.length / 2));
+
+    const error = await inspectEpub(truncated).catch((caught) => caught);
+
+    expect((error as EpubInspectError).kind).toBe('corrupt');
+  });
 });

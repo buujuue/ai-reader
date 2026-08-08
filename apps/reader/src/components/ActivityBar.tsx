@@ -15,7 +15,7 @@ export function ActivityBar() {
   };
 
   const handleImport = () => {
-    void commands.execute(COMMAND_IDS.libraryImportOne).catch(() => undefined);
+    void commands.execute(COMMAND_IDS.libraryImport).catch(() => undefined);
   };
 
   return (
@@ -26,7 +26,7 @@ export function ActivityBar() {
       <button
         type="button"
         aria-label="导入 EPUB"
-        title="导入 EPUB"
+        title="批量导入 EPUB(可多选)"
         onClick={handleImport}
         disabled={importing}
         className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 disabled:opacity-50"

@@ -60,7 +60,7 @@ export function createImportServices(): {
   );
   return {
     importRepository: createInMemoryImportRepository(sources),
-    filePicker: createInMemoryFilePicker(DEMO_SOURCE_PATH),
+    filePicker: createInMemoryFilePicker([DEMO_SOURCE_PATH]),
   };
 }
 

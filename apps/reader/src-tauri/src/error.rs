@@ -14,16 +14,28 @@ pub enum AppError {
     DatabaseLocked,
     #[error("文件系统操作失败:{0}")]
     Io(#[from] std::io::Error),
+    #[error("没有权限读取文件:{0}")]
+    Permission(String),
+    #[error("磁盘空间不足:{0}")]
+    DiskFull(String),
     #[error("暂存文件不存在:{0}")]
     StagedFileMissing(String),
     #[error("托管书库中不存在该阅读材料:{0}")]
     ManagedFileMissing(String),
-    #[error("导入提交失败:{0}")]
-    ImportCommit(String),
 }
 
 impl serde::Serialize for AppError {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// 把 io 错误映射为带行动语义的领域错误,便于前端按类别展示可操作的简体中文文案。
+pub fn classify_io_error(source: std::io::Error) -> AppError {
+    use std::io::ErrorKind;
+    match source.kind() {
+        ErrorKind::PermissionDenied => AppError::Permission(source.to_string()),
+        ErrorKind::StorageFull | ErrorKind::WriteZero => AppError::DiskFull(source.to_string()),
+        _ => AppError::Io(source),
     }
 }

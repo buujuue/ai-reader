@@ -52,6 +52,23 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     expect(new TextDecoder().decode(bytes)).toBe('staged-bytes');
   });
 
+  it('丢弃暂存文件后无法再读取,且不产生任何记录', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.epub', encodeUtf8('content'));
+
+    await repository.discardImport(staged);
+    await expect(repository.readStagedFile(staged)).rejects.toThrow();
+    expect(await repository.listMaterials()).toHaveLength(0);
+  });
+
+  it('丢弃一个不存在的暂存文件是幂等的', async () => {
+    const repository = harness.createRepository();
+
+    await expect(
+      repository.discardImport({ id: 'missing', originalFileName: 'book.epub', fingerprint: 'f' }),
+    ).resolves.toBeUndefined();
+  });
+
   it('恢复后暂存文件被清理,无法再读取', async () => {
     const repository = harness.createRepository();
     const staged = await harness.stage('book.epub', encodeUtf8('content'));

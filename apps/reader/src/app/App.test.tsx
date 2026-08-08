@@ -123,7 +123,7 @@ describe('阅读工作台外壳', () => {
       expect(screen.getByText('示例书')).toBeInTheDocument();
     });
     expect(screen.getByText('示例作者')).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入:示例书/);
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入 1 份文件/);
   });
 });
 

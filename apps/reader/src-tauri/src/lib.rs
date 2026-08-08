@@ -39,6 +39,7 @@ pub fn run() {
             commands::workspace::save_workspace_state,
             commands::import::stage_import,
             commands::import::read_staged_file,
+            commands::import::discard_import,
             commands::import::commit_import,
             commands::import::list_materials,
             commands::import::read_managed_file,
