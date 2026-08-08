@@ -125,6 +125,26 @@ describe('阅读工作台外壳', () => {
     expect(screen.getByText('示例作者')).toBeInTheDocument();
     expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入 1 份文件/);
   });
+
+  it('导入后按标题/作者即时筛选书库,无匹配时显示空态', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => {
+      expect(screen.getByText('示例书')).toBeInTheDocument();
+    });
+
+    const search = screen.getByRole('searchbox', { name: '筛选书库' });
+    await user.type(search, '示例作者');
+
+    expect(screen.getByText('示例书')).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, '不存在的书名');
+
+    expect(screen.getByText('没有匹配的材料')).toBeInTheDocument();
+    expect(screen.queryByText('示例书')).not.toBeInTheDocument();
+  });
 });
 
 describe('打开 EPUB 并重启续读', () => {
