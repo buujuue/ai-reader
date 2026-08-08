@@ -14,7 +14,19 @@ declare module 'foliate-js/view.js' {
     search(opts: unknown): AsyncGenerator<unknown, void, unknown>;
     clearSearch(): void;
     close(): void;
+    getCFI(index: number, range: Range): string;
+    addAnnotation(annotation: { value: string; color?: string }, remove?: boolean): unknown;
   }
 
   export function makeBook(file: File | string): Promise<unknown>;
+}
+
+/** foliate-js 覆盖层(Overlayer)的最小类型声明,用于高亮批注绘制。 */
+declare module 'foliate-js/overlayer.js' {
+  export class Overlayer {
+    static highlight(
+      rects: Array<{ left: number; top: number; right: number; bottom: number }>,
+      options?: { color?: string; padding?: number; radius?: number; vertical?: boolean },
+    ): SVGElement;
+  }
 }

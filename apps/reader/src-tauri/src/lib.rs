@@ -38,6 +38,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::workspace::load_workspace_state,
             commands::workspace::save_workspace_state,
+            commands::annotations::list_annotations,
+            commands::annotations::save_annotation,
+            commands::annotations::delete_annotation,
             commands::import::stage_import,
             commands::import::read_staged_file,
             commands::import::discard_import,

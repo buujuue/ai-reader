@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:real-render": "node scripts/verify-real-render.mjs",
     "test:real-search": "node scripts/verify-search.mjs",
+    "test:real-annotations": "node scripts/verify-annotations.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tauri": "tauri"
   },

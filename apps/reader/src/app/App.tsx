@@ -4,6 +4,7 @@ import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
+import { NoteEditorDialog } from '../components/NoteEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
 import { PurgeConfirmDialog } from '../components/PurgeConfirmDialog';
 import { ReaderSettingsDialog } from '../components/ReaderSettingsDialog';
@@ -95,6 +96,7 @@ export function App() {
       <PurgeConfirmDialog />
       <ExternalLinkDialog />
       <ReaderSettingsDialog />
+      <NoteEditorDialog />
     </div>
   );
 }

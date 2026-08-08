@@ -58,6 +58,24 @@ export interface BookDocument {
   /** 上一页。 */
   prev(): Promise<void>;
 
+  /**
+   * 生成给定内容文档中某 Range 的规范化 CFI(index 为内容文档所在章节序号)。
+   * 用于把用户选中文本转成可持久化的文本锚点。
+   */
+  getCFI(index: number, range: Range): string;
+
+  /** 读取当前内容文档所在章节序号(index);未就绪时返回 null。 */
+  getCurrentIndex(): number | null;
+
+  /** 绘制一条高亮批注(经宿主覆盖层渲染,颜色取自批注)。 */
+  addAnnotation(annotation: { value: string; color: string }): void;
+
+  /** 移除一条高亮批注的覆盖层(按 CFI)。 */
+  removeAnnotation(value: string): void;
+
+  /** 订阅对高亮覆盖层的点击(收到被点击批注的 CFI)。返回取消订阅函数。 */
+  onShowAnnotation(listener: (value: string) => void): () => void;
+
   /** 订阅书内链接点击,收到待跳转的 href。返回取消订阅函数。 */
   onInternalLink(listener: (href: string) => void): () => void;
 

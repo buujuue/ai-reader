@@ -1,6 +1,7 @@
 import type { CommandRegistry } from '../commands/commandRegistry';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { ExternalUrlOpener } from '../app/externalUrlOpener';
+import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import { EpubBookDocument } from '../domain/reader/epubBookDocument';
 import {
@@ -18,6 +19,7 @@ import type { WorkspaceRepository } from '../domain/workspace/workspaceRepositor
 import { cancelAllSearches, cancelSearch, clearSearch, runSearch } from './searchRunner';
 import { useSearchStore } from './searchStore';
 import { ThrottledPositionPersister } from './positionPersister';
+import { loadAnnotationsForView } from './annotationCommands';
 import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
@@ -26,6 +28,7 @@ import { serializeWorkspaceState } from './workbenchCommands';
 export interface ReaderCommandDependencies {
   importRepository: ImportRepository;
   workspaceRepository: WorkspaceRepository;
+  annotationRepository?: AnnotationRepository;
   viewHostFactory?: FoliateViewHostFactory;
   externalUrlOpener?: ExternalUrlOpener;
 }
@@ -144,6 +147,15 @@ export function mountViewDocument(
       if (location) {
         navigationIntents.set(viewId, 'replace');
         void document.goToLocation(location);
+      }
+      // 文档打开后加载该材料批注并绘制到覆盖层。
+      if (dependencies.annotationRepository) {
+        void loadAnnotationsForView(
+          { annotationRepository: dependencies.annotationRepository },
+          viewId,
+        ).catch((error: unknown) => {
+          console.error('加载批注失败', error);
+        });
       }
     })
     .catch((error: unknown) => {

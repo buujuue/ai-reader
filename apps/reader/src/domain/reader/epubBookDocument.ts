@@ -33,9 +33,11 @@ export class EpubBookDocument implements BookDocument {
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
   private currentLocation: ReadingLocation | null = null;
+  // 位置变化、书内/外部链接监听器在 host 就绪前也可能被订阅,统一缓冲后接线。
   private locationListeners = new Set<(location: ReadingLocation) => void>();
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
+  private contentCreateListeners = new Set<(doc: Document) => void>();
 
   constructor(options: EpubBookDocumentOptions) {
     this.bytes = options.bytes;
@@ -60,6 +62,13 @@ export class EpubBookDocument implements BookDocument {
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);
+    // host 就绪后,把此前缓冲的内容创建订阅转发给 host,并补发已存在的文档。
+    for (const listener of this.contentCreateListeners) {
+      view.onContentCreate(listener);
+      for (const doc of view.getContentDocs()) {
+        listener(doc);
+      }
+    }
   }
 
   getLocation(): ReadingLocation | null {
@@ -80,6 +89,26 @@ export class EpubBookDocument implements BookDocument {
 
   async prev(): Promise<void> {
     await this.host?.prev();
+  }
+
+  getCFI(index: number, range: Range): string {
+    return this.host?.getCFI(index, range) ?? '';
+  }
+
+  getCurrentIndex(): number | null {
+    return this.host?.getCurrentIndex() ?? null;
+  }
+
+  addAnnotation(annotation: { value: string; color: string }): void {
+    this.host?.addAnnotation(annotation);
+  }
+
+  removeAnnotation(value: string): void {
+    this.host?.removeAnnotation(value);
+  }
+
+  onShowAnnotation(listener: (value: string) => void): () => void {
+    return this.host?.onShowAnnotation(listener) ?? (() => undefined);
   }
 
   async goToHref(href: string): Promise<void> {
@@ -123,7 +152,15 @@ export class EpubBookDocument implements BookDocument {
   }
 
   onContentCreate(listener: (doc: Document) => void): () => void {
-    return this.host?.onContentCreate(listener) ?? (() => undefined);
+    // host 可能尚未就绪(组件在 open() 完成前订阅),先缓冲,待 host 就绪后统一转发。
+    this.contentCreateListeners.add(listener);
+    if (this.host) {
+      this.host.onContentCreate(listener);
+      for (const doc of this.host.getContentDocs()) {
+        listener(doc);
+      }
+    }
+    return () => this.contentCreateListeners.delete(listener);
   }
 
   onLocationChange(listener: (location: ReadingLocation) => void): () => void {
@@ -139,6 +176,7 @@ export class EpubBookDocument implements BookDocument {
     this.locationListeners.clear();
     this.internalLinkListeners.clear();
     this.externalLinkListeners.clear();
+    this.contentCreateListeners.clear();
   }
 
   private wireSecurity(): void {

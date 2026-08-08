@@ -38,15 +38,16 @@ describe('元数据覆盖命令', () => {
   it('updateMetadata 用平台返回的权威结果更新书库', async () => {
     const deps = makeDeps();
     const registry = new CommandRegistry();
-    useLibraryStore.getState().setMaterials([await seedOne(deps.importRepository)]);
+    const material = await seedOne(deps.importRepository);
+    useLibraryStore.getState().setMaterials([material]);
     registerLibraryCommands(registry, deps);
 
-    await registry.execute(COMMAND_IDS.libraryUpdateMetadata, 'mat-1', '整理标题', '整理作者');
+    await registry.execute(COMMAND_IDS.libraryUpdateMetadata, material.id, '整理标题', '整理作者');
 
-    const material = useLibraryStore.getState().materials[0];
-    expect(material?.title).toBe('整理标题');
-    expect(material?.author).toBe('整理作者');
-    expect(material?.source.title).toBe('来源标题');
+    const updated = useLibraryStore.getState().materials[0];
+    expect(updated?.title).toBe('整理标题');
+    expect(updated?.author).toBe('整理作者');
+    expect(updated?.source.title).toBe('来源标题');
     expect(useShellUiStore.getState().statusMessage).toMatch(/已保存/);
   });
 
@@ -80,28 +81,28 @@ describe('元数据覆盖命令', () => {
   it('空串与 null 一样清除该覆盖并回落到来源', async () => {
     const deps = makeDeps();
     const registry = new CommandRegistry();
-    await seedOne(deps.importRepository);
-    await deps.importRepository.applyMaterialMetadata('mat-1', '整理标题', '整理作者');
+    const material = await seedOne(deps.importRepository);
+    await deps.importRepository.applyMaterialMetadata(material.id, '整理标题', '整理作者');
     useLibraryStore.getState().setMaterials(await deps.importRepository.listMaterials());
     registerLibraryCommands(registry, deps);
 
-    await registry.execute(COMMAND_IDS.libraryUpdateMetadata, 'mat-1', '', '');
+    await registry.execute(COMMAND_IDS.libraryUpdateMetadata, material.id, '', '');
 
-    const material = useLibraryStore.getState().materials[0];
-    expect(material?.title).toBe('来源标题');
-    expect(material?.author).toBe('来源作者');
-    expect(material?.override.title).toBeNull();
+    const updated = useLibraryStore.getState().materials[0];
+    expect(updated?.title).toBe('来源标题');
+    expect(updated?.author).toBe('来源作者');
+    expect(updated?.override.title).toBeNull();
   });
 
   it('restoreMetadata 一键恢复来源元数据', async () => {
     const deps = makeDeps();
     const registry = new CommandRegistry();
-    await seedOne(deps.importRepository);
-    await deps.importRepository.applyMaterialMetadata('mat-1', '整理标题', null);
+    const material = await seedOne(deps.importRepository);
+    await deps.importRepository.applyMaterialMetadata(material.id, '整理标题', null);
     useLibraryStore.getState().setMaterials(await deps.importRepository.listMaterials());
     registerLibraryCommands(registry, deps);
 
-    await registry.execute(COMMAND_IDS.libraryRestoreMetadata, 'mat-1');
+    await registry.execute(COMMAND_IDS.libraryRestoreMetadata, material.id);
 
     expect(useLibraryStore.getState().materials[0]?.title).toBe('来源标题');
     expect(useShellUiStore.getState().statusMessage).toMatch(/恢复来源元数据/);

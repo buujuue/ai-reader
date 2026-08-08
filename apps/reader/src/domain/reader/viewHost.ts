@@ -58,6 +58,27 @@ export interface FoliateViewHost {
    * 只注入固定映射生成的 CSS 与渲染器 attribute,不放开安全边界。
    */
   applyTypography(settings: ReadingTypography): void;
+
+  /**
+   * 生成给定内容文档中某 Range 的规范化 CFI(index 为内容文档所在章节序号)。
+   * 用于把用户选中文本转成可持久化的文本锚点。
+   */
+  getCFI(index: number, range: Range): string;
+
+  /** 读取当前内容文档所在章节序号(index);未就绪时返回 null。 */
+  getCurrentIndex(): number | null;
+
+  /**
+   * 绘制一条高亮批注。`value` 为 CFI,`color` 为高亮颜色。重复绘制同一 CFI 会替换旧覆盖层。
+   */
+  addAnnotation(annotation: { value: string; color: string }): void;
+
+  /** 移除一条高亮批注的覆盖层(按 CFI)。 */
+  removeAnnotation(value: string): void;
+
+  /** 订阅对高亮覆盖层的点击(收到被点击批注的 CFI)。返回取消订阅函数。 */
+  onShowAnnotation(listener: (value: string) => void): () => void;
+
   /** 销毁并释放渲染器。 */
   close(): void;
 }

@@ -87,8 +87,11 @@ export function createInMemoryImportRepository(
         }
         return toMaterial(existing);
       }
+      // 材料身份内容寻址:由内容指纹派生,跨会话稳定。这是浏览器降级模式
+      // localStorage 批注能跨 reload 关联到同一材料的前提(演示书字节确定性)。
+      const id = materialIdFromFingerprint(stagedImport.fingerprint);
       const internal: InternalMaterial = {
-        id: stagedImport.id,
+        id,
         fingerprint: stagedImport.fingerprint,
         sourceFileName: stagedImport.originalFileName,
         source: { ...metadata },
@@ -215,6 +218,11 @@ function requireInternal(
     throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
   }
   return internal;
+}
+
+/** 由内容指纹派生稳定的材料身份(内容寻址)。 */
+function materialIdFromFingerprint(fingerprint: string): string {
+  return `mat-${fingerprint}`;
 }
 
 function findSource(

@@ -11,8 +11,11 @@ interface FakeViewElement {
   search: ReturnType<typeof vi.fn>;
   clearSearch: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
+  getCFI: ReturnType<typeof vi.fn>;
+  addAnnotation: ReturnType<typeof vi.fn>;
   lastLocation?: { cfi?: string };
   book?: { transformTarget?: EventTarget; toc?: Array<{ label?: string; href?: string; subitems?: unknown }> };
+  renderer?: { getContents?: ReturnType<typeof vi.fn> };
   addEventListener: ReturnType<typeof vi.fn>;
   removeEventListener: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
@@ -28,6 +31,8 @@ function createFakeElement(): FakeViewElement {
     search: vi.fn(),
     clearSearch: vi.fn(),
     close: vi.fn(),
+    getCFI: vi.fn().mockReturnValue('epubcfi(/6/1)!/4/2/2/1:0'),
+    addAnnotation: vi.fn(),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     remove: vi.fn(),
@@ -201,5 +206,68 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
 
     expect(element.close).toHaveBeenCalled();
     expect(element.remove).toHaveBeenCalled();
+  });
+
+  it('getCFI 委托给 foliate 生成规范化 CFI', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({});
+
+    const result = host.getCFI(0, new Range());
+
+    expect(element.getCFI).toHaveBeenCalledWith(0, expect.any(Range));
+    expect(result).toBe('epubcfi(/6/1)!/4/2/2/1:0');
+  });
+
+  it('getCurrentIndex 从渲染器读取当前章节序号', async () => {
+    const element = createFakeElement();
+    element.renderer = { getContents: vi.fn().mockReturnValue([{ doc: {}, index: 3 }]) };
+    const host = createHost(element);
+    await host.open({});
+
+    expect(host.getCurrentIndex()).toBe(3);
+  });
+
+  it('getCurrentIndex 在未就绪时返回 null', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+
+    expect(host.getCurrentIndex()).toBeNull();
+  });
+
+  it('addAnnotation 委托给 foliate 绘制高亮', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({});
+
+    host.addAnnotation({ value: 'epubcfi(/6/1)', color: '#ffd54f' });
+
+    expect(element.addAnnotation).toHaveBeenCalledWith({ value: 'epubcfi(/6/1)', color: '#ffd54f' });
+  });
+
+  it('removeAnnotation 以 remove=true 委托给 foliate 移除覆盖层', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({});
+
+    host.removeAnnotation('epubcfi(/6/1)');
+
+    expect(element.addAnnotation).toHaveBeenCalledWith({ value: 'epubcfi(/6/1)' }, true);
+  });
+
+  it('对高亮覆盖层的点击经 show-annotation 事件转发给订阅者', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    const listener = vi.fn();
+    host.onShowAnnotation(listener);
+    await host.open({});
+
+    const showHandler = element.addEventListener.mock.calls.find(
+      ([type]) => type === 'show-annotation',
+    )?.[1] as EventListener | undefined;
+    expect(showHandler).toBeDefined();
+    showHandler?.(new CustomEvent('show-annotation', { detail: { value: 'epubcfi(/6/1)' } }));
+
+    expect(listener).toHaveBeenCalledWith('epubcfi(/6/1)');
   });
 });

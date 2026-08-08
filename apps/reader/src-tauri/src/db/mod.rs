@@ -1,3 +1,4 @@
+pub mod annotations;
 pub mod import;
 pub mod workspace;
 
@@ -13,6 +14,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("migrations/0003_import_pending.sql")),
     (4, include_str!("migrations/0004_material_overrides.sql")),
     (5, include_str!("migrations/0005_material_trash.sql")),
+    (6, include_str!("migrations/0006_annotations.sql")),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -106,6 +108,7 @@ mod tests {
         assert!(tables.contains(&"workspace_state".to_string()));
         assert!(tables.contains(&"materials".to_string()));
         assert!(tables.contains(&"material_overrides".to_string()));
+        assert!(tables.contains(&"annotations".to_string()));
     }
 
     #[test]
@@ -119,7 +122,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]

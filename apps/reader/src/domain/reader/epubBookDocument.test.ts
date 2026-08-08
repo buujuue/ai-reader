@@ -49,6 +49,17 @@ function createFakeHost(): FakeHost {
     getCurrentCFI() {
       return this.cfis.at(-1) ?? null;
     },
+    getCFI() {
+      return 'epubcfi(/6/1)';
+    },
+    getCurrentIndex() {
+      return 0;
+    },
+    addAnnotation() {},
+    removeAnnotation() {},
+    onShowAnnotation() {
+      return () => undefined;
+    },
     onRelocate(listener: (cfi: string) => void) {
       relocateListeners.push(listener);
       return () => {
@@ -282,5 +293,23 @@ describe('EpubBookDocument', () => {
 
     // 未开启清洗时没有内容处理监听器,内容原样透传(既不改写也不拦截)。
     expect(host.contentData).toHaveLength(0);
+  });
+
+  it('在 host 就绪前订阅的内容创建监听会在打开后转发给 host', async () => {
+    const host = createFakeHost();
+    const forwarded: Array<(doc: Document) => void> = [];
+    host.onContentCreate = (listener: (doc: Document) => void) => {
+      forwarded.push(listener);
+      return () => undefined;
+    };
+    const book = createDocument(() => host);
+    const listener = vi.fn();
+
+    // 模拟组件在 open() 完成前订阅(此时 host 尚未创建)。
+    book.onContentCreate(listener);
+    await book.open(document.createElement('div'));
+
+    // host 就绪后缓冲的订阅被转发到 host,后续内容创建事件才会到达面板。
+    expect(forwarded).toHaveLength(1);
   });
 });

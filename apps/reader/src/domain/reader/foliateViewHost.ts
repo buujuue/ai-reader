@@ -3,6 +3,9 @@ import type { ReadingTypography } from './typography';
 import { buildTypographyCss } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 
+/** 高亮覆盖层绘制函数(foliate-js Overlayer)。 */
+import { Overlayer } from 'foliate-js/overlayer.js';
+
 export type { FoliateViewHostFactory } from './viewHost';
 
 /**
@@ -38,6 +41,8 @@ interface ExtendedFoliateView extends HTMLElement {
   search(opts: SearchOptions): AsyncGenerator<unknown, void, unknown>;
   clearSearch(): void;
   close(): void;
+  getCFI(index: number, range: Range): string;
+  addAnnotation(annotation: { value: string; color?: string }, remove?: boolean): unknown;
   lastLocation?: { cfi?: string };
   book?: {
     transformTarget?: EventTarget;
@@ -53,7 +58,7 @@ interface ExtendedRenderer {
   removeAttribute(name: string): void;
   setStyles(styles: string): void;
   /** 读取当前已排布的内容文档。 */
-  getContents?(): Array<{ doc?: Document }>;
+  getContents?(): Array<{ doc?: Document; index?: number }>;
 }
 
 /** foliate 目录节点到项目 TocItem 的映射。 */
@@ -101,6 +106,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private contentListeners = new Set<(type: string, data: string) => string>();
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
+  private showAnnotationListeners = new Set<(value: string) => void>();
 
   constructor(
     element: ExtendedFoliateView,
@@ -117,6 +123,8 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.wireContentSanitization();
     this.wireInternalLinkHandling();
     this.wireExternalLinkBlocking();
+    this.wireAnnotationDrawing();
+    this.wireShowAnnotation();
   }
 
   async init(location: unknown): Promise<void> {
@@ -243,6 +251,32 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     return () => this.element.removeEventListener('load', handler);
   }
 
+  getCFI(index: number, range: Range): string {
+    return this.element.getCFI(index, range);
+  }
+
+  getCurrentIndex(): number | null {
+    if (!this.opened) {
+      return null;
+    }
+    const contents = this.element.renderer?.getContents?.() ?? [];
+    const first = contents[0] as { index?: number } | undefined;
+    return typeof first?.index === 'number' ? first.index : null;
+  }
+
+  addAnnotation(annotation: { value: string; color: string }): void {
+    this.element.addAnnotation(annotation);
+  }
+
+  removeAnnotation(value: string): void {
+    this.element.addAnnotation({ value }, true);
+  }
+
+  onShowAnnotation(listener: (value: string) => void): () => void {
+    this.showAnnotationListeners.add(listener);
+    return () => this.showAnnotationListeners.delete(listener);
+  }
+
   close(): void {
     if (this.opened) {
       this.element.close?.();
@@ -251,6 +285,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.contentListeners.clear();
     this.internalLinkListeners.clear();
     this.externalLinkListeners.clear();
+    this.showAnnotationListeners.clear();
+    this.drawAnnotationCleanup?.();
+    this.showAnnotationCleanup?.();
     this.opened = false;
   }
 
@@ -310,4 +347,45 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private contentCleanup: (() => void) | null = null;
   private internalLinkCleanup: (() => void) | null = null;
   private externalLinkCleanup: (() => void) | null = null;
+  private drawAnnotationCleanup: (() => void) | null = null;
+  private showAnnotationCleanup: (() => void) | null = null;
+
+  /**
+   * 高亮绘制接线:foliate 在 `addAnnotation` 解析导航后派发 `draw-annotation` 事件,
+   * 携带 `draw`(把某绘制函数应用到覆盖层)与 `annotation`。这里用 Overlayer.highlight
+   * 把批注绘制成半透明高亮覆盖层,颜色取自传入批注。
+   */
+  private wireAnnotationDrawing(): void {
+    const handler: EventListener = (event) => {
+      const detail = (event as CustomEvent<{
+        draw?: (style: unknown, options?: unknown) => void;
+        annotation?: { value?: string; color?: string };
+      }>).detail;
+      const draw = detail?.draw;
+      const color = detail?.annotation?.color;
+      if (typeof draw !== 'function') {
+        return;
+      }
+      draw(Overlayer.highlight, { color: color ?? '#ffd54f' });
+    };
+    this.element.addEventListener('draw-annotation', handler);
+    this.drawAnnotationCleanup = () =>
+      this.element.removeEventListener('draw-annotation', handler);
+  }
+
+  /** 对高亮覆盖层的点击派发 `show-annotation` 事件,把被点击批注的 CFI 转发给订阅者。 */
+  private wireShowAnnotation(): void {
+    const handler: EventListener = (event) => {
+      const detail = (event as CustomEvent<{ value?: string }>).detail;
+      if (typeof detail?.value !== 'string') {
+        return;
+      }
+      for (const listener of this.showAnnotationListeners) {
+        listener(detail.value);
+      }
+    };
+    this.element.addEventListener('show-annotation', handler);
+    this.showAnnotationCleanup = () =>
+      this.element.removeEventListener('show-annotation', handler);
+  }
 }

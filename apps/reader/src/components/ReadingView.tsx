@@ -3,10 +3,13 @@ import { useEffect, useRef } from 'react';
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS, type CommandId } from '../commands/commandRegistry';
 import { ReadingInputController } from '../domain/reader/readingInput';
+import { useAnnotationStore } from '../workbench/annotationStore';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
+import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { SearchBar } from './SearchBar';
+import { SelectionToolbar } from './SelectionToolbar';
 
 /**
  * 单个阅读视图(标签)的正文区域。它把活动视图的 BookDocument 挂载到自身容器,
@@ -15,7 +18,7 @@ import { SearchBar } from './SearchBar';
  */
 export function ReadingView({ viewId }: { viewId: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { commands, importRepository, workspaceRepository } = useAppServices();
+  const { commands, importRepository, workspaceRepository, annotationRepository } = useAppServices();
   const document = useReaderRuntime((state) => state.documents.get(viewId));
 
   useEffect(() => {
@@ -34,7 +37,7 @@ export function ReadingView({ viewId }: { viewId: string }) {
       viewId,
       container,
       view?.location ?? null,
-      { importRepository, workspaceRepository },
+      { importRepository, workspaceRepository, annotationRepository },
     );
     return () => {
       // 卸载时 flush 位置并释放渲染器,但保留文档对象,便于切回标签时重新挂载。
@@ -97,9 +100,34 @@ export function ReadingView({ viewId }: { viewId: string }) {
     };
   }, [commands, viewId, document]);
 
+  // 批注交互:点击高亮覆盖层打开对应批注的笔记编辑器。
+  useEffect(() => {
+    const book = useReaderRuntime.getState().getDocument(viewId);
+    if (!book) return;
+    const materialId = useWorkspaceStore.getState().editorGroups
+      .flatMap((group) => group.views)
+      .find((view) => view.id === viewId)?.materialId;
+    if (!materialId) return;
+
+    const offShowAnnotation = book.onShowAnnotation((cfi) => {
+      const matching = useAnnotationStore
+        .getState()
+        .getMaterialAnnotations(materialId)
+        .find((annotation) => annotation.anchor.cfi === cfi);
+      if (!matching) {
+        return;
+      }
+      useShellUiStore.getState().openNoteEditor(materialId, matching.id);
+    });
+    return () => {
+      offShowAnnotation();
+    };
+  }, [viewId, document]);
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
       <SearchBar viewId={viewId} />
+      <SelectionToolbar viewId={viewId} />
       <div
         ref={containerRef}
         data-view-id={viewId}

@@ -13,6 +13,8 @@ export interface ShellUiStoreState {
   typographyEditorViewId: string | null;
   /** 目录面板是否可见(运行时状态,不持久化)。 */
   tocVisible: boolean;
+  /** 正在编辑笔记的批注(materialId + annotationId);null 表示未打开笔记编辑器。 */
+  noteEditorTarget: { materialId: string; annotationId: string } | null;
   setStatusMessage: (message: string) => void;
   clearStatusMessage: () => void;
   openMetadataEditor: (materialId: string) => void;
@@ -23,6 +25,8 @@ export interface ShellUiStoreState {
   closeExternalLinkConfirm: () => void;
   openTypographyEditor: (viewId: string) => void;
   closeTypographyEditor: () => void;
+  openNoteEditor: (materialId: string, annotationId: string) => void;
+  closeNoteEditor: () => void;
   setTocVisible: (visible: boolean) => void;
   toggleToc: () => void;
 }
@@ -34,6 +38,7 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   externalLinkUrl: null,
   typographyEditorViewId: null,
   tocVisible: false,
+  noteEditorTarget: null,
   setStatusMessage: (message) => set({ statusMessage: message }),
   clearStatusMessage: () => set({ statusMessage: '' }),
   openMetadataEditor: (materialId) => set({ metadataEditorMaterialId: materialId }),
@@ -44,6 +49,9 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   closeExternalLinkConfirm: () => set({ externalLinkUrl: null }),
   openTypographyEditor: (viewId) => set({ typographyEditorViewId: viewId }),
   closeTypographyEditor: () => set({ typographyEditorViewId: null }),
+  openNoteEditor: (materialId, annotationId) =>
+    set({ noteEditorTarget: { materialId, annotationId } }),
+  closeNoteEditor: () => set({ noteEditorTarget: null }),
   setTocVisible: (visible) => set({ tocVisible: visible }),
   toggleToc: () => set((state) => ({ tocVisible: !state.tocVisible })),
 }));

@@ -30,6 +30,10 @@ export const COMMAND_IDS = {
   readerApplyTypography: 'reader.typography.apply',
   readerResetTypography: 'reader.typography.reset',
   readerSetGlobalTypography: 'reader.typography.setGlobal',
+  annotationLoadForMaterial: 'annotation.loadForMaterial',
+  annotationCreateHighlight: 'annotation.createHighlight',
+  annotationUpdateNote: 'annotation.updateNote',
+  annotationDelete: 'annotation.delete',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];

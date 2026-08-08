@@ -26,6 +26,17 @@ function createFakeViewHost(): FoliateViewHost {
     getCurrentCFI() {
       return null;
     },
+    getCFI() {
+      return 'epubcfi(/6/1)';
+    },
+    getCurrentIndex() {
+      return 0;
+    },
+    addAnnotation() {},
+    removeAnnotation() {},
+    onShowAnnotation() {
+      return () => undefined;
+    },
     onRelocate() {
       return () => undefined;
     },
