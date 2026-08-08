@@ -11,6 +11,8 @@ declare module 'foliate-js/view.js' {
     next(): Promise<void>;
     prev(): Promise<void>;
     goTo(target: unknown): Promise<unknown>;
+    search(opts: unknown): AsyncGenerator<unknown, void, unknown>;
+    clearSearch(): void;
     close(): void;
   }
 

@@ -1,3 +1,4 @@
+import type { SearchEvent, SearchOptions } from './search';
 import type { Toc, TocItem } from './toc';
 
 /**
@@ -21,6 +22,13 @@ export interface FoliateViewHost {
   getCurrentCFI(): string | null;
   /** 读取分层目录。 */
   getTOC(): Toc;
+  /**
+   * 在当前文档内搜索正文。以异步增量方式产出进度与命中;调用方可通过
+   * `return()` 提前终止(取消)。返回的生成器自然结束时即搜索完成。
+   */
+  search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void>;
+  /** 清除搜索产生的命中高亮与临时结果。 */
+  clearSearch(): void;
   /** 订阅阅读位置变化(CFI)。返回取消订阅函数。 */
   onRelocate(listener: (cfi: string) => void): () => void;
   /** 订阅书内链接点击,收到待跳转的 href。返回取消订阅函数。 */

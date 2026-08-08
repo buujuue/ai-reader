@@ -8,6 +8,8 @@ interface FakeViewElement {
   next: ReturnType<typeof vi.fn>;
   prev: ReturnType<typeof vi.fn>;
   goTo: ReturnType<typeof vi.fn>;
+  search: ReturnType<typeof vi.fn>;
+  clearSearch: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   lastLocation?: { cfi?: string };
   book?: { transformTarget?: EventTarget; toc?: Array<{ label?: string; href?: string; subitems?: unknown }> };
@@ -23,6 +25,8 @@ function createFakeElement(): FakeViewElement {
     next: vi.fn().mockResolvedValue(undefined),
     prev: vi.fn().mockResolvedValue(undefined),
     goTo: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn(),
+    clearSearch: vi.fn(),
     close: vi.fn(),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -130,6 +134,62 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     await host.open({});
 
     expect(host.getTOC()).toEqual([{ label: '第一章', href: 'c1.xhtml', subitems: null }]);
+  });
+
+  it('search 把 foliate 的原始产出归一化为领域事件', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({});
+
+    async function* upstream() {
+      yield { progress: 0.5 };
+      yield { label: '第一章', subitems: [{ cfi: 'epubcfi(/6/1)', excerpt: { pre: '前', match: '关键词', post: '后' } }] };
+      yield { index: 1, subitems: [{ cfi: 'epubcfi(/6/2)', excerpt: { pre: 'a', match: 'b', post: 'c' } }] };
+      yield 'done';
+    }
+    element.search.mockReturnValue(upstream());
+
+    const events: Array<{ kind: string; progress?: number; cfi?: string }> = [];
+    for await (const event of host.search({ query: '关键词' })) {
+      events.push(
+        event.kind === 'progress'
+          ? { kind: 'progress', progress: event.progress }
+          : { kind: 'match', cfi: event.match.cfi },
+      );
+    }
+
+    expect(events).toEqual([
+      { kind: 'progress', progress: 0.5 },
+      { kind: 'match', cfi: 'epubcfi(/6/1)' },
+      { kind: 'match', cfi: 'epubcfi(/6/2)' },
+    ]);
+  });
+
+  it('search 把单节命中也归一化为 match 事件', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({});
+
+    async function* upstream() {
+      yield { cfi: 'epubcfi(/6/5)', excerpt: { pre: 'x', match: 'y', post: 'z' } };
+      yield 'done';
+    }
+    element.search.mockReturnValue(upstream());
+
+    const events: Array<{ kind: string; cfi?: string }> = [];
+    for await (const event of host.search({ query: 'y' })) {
+      events.push(event.kind === 'match' ? { kind: 'match', cfi: event.match.cfi } : { kind: 'progress' });
+    }
+    expect(events).toEqual([{ kind: 'match', cfi: 'epubcfi(/6/5)' }]);
+  });
+
+  it('clearSearch 委托给 foliate 清除高亮', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({});
+
+    host.clearSearch();
+    expect(element.clearSearch).toHaveBeenCalled();
   });
 
   it('close 释放渲染器并移除元素', async () => {

@@ -20,6 +20,13 @@ export const COMMAND_IDS = {
   readerBack: 'reader.back',
   readerForward: 'reader.forward',
   readerOpenExternalUrl: 'reader.openExternalUrl',
+  readerSearchOpen: 'reader.search.open',
+  readerSearchClose: 'reader.search.close',
+  readerSearchRun: 'reader.search.run',
+  readerSearchToggleCase: 'reader.search.toggleCase',
+  readerSearchNext: 'reader.search.next',
+  readerSearchPrev: 'reader.search.prev',
+  readerSearchGoTo: 'reader.search.goTo',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];

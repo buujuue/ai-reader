@@ -60,3 +60,4 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 已借鉴的实现模式:
 
 - 批量文件选择:参照 Readest `apps/readest-app/src/services/nativeAppService.ts` 的 `selectFiles`,对 Tauri dialog 使用 `open({ multiple: true })` 一次选择多份文件;本项目的 `FilePicker.pickEpubs()` 与 `filePicker.ts` 仅复用该模式,不复制其路径作用域、SAF 解析等外围逻辑。
+- 当前材料搜索:搜索能力直接复用已引入的 `foliate-js` 内置 `view.search()`/`clearSearch()`(见 `domain/reader/foliateViewHost.ts` 的归一化),不复制其应用层搜索栏。增量进度、取消与命中跳转的结果编排模式参考 Readest `apps/readest-app/src/app/reader/components/sidebar/SearchBar.tsx`,但本项目为独立的最小实现(见 `workbench/searchRunner.ts` 与 `components/SearchBar.tsx`),不复制其搜索缓存、历史、正则/邻近词等多模式外围逻辑。

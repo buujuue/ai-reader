@@ -5,9 +5,11 @@ import { createInMemoryImportRepository, addInMemorySource } from '../domain/lib
 import { buildEpub } from '../domain/library/epub/zipWriter';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
+import type { SearchEvent } from '../domain/reader/search';
 import { mountViewDocument, registerReaderCommands } from './readerCommands';
 import { useWorkspaceStore } from './workspaceStore';
 import { useReaderRuntime } from './readerRuntime';
+import { useSearchStore } from './searchStore';
 
 function createFakeViewHost(): FoliateViewHost {
   return {
@@ -35,6 +37,8 @@ function createFakeViewHost(): FoliateViewHost {
     onContentData() {
       return () => undefined;
     },
+    async *search() {},
+    clearSearch() {},
     close() {},
   };
 }
@@ -263,5 +267,195 @@ describe('Reader 导航命令', () => {
 
     host.emitInternalLink('chapter2.xhtml');
     await vi.waitFor(() => expect(host.goToHref).toHaveBeenCalledWith('chapter2.xhtml'));
+  });
+});
+
+describe('Reader 搜索命令', () => {
+  let registry: CommandRegistry;
+  let importRepository: ReturnType<typeof createInMemoryImportRepository>;
+  let workspaceRepository: ReturnType<typeof createInMemoryWorkspaceRepository>;
+
+  function createSearchHost(query: string) {
+    const host = {
+      ...createFakeViewHost(),
+      open: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      goToLocation: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      onRelocate: () => () => undefined,
+      search: vi.fn(() =>
+        (async function* () {
+          yield { kind: 'progress', progress: 1 } as const;
+          yield { kind: 'match', match: { cfi: 'epubcfi(/6/1)', excerpt: { pre: '前', match: query, post: '后' } } } as const;
+          yield { kind: 'match', match: { cfi: 'epubcfi(/6/2)', excerpt: { pre: '甲', match: query, post: '乙' } } } as const;
+        })(),
+      ),
+    };
+    return host;
+  }
+
+  async function setupWithHost(
+    host: FoliateViewHost & {
+      open: ReturnType<typeof vi.fn>;
+      search: ReturnType<typeof vi.fn>;
+    },
+  ) {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, '演示书/示例书.epub', buildEpub({ title: '示例书' }));
+    importRepository = createInMemoryImportRepository(sources);
+    const staged = await importRepository.stageImport('演示书/示例书.epub');
+    const bytes = await importRepository.readStagedFile(staged);
+    const { inspectEpub } = await import('../domain/library/epub/epubInspector');
+    const { metadata } = await inspectEpub(bytes);
+    const material = await importRepository.commitImport(staged, metadata);
+    workspaceRepository = createInMemoryWorkspaceRepository();
+    registry = new CommandRegistry();
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => host,
+    });
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(viewId)!;
+    const container = globalThis.document.createElement('div');
+    mountViewDocument(book, viewId, container, null, { importRepository, workspaceRepository });
+    await vi.waitFor(() => expect(host.open).toHaveBeenCalled());
+    return viewId;
+  }
+
+  beforeEach(() => {
+    useWorkspaceStore.getState().resetToDefault();
+    useReaderRuntime.setState({ documents: new Map() });
+    useSearchStore.setState({ views: {} });
+  });
+
+  it('搜索命令在活动视图上运行并累积命中', async () => {
+    const host = createSearchHost('关键词');
+    await setupWithHost(host);
+
+    await registry.execute(COMMAND_IDS.readerSearchRun, undefined, '关键词');
+    await vi.waitFor(() => {
+      const view = useSearchStore.getState().getView(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id);
+      expect(view.matches).toHaveLength(2);
+      expect(view.status).toBe('completed');
+    });
+  });
+
+  it('搜索命令运行后 next/prev 在命中间跳转并压入导航历史', async () => {
+    const host = createSearchHost('关键词');
+    await setupWithHost(host);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '关键词');
+    await vi.waitFor(() => expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(2));
+
+    await registry.execute(COMMAND_IDS.readerSearchNext, viewId);
+    expect(useSearchStore.getState().getView(viewId).currentIndex).toBe(0);
+    expect(host.goToLocation).toHaveBeenCalledWith('epubcfi(/6/1)');
+
+    await registry.execute(COMMAND_IDS.readerSearchNext, viewId);
+    expect(useSearchStore.getState().getView(viewId).currentIndex).toBe(1);
+    expect(host.goToLocation).toHaveBeenCalledWith('epubcfi(/6/2)');
+
+    await registry.execute(COMMAND_IDS.readerSearchPrev, viewId);
+    expect(useSearchStore.getState().getView(viewId).currentIndex).toBe(0);
+  });
+
+  it('搜索结果为空时 next 不导航', async () => {
+    const host = {
+      ...createFakeViewHost(),
+      open: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      goToLocation: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      onRelocate: () => () => undefined,
+      search: vi.fn(() => (async function* () {})()),
+    };
+    await setupWithHost(host);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '无结果');
+    await vi.waitFor(() => expect(host.search).toHaveBeenCalled());
+
+    await registry.execute(COMMAND_IDS.readerSearchNext, viewId);
+    expect(host.goToLocation).not.toHaveBeenCalled();
+  });
+
+  it('关闭搜索清理结果并清空搜索状态', async () => {
+    const host = createSearchHost('关键词');
+    await setupWithHost(host);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+
+    await registry.execute(COMMAND_IDS.readerSearchOpen, viewId);
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '关键词');
+    await vi.waitFor(() => expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(2));
+
+    await registry.execute(COMMAND_IDS.readerSearchClose, viewId);
+
+    expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(0);
+    expect(useSearchStore.getState().getView(viewId).active).toBe(false);
+  });
+
+  it('大小为写开关的命令按新开关用当前草稿重新搜索', async () => {
+    const host = createSearchHost('关键词');
+    await setupWithHost(host);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '关键词');
+    await vi.waitFor(() => expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(2));
+
+    await registry.execute(COMMAND_IDS.readerSearchToggleCase, viewId, '新草稿');
+
+    expect(useSearchStore.getState().getView(viewId).matchCase).toBe(true);
+    expect(host.search).toHaveBeenLastCalledWith({ query: '新草稿', matchCase: true });
+  });
+
+  it('新查询会取消上一个搜索任务(调用其生成器的 return)', async () => {
+    const returned = vi.fn();
+    const inner = (async function* () {
+      yield { kind: 'progress', progress: 0.5 } as const;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    })();
+    const generator = {
+      return: () => {
+        returned();
+        return inner.return(undefined);
+      },
+      throw: (value: unknown) => inner.throw(value),
+      next: (value?: unknown) => inner.next(value),
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+    const host = {
+      ...createFakeViewHost(),
+      open: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      goToLocation: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      onRelocate: () => () => undefined,
+      search: vi.fn(() => generator as AsyncGenerator<SearchEvent, void, unknown>),
+    };
+    await setupWithHost(host);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '第一次');
+    await vi.waitFor(() => expect(host.search).toHaveBeenCalledTimes(1));
+
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '第二次');
+
+    expect(host.search).toHaveBeenCalledTimes(2);
+    expect(returned).toHaveBeenCalledTimes(1);
+  });
+
+  it('关闭视图会清理其搜索状态并取消任务', async () => {
+    const host = createSearchHost('关键词');
+    await setupWithHost(host);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+
+    await registry.execute(COMMAND_IDS.readerSearchOpen, viewId);
+    await registry.execute(COMMAND_IDS.readerSearchRun, viewId, '关键词');
+    await vi.waitFor(() => expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(2));
+
+    await registry.execute(COMMAND_IDS.readerCloseView, viewId);
+
+    expect(useSearchStore.getState().getView(viewId).active).toBe(false);
+    expect(useSearchStore.getState().getView(viewId).matches).toHaveLength(0);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(0);
   });
 });

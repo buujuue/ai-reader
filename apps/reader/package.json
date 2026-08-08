@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:real-render": "node scripts/verify-real-render.mjs",
+    "test:real-search": "node scripts/verify-search.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tauri": "tauri"
   },

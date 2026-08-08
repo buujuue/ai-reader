@@ -77,6 +77,11 @@ function createFakeHost(): FakeHost {
         if (index >= 0) contentListeners.splice(index, 1);
       };
     },
+    async *search(options: import('./search').SearchOptions) {
+      yield { kind: 'progress', progress: 1 } as const;
+      yield { kind: 'match', match: { cfi: 'epubcfi(/6/1)', excerpt: { pre: '', match: options.query, post: '' } } } as const;
+    },
+    clearSearch() {},
     close() {
       this.closed = true;
     },
@@ -195,6 +200,33 @@ describe('EpubBookDocument', () => {
 
     expect(internalListener).toHaveBeenCalledWith('chapter2.xhtml');
     expect(externalListener).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('search 委托宿主并返回渐进事件', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    await book.open(document.createElement('div'));
+
+    const events: Array<{ kind: string; cfi?: string }> = [];
+    for await (const event of book.search({ query: '关键词', matchCase: false })) {
+      events.push(
+        event.kind === 'progress'
+          ? { kind: 'progress' }
+          : { kind: 'match', cfi: event.match.cfi },
+      );
+    }
+
+    expect(events).toEqual([{ kind: 'progress' }, { kind: 'match', cfi: 'epubcfi(/6/1)' }]);
+  });
+
+  it('clearSearch 委托宿主清除命中高亮', async () => {
+    const host = createFakeHost();
+    const clearSpy = vi.spyOn(host, 'clearSearch');
+    const book = createDocument(() => host);
+    await book.open(document.createElement('div'));
+
+    book.clearSearch();
+    expect(clearSpy).toHaveBeenCalledOnce();
   });
 
   it('close 销毁宿主并清空状态', async () => {

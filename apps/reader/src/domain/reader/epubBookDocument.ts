@@ -1,5 +1,6 @@
 import type { BookDocument, BookDocumentMetadata } from './bookDocument';
 import type { ReadingLocation } from './readingLocation';
+import type { SearchEvent, SearchOptions } from './search';
 import { sanitizeEpubContent } from './sanitizer';
 import type { Toc } from './toc';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
@@ -82,6 +83,19 @@ export class EpubBookDocument implements BookDocument {
 
   getTOC(): Toc {
     return this.host?.getTOC() ?? [];
+  }
+
+  search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
+    if (!this.host) {
+      return (async function* searchNoHost() {
+        /* 文档未打开,不产出任何事件 */
+      })();
+    }
+    return this.host.search(options);
+  }
+
+  clearSearch(): void {
+    this.host?.clearSearch();
   }
 
   onInternalLink(listener: (href: string) => void): () => void {

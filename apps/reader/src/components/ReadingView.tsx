@@ -4,6 +4,7 @@ import { useAppServices } from '../app/AppServicesContext';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { SearchBar } from './SearchBar';
 
 /**
  * 单个阅读视图(标签)的正文区域。它把活动视图的 BookDocument 挂载到自身容器,
@@ -40,10 +41,13 @@ export function ReadingView({ viewId }: { viewId: string }) {
   }, [importRepository, workspaceRepository, viewId, document]);
 
   return (
-    <div
-      ref={containerRef}
-      data-view-id={viewId}
-      className="h-full w-full overflow-hidden bg-zinc-950"
-    />
+    <div className="relative h-full w-full overflow-hidden bg-zinc-950">
+      <SearchBar viewId={viewId} />
+      <div
+        ref={containerRef}
+        data-view-id={viewId}
+        className="h-full w-full overflow-hidden bg-zinc-950"
+      />
+    </div>
   );
 }

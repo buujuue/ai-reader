@@ -47,6 +47,21 @@ export function App() {
     };
   }, []);
 
+  // Ctrl+F(Windows/Linux)或 Cmd+F(macOS)在当前激活阅读视图内打开搜索。
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        // 焦点在输入控件(如书库筛选、元数据编辑器)时不抢占,交给该控件自身。
+        const target = event.target as HTMLElement | null;
+        if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+        event.preventDefault();
+        void commands.execute(COMMAND_IDS.readerSearchOpen).catch(() => undefined);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [commands]);
+
   // 重启恢复:为持久化的标签重建 BookDocument 并恢复其阅读位置。
   async function restoreViews(state: WorkspaceState) {
     const materials = await importRepository.listMaterials();

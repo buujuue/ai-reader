@@ -1,3 +1,4 @@
+import type { SearchEvent, SearchOptions } from './search';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 
 export type { FoliateViewHostFactory } from './viewHost';
@@ -32,6 +33,8 @@ interface ExtendedFoliateView extends HTMLElement {
   next(): Promise<void>;
   prev(): Promise<void>;
   goTo(target: unknown): Promise<unknown>;
+  search(opts: SearchOptions): AsyncGenerator<unknown, void, unknown>;
+  clearSearch(): void;
   close(): void;
   lastLocation?: { cfi?: string };
   book?: {
@@ -45,6 +48,18 @@ interface FoliateTocNode {
   label?: string;
   href?: string;
   subitems?: FoliateTocNode[];
+}
+
+/** foliate search 产出的原始结果(归一化前的形状)。 */
+interface FoliateSearchYield {
+  progress?: number;
+  subitems?: Array<{ cfi?: string; excerpt?: import('./search').SearchExcerpt }>;
+  cfi?: string;
+  excerpt?: import('./search').SearchExcerpt;
+}
+
+function emptyExcerpt(): import('./search').SearchExcerpt {
+  return { pre: '', match: '', post: '' };
 }
 
 function toToc(items: unknown): import('./toc').Toc {
@@ -122,6 +137,36 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       return null;
     }
     return this.element.lastLocation?.cfi ?? null;
+  }
+
+  async *search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
+    const generator = this.element.search(options);
+    for await (const raw of generator) {
+      // foliate 的 search 逐节产出 {progress} 或 {label, subitems},单节搜索产出
+      // {cfi, excerpt},最后以字符串 'done' 结束。这里统一归一化为领域事件。
+      if (typeof raw === 'string') {
+        continue;
+      }
+      const result = raw as FoliateSearchYield;
+      if (typeof result.progress === 'number') {
+        yield { kind: 'progress', progress: result.progress };
+      } else if (Array.isArray(result.subitems)) {
+        for (const item of result.subitems) {
+          if (item.cfi) {
+            yield { kind: 'match', match: { cfi: item.cfi, excerpt: item.excerpt ?? emptyExcerpt() } };
+          }
+        }
+      } else if (result.cfi) {
+        yield {
+          kind: 'match',
+          match: { cfi: result.cfi, excerpt: result.excerpt ?? emptyExcerpt() },
+        };
+      }
+    }
+  }
+
+  clearSearch(): void {
+    this.element.clearSearch?.();
   }
 
   onRelocate(listener: (cfi: string) => void): () => void {

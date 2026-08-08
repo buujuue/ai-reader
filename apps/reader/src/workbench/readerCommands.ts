@@ -13,6 +13,8 @@ import type { ImportRepository } from '../domain/library/importRepository';
 import type { ReadingMaterial } from '../domain/library/material';
 import type { ReadingLocation } from '../domain/reader/readingLocation';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
+import { cancelAllSearches, cancelSearch, clearSearch, runSearch } from './searchRunner';
+import { useSearchStore } from './searchStore';
 import { ThrottledPositionPersister } from './positionPersister';
 import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
@@ -240,6 +242,56 @@ export function registerReaderCommands(
     await dependencies.externalUrlOpener.open(url);
   });
 
+  registry.register(COMMAND_IDS.readerSearchOpen, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    if (!viewId) return;
+    useSearchStore.getState().open(viewId);
+  });
+
+  registry.register(COMMAND_IDS.readerSearchClose, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    if (!viewId) return;
+    clearSearch(viewId);
+    useSearchStore.getState().close(viewId);
+  });
+
+  registry.register(COMMAND_IDS.readerSearchRun, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const query = args[1] as string | undefined;
+    if (!viewId || typeof query !== 'string') return;
+    runSearch(viewId, { query, matchCase: useSearchStore.getState().getView(viewId).matchCase });
+  });
+
+  registry.register(COMMAND_IDS.readerSearchToggleCase, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const queryFromArg = args[1] as string | undefined;
+    if (!viewId) return;
+    const view = useSearchStore.getState().getView(viewId);
+    const matchCase = !view.matchCase;
+    useSearchStore.getState().setMatchCase(viewId, matchCase);
+    // 用当前输入草稿重搜(若调用方未给草稿则回退到上次已提交查询)。
+    runSearch(viewId, { query: queryFromArg ?? view.query, matchCase });
+  });
+
+  registry.register(COMMAND_IDS.readerSearchNext, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    if (!viewId) return;
+    await navigateSearchResult(viewId, dependencies, 1);
+  });
+
+  registry.register(COMMAND_IDS.readerSearchPrev, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    if (!viewId) return;
+    await navigateSearchResult(viewId, dependencies, -1);
+  });
+
+  registry.register(COMMAND_IDS.readerSearchGoTo, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const cfi = args[1] as string | undefined;
+    if (!viewId || !cfi) return;
+    await jumpToCfi(viewId, dependencies, cfi);
+  });
+
   registry.register(COMMAND_IDS.readerCloseView, async (...args: unknown[]) => {
     const viewIdParam = args[0] as string | undefined;
     const targetId = viewIdParam ?? getActiveViewId();
@@ -251,6 +303,9 @@ export function registerReaderCommands(
       persisters.delete(targetId);
     }
     navigationIntents.delete(targetId);
+    // 销毁视图时取消并清理其搜索任务与高亮,避免异步任务写回已销毁视图。
+    clearSearch(targetId);
+    useSearchStore.getState().close(targetId);
     useReaderRuntime.getState().removeDocument(targetId);
     useWorkspaceStore.getState().closeView(targetId);
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
@@ -271,12 +326,48 @@ export function registerReaderCommands(
   });
 }
 
-/** 应用关闭时把所有视图的位置 flush 并关闭渲染器。 */
+/**
+ * 在指定视图的搜索结果中前进/后退一步并跳转到对应命中。
+ * `direction` 为 1 表示下一个,`-1` 表示上一个;越界时循环。
+ */
+async function navigateSearchResult(
+  viewId: string,
+  dependencies: ReaderCommandDependencies,
+  direction: 1 | -1,
+): Promise<void> {
+  const store = useSearchStore.getState();
+  const view = store.getView(viewId);
+  const count = view.matches.length;
+  if (count === 0) return;
+
+  const current = view.currentIndex;
+  const index = current < 0 ? (direction === 1 ? 0 : count - 1) : (current + direction + count) % count;
+  const cfi = view.matches[index]!.cfi;
+  store.setCurrentIndex(viewId, index);
+
+  await jumpToCfi(viewId, dependencies, cfi);
+}
+
+/** 在当前视图内显式跳到指定 CFI:压入导航历史并持久化位置。 */
+async function jumpToCfi(
+  viewId: string,
+  dependencies: ReaderCommandDependencies,
+  cfi: string,
+): Promise<void> {
+  const document = useReaderRuntime.getState().getDocument(viewId);
+  if (!document) return;
+  navigationIntents.set(viewId, 'push');
+  await document.goToLocation({ kind: 'epub', cfi });
+  await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+}
+
+/** 应用关闭时把当前视图位置 flush、取消搜索并关闭渲染器。 */
 export async function flushAndCloseAllReaderViews(): Promise<void> {
   for (const persister of persisters.values()) {
     await persister.dispose();
   }
   persisters.clear();
   navigationIntents.clear();
+  cancelAllSearches();
   useReaderRuntime.getState().closeAll();
 }

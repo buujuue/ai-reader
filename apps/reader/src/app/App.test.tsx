@@ -47,6 +47,8 @@ function createFakeViewHost(): FoliateViewHost {
     onContentData() {
       return () => undefined;
     },
+    async *search() {},
+    clearSearch() {},
     close() {},
   };
 }

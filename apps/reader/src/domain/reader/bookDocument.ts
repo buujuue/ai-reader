@@ -1,4 +1,5 @@
 import type { ReadingLocation } from './readingLocation';
+import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
 
 /** BookDocument 对外暴露的书籍来源元数据。 */
@@ -34,6 +35,15 @@ export interface BookDocument {
 
   /** 读取分层目录。 */
   getTOC(): Toc;
+
+  /**
+   * 在当前阅读材料内搜索正文。异步增量产出进度与命中;调用方可 `return()`
+   * 提前取消。生成器自然结束时即搜索完成。
+   */
+  search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void>;
+
+  /** 清除搜索产生的命中高亮与临时结果。 */
+  clearSearch(): void;
 
   /** 下一页。 */
   next(): Promise<void>;
