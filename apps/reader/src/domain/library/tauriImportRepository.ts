@@ -15,6 +15,10 @@ export const IMPORT_COMMAND_NAMES = {
   discard: 'discard_import',
   commit: 'commit_import',
   list: 'list_materials',
+  listTrashed: 'list_trashed',
+  trash: 'trash_material',
+  restoreMaterial: 'restore_material',
+  purge: 'purge_material',
   readManaged: 'read_managed_file',
   recover: 'recover_imports',
   applyMetadata: 'apply_material_metadata',
@@ -131,6 +135,21 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     async listMaterials(): Promise<ReadingMaterial[]> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.list);
       return assertMaterialList(raw);
+    },
+    async listTrashed(): Promise<ReadingMaterial[]> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.listTrashed);
+      return assertMaterialList(raw);
+    },
+    async trashMaterial(materialId: string): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.trash, { materialId });
+      return assertMaterialShape(raw);
+    },
+    async restoreMaterial(materialId: string): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.restoreMaterial, { materialId });
+      return assertMaterialShape(raw);
+    },
+    async purgeMaterial(materialId: string): Promise<void> {
+      await invokeFn(IMPORT_COMMAND_NAMES.purge, { materialId });
     },
     async readManagedFile(materialId: string): Promise<Uint8Array> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.readManaged, { materialId });

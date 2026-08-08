@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{classify_io_error, AppError};
@@ -145,11 +145,21 @@ impl<'a> ImportRepository<'a> {
         metadata: &MaterialMetadata,
         paths: &LibraryPaths,
     ) -> Result<ReadingMaterial, AppError> {
-        if let Some(existing) = self.find_ready_by_fingerprint(&staged.fingerprint)? {
+        // 查重看 ready 材料(含回收站):活跃材料直接返回;回收站中相同指纹则恢复原 BookId,不新建。
+        if let Some((existing, trashed)) = self.find_by_fingerprint(&staged.fingerprint)? {
             self.connection
                 .execute("DELETE FROM materials WHERE id = ?1", [&staged.id])?;
             let _ = std::fs::remove_file(paths.stash_path(&staged.id));
-            return Ok(existing);
+            if trashed {
+                self.connection.execute(
+                    "UPDATE materials SET deleted_at = NULL, updated_at = datetime('now')
+                     WHERE id = ?1",
+                    [&existing.id],
+                )?;
+            }
+            return self
+                .find_by_id(&existing.id)?
+                .ok_or_else(|| AppError::MaterialNotFound(existing.id));
         }
 
         self.connection.execute(
@@ -194,7 +204,62 @@ impl<'a> ImportRepository<'a> {
 
     /// 列出活跃书库中的阅读材料(带覆盖优先、来源兜底的有效元数据)。
     pub fn list_materials(&self) -> Result<Vec<ReadingMaterial>, AppError> {
-        self.load_materials("m.status = ?1", &[&"ready"])
+        Ok(self
+            .load_materials("m.status = ?1 AND m.deleted_at IS NULL", &[&"ready"])?
+            .into_iter()
+            .map(|(material, _)| material)
+            .collect())
+    }
+
+    /// 列出回收站中的阅读材料(普通删除保留全部数据,仅从活跃书库隐藏)。
+    pub fn list_trashed(&self) -> Result<Vec<ReadingMaterial>, AppError> {
+        Ok(self
+            .load_materials("m.status = ?1 AND m.deleted_at IS NOT NULL", &[&"ready"])?
+            .into_iter()
+            .map(|(material, _)| material)
+            .collect())
+    }
+
+    /// 普通删除:把阅读材料移入回收站并从活跃书库隐藏。
+    /// 保留 BookId、托管文件、封面、覆盖以及批注/位置/设置,以便恢复。
+    pub fn trash(&self, id: &str) -> Result<ReadingMaterial, AppError> {
+        self.ensure_active(id)?;
+        self.connection.execute(
+            "UPDATE materials SET deleted_at = datetime('now'), updated_at = datetime('now')
+             WHERE id = ?1",
+            [id],
+        )?;
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 从回收站恢复阅读材料,继续使用原 BookId 与全部阅读数据。
+    pub fn restore(&self, id: &str) -> Result<ReadingMaterial, AppError> {
+        self.ensure_trashed(id)?;
+        self.connection.execute(
+            "UPDATE materials SET deleted_at = NULL, updated_at = datetime('now')
+             WHERE id = ?1",
+            [id],
+        )?;
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 永久删除回收站中的材料:先删记录(级联清理覆盖),再移除托管文件与封面。
+    /// 若中途异常终止,启动恢复器会按「无数据库记录的孤儿文件」清理,不会留下错误的 ready 状态。
+    pub fn purge(&self, id: &str, paths: &LibraryPaths) -> Result<(), AppError> {
+        self.ensure_trashed(id)?;
+        self.connection
+            .execute("DELETE FROM materials WHERE id = ?1", [id])?;
+        let managed_path = paths.managed_path(id);
+        if managed_path.is_file() {
+            std::fs::remove_file(&managed_path).map_err(classify_io_error)?;
+        }
+        let cover_path = paths.cover_path(id);
+        if cover_path.is_file() {
+            std::fs::remove_file(&cover_path).map_err(classify_io_error)?;
+        }
+        Ok(())
     }
 
     /// 覆盖/清除标题与作者。title/author 为 None 表示清除对应覆盖并回落到来源。
@@ -354,10 +419,10 @@ impl<'a> ImportRepository<'a> {
         Ok(ids)
     }
 
-    fn find_ready_by_fingerprint(
+    fn find_by_fingerprint(
         &self,
         fingerprint: &str,
-    ) -> Result<Option<ReadingMaterial>, AppError> {
+    ) -> Result<Option<(ReadingMaterial, bool)>, AppError> {
         Ok(self
             .load_materials("m.fingerprint = ?1 AND m.status = 'ready'", &[&fingerprint])?
             .into_iter()
@@ -368,19 +433,22 @@ impl<'a> ImportRepository<'a> {
         Ok(self
             .load_materials("m.id = ?1", &[&id])?
             .into_iter()
+            .map(|(material, _)| material)
             .next())
     }
 
     /// 用 LEFT JOIN material_overrides 读取材料,并计算覆盖优先、来源兜底的有效元数据。
+    /// 返回 (有效材料, 是否在回收站)。
     fn load_materials(
         &self,
         where_clause: &str,
         params: &[&dyn rusqlite::ToSql],
-    ) -> Result<Vec<ReadingMaterial>, AppError> {
+    ) -> Result<Vec<(ReadingMaterial, bool)>, AppError> {
         let sql = "SELECT
                         m.id, m.fingerprint, m.source_file_name,
                         m.title, m.author, m.language,
-                        o.title, o.author, o.cover_source
+                        o.title, o.author, o.cover_source,
+                        m.deleted_at
                     FROM materials m
                     LEFT JOIN material_overrides o ON o.material_id = m.id";
         let full_sql = format!("{sql} WHERE {where_clause} ORDER BY m.created_at");
@@ -406,9 +474,40 @@ impl<'a> ImportRepository<'a> {
             _ => Err(AppError::MaterialNotFound(id.to_string())),
         }
     }
+
+    /// 校验材料存在、为 ready 且不在回收站(活跃),用于移入回收站。
+    fn ensure_active(&self, id: &str) -> Result<(), AppError> {
+        match self.lifecycle(id)? {
+            Some((status, trashed)) if status == "ready" && !trashed => Ok(()),
+            _ => Err(AppError::MaterialNotFound(id.to_string())),
+        }
+    }
+
+    /// 校验材料存在且在回收站,用于恢复与永久删除。
+    fn ensure_trashed(&self, id: &str) -> Result<(), AppError> {
+        match self.lifecycle(id)? {
+            Some((status, trashed)) if status == "ready" && trashed => Ok(()),
+            _ => Err(AppError::MaterialNotFound(id.to_string())),
+        }
+    }
+
+    /// 读取材料生命周期:(status, 是否在回收站)。
+    fn lifecycle(&self, id: &str) -> Result<Option<(String, bool)>, AppError> {
+        let row: Option<(String, Option<String>)> = self
+            .connection
+            .query_row(
+                "SELECT status, deleted_at FROM materials WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.map(|(status, deleted_at)| (status, deleted_at.is_some())))
+    }
 }
 
-fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<ReadingMaterial> {
+fn material_from_row(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<(ReadingMaterial, bool)> {
     let id: String = row.get(0)?;
     let fingerprint: String = row.get(1)?;
     let source_file_name: String = row.get(2)?;
@@ -418,6 +517,7 @@ fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<ReadingMaterial> {
     let override_title: Option<String> = row.get(6)?;
     let override_author: Option<String> = row.get(7)?;
     let override_cover: Option<String> = row.get(8)?;
+    let deleted_at: Option<String> = row.get(9)?;
 
     let source = SourceMetadata {
         title: source_title.clone(),
@@ -429,20 +529,23 @@ fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<ReadingMaterial> {
         author: override_author,
         cover_source: override_cover,
     };
-    Ok(ReadingMaterial {
-        id,
-        fingerprint,
-        source_file_name,
-        source,
-        title: user_override
-            .title
-            .clone()
-            .unwrap_or_else(|| source_title.clone()),
-        author: user_override.author.clone().or_else(|| source_author.clone()),
-        language: source_language,
-        cover_source: user_override.cover_source.clone(),
-        user_override,
-    })
+    Ok((
+        ReadingMaterial {
+            id,
+            fingerprint,
+            source_file_name,
+            source,
+            title: user_override
+                .title
+                .clone()
+                .unwrap_or_else(|| source_title.clone()),
+            author: user_override.author.clone().or_else(|| source_author.clone()),
+            language: source_language,
+            cover_source: user_override.cover_source.clone(),
+            user_override,
+        },
+        deleted_at.is_some(),
+    ))
 }
 
 #[cfg(test)]
@@ -460,6 +563,9 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(include_str!("migrations/0004_material_overrides.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0005_material_trash.sql"))
             .unwrap();
         connection
     }
@@ -1035,5 +1141,171 @@ mod tests {
 
         assert!(matches!(error, AppError::MaterialNotFound(_)));
         let _ = paths;
+    }
+
+    #[test]
+    fn trash_hides_from_active_and_lists_in_trash_keeping_data() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", Some("来源作者"));
+        repository
+            .apply_metadata(&material.id, Some("整理标题"), None)
+            .unwrap();
+        let external_cover = paths.stash_dir.join("trash-cover.png");
+        std::fs::write(&external_cover, b"png-bytes").unwrap();
+        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+
+        let trashed = repository.trash(&material.id).unwrap();
+
+        assert!(repository.list_materials().unwrap().is_empty());
+        let trashed_list = repository.list_trashed().unwrap();
+        assert_eq!(trashed_list.len(), 1);
+        assert_eq!(trashed_list[0].id, material.id);
+        assert_eq!(trashed_list[0].title, "整理标题");
+        assert_eq!(trashed_list[0].cover_source.as_deref(), Some(material.id.as_str()));
+        assert_eq!(trashed.id, material.id);
+        // 托管文件与封面保留。
+        assert!(paths.managed_path(&material.id).is_file());
+        assert!(paths.cover_path(&material.id).is_file());
+    }
+
+    #[test]
+    fn trash_rejects_unknown_or_already_trashed() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "甲", None);
+        repository.trash(&material.id).unwrap();
+
+        assert!(matches!(
+            repository.trash(&material.id).unwrap_err(),
+            AppError::MaterialNotFound(_)
+        ));
+        assert!(matches!(
+            repository.trash("no-such").unwrap_err(),
+            AppError::MaterialNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn restore_returns_same_book_id_with_all_data() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", Some("来源作者"));
+        repository
+            .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
+            .unwrap();
+        repository.trash(&material.id).unwrap();
+
+        let restored = repository.restore(&material.id).unwrap();
+
+        assert_eq!(restored.id, material.id);
+        assert_eq!(restored.title, "整理标题");
+        assert_eq!(restored.author.as_deref(), Some("整理作者"));
+        assert_eq!(restored.source.title, "来源标题");
+        assert_eq!(repository.list_materials().unwrap().len(), 1);
+        assert!(repository.list_trashed().unwrap().is_empty());
+        assert!(paths.managed_path(&material.id).is_file());
+    }
+
+    #[test]
+    fn restore_rejects_active_material() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "甲", None);
+
+        let error = repository.restore(&material.id).unwrap_err();
+
+        assert!(matches!(error, AppError::MaterialNotFound(_)));
+    }
+
+    #[test]
+    fn purge_removes_record_managed_file_and_cover() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", None);
+        let external_cover = paths.stash_dir.join("purge-cover.png");
+        std::fs::write(&external_cover, b"png-bytes").unwrap();
+        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository.trash(&material.id).unwrap();
+        assert!(paths.managed_path(&material.id).is_file());
+
+        repository.purge(&material.id, &paths).unwrap();
+
+        assert!(repository.list_materials().unwrap().is_empty());
+        assert!(repository.list_trashed().unwrap().is_empty());
+        assert!(!paths.managed_path(&material.id).exists());
+        assert!(!paths.cover_path(&material.id).exists());
+        let rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM materials WHERE id=?1", params![material.id], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn purge_rejects_active_material() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "甲", None);
+
+        let error = repository.purge(&material.id, &paths).unwrap_err();
+
+        assert!(matches!(error, AppError::MaterialNotFound(_)));
+        assert!(paths.managed_path(&material.id).is_file());
+    }
+
+    #[test]
+    fn reimport_same_fingerprint_restores_trashed_material_with_original_book_id() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"same-content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata { title: "甲".to_string(), ..Default::default() }, &paths)
+            .unwrap();
+        repository.trash(&material.id).unwrap();
+
+        // 重新导入相同完整内容指纹。
+        let source2 = write_source(&paths, "copy.epub", b"same-content");
+        let staged2 = repository.stage(&source2, &paths).unwrap();
+        let recomitted = repository
+            .commit(&staged2, &MaterialMetadata { title: "乙".to_string(), ..Default::default() }, &paths)
+            .unwrap();
+
+        assert_eq!(recomitted.id, material.id);
+        assert!(repository.list_trashed().unwrap().is_empty());
+        let active = repository.list_materials().unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, material.id);
+        assert!(!paths.stash_path(&staged2.id).exists());
+    }
+
+    #[test]
+    fn reimport_different_fingerprint_creates_new_material_after_trash() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "a.epub", b"content-a");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata { title: "甲".to_string(), ..Default::default() }, &paths)
+            .unwrap();
+        repository.trash(&material.id).unwrap();
+
+        let source2 = write_source(&paths, "b.epub", b"content-b");
+        let staged2 = repository.stage(&source2, &paths).unwrap();
+        let second = repository
+            .commit(&staged2, &MaterialMetadata { title: "乙".to_string(), ..Default::default() }, &paths)
+            .unwrap();
+
+        assert_ne!(second.id, material.id);
+        assert_eq!(repository.list_trashed().unwrap().len(), 1);
+        assert_eq!(repository.list_materials().unwrap().len(), 1);
     }
 }

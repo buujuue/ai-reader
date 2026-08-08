@@ -6,8 +6,8 @@
 - `bootstrap.ts`：组装 `AppServices`（`CommandRegistry` + `WorkspaceRepository` + `ImportRepository` + `FilePicker`）。`isTauriRuntime()` 检测 `__TAURI_INTERNALS__`，据此选择 Tauri Adapter 或内存 Adapter；`createAppServices()` 注册工作台、书库与阅读命令，内存降级时用演示 EPUB 种子化书库，可注入 `viewHostFactory` 供测试。
 - `filePicker.ts`：`FilePicker` 窄接口，`pickEpubs()` 一次返回多份文件路径。Tauri 端经 `@tauri-apps/plugin-dialog` 打开系统文件选择器（`multiple: true`）；内存端返回固定演示源路径数组。
 - `AppServicesContext.tsx`：React 上下文，向组件树提供 `AppServices`；`useAppServices()` 供任意组件取用。
-- `App.tsx`：工作台顶层外壳，启动时调用 `workspaceRepository.loadState()` 恢复工作区状态、执行 `library.refresh` 恢复书库，并按 `primarySidebarVisible` 组合 `ActivityBar`、`PrimarySidebar`、`EditorArea`、`StatusBar`；重启时经 `reader.restoreView` 为持久化标签重建 BookDocument 并恢复阅读位置；卸载时 flush 全部阅读位置并关闭渲染器。
-- `App.test.tsx`：应用级测试，含“打开 EPUB 并重启续读”验收路径。
+- `App.tsx`：工作台顶层外壳，启动时调用 `workspaceRepository.loadState()` 恢复工作区状态、执行 `library.refresh` 恢复书库，并按 `primarySidebarVisible` 组合 `ActivityBar`、`PrimarySidebar`、`EditorArea`、`StatusBar`，以及 `MetadataEditorDialog` / `PurgeConfirmDialog` 对话框；重启时经 `reader.restoreView` 为持久化标签重建 BookDocument 并恢复阅读位置；卸载时 flush 全部阅读位置并关闭渲染器。
+- `App.test.tsx`：应用级测试，含“打开 EPUB 并重启续读”验收路径与“回收站:安全删除资料”流程。
 
 ## 依赖其它文件夹（树）
 

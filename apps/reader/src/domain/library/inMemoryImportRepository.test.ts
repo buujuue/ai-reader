@@ -4,6 +4,7 @@ import { createInMemoryFilePicker, type FilePicker } from '../../app/filePicker'
 import { importRepositoryContract, type ImportContractHarness } from './importRepository.contract';
 import { importBatchContract, type ImportBatchContractHarness } from './importBatch.contract';
 import { metadataRepositoryContract } from './metadataRepository.contract';
+import { recycleBinRepositoryContract } from './recycleBinRepository.contract';
 import {
   addInMemorySource,
   createInMemoryImportRepository,
@@ -65,6 +66,10 @@ describe('ImportRepository 契约 · 内存 Adapter', () => {
 
 describe('元数据覆盖契约 · 内存 Adapter', () => {
   metadataRepositoryContract(createInMemoryHarness());
+});
+
+describe('回收站契约 · 内存 Adapter', () => {
+  recycleBinRepositoryContract(createInMemoryHarness());
 });
 
 describe('批量导入契约 · 内存 Adapter', () => {

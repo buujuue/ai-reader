@@ -12,6 +12,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (2, include_str!("migrations/0002_materials.sql")),
     (3, include_str!("migrations/0003_import_pending.sql")),
     (4, include_str!("migrations/0004_material_overrides.sql")),
+    (5, include_str!("migrations/0005_material_trash.sql")),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -118,7 +119,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
     }
 
     #[test]

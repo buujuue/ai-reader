@@ -12,6 +12,14 @@ export interface ImportRepository {
   commitImport(staged: StagedImport, metadata: SourceMetadata): Promise<ReadingMaterial>;
   /** 列出活跃书库中的阅读材料(带覆盖优先、来源兜底的有效元数据)。 */
   listMaterials(): Promise<ReadingMaterial[]>;
+  /** 列出回收站中的阅读材料(普通删除保留全部数据,仅从活跃书库隐藏)。 */
+  listTrashed(): Promise<ReadingMaterial[]>;
+  /** 普通删除:把阅读材料移入回收站并从活跃书库隐藏,保留 BookId、托管文件、封面与全部数据。 */
+  trashMaterial(materialId: string): Promise<ReadingMaterial>;
+  /** 从回收站恢复阅读材料,继续使用原 BookId 与全部阅读数据。 */
+  restoreMaterial(materialId: string): Promise<ReadingMaterial>;
+  /** 永久删除回收站中的材料:级联清理托管文件、封面与记录。不可恢复。 */
+  purgeMaterial(materialId: string): Promise<void>;
   /** 读取已提交托管文件的原始字节,交给前端 BookDocument 打开阅读。 */
   readManagedFile(materialId: string): Promise<Uint8Array>;
   /** 恢复中断的导入:清理暂存区与孤儿托管文件。 */

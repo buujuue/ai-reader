@@ -19,8 +19,12 @@ export function registerLibraryCommands(
   dependencies: ImportBookDependencies,
 ): void {
   registry.register(COMMAND_IDS.libraryRefresh, async () => {
-    const materials = await dependencies.importRepository.listMaterials();
+    const [materials, trashedMaterials] = await Promise.all([
+      dependencies.importRepository.listMaterials(),
+      dependencies.importRepository.listTrashed(),
+    ]);
     useLibraryStore.getState().setMaterials(materials);
+    useLibraryStore.getState().setTrashedMaterials(trashedMaterials);
   });
 
   registry.register(COMMAND_IDS.libraryUpdateMetadata, async (...args: unknown[]) => {
@@ -74,6 +78,44 @@ export function registerLibraryCommands(
     const updated = await dependencies.importRepository.restoreSourceMetadata(materialId);
     useLibraryStore.getState().updateMaterial(updated);
     useShellUiStore.getState().setStatusMessage('已恢复来源元数据');
+  });
+
+  registry.register(COMMAND_IDS.libraryTrash, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    if (!materialId) {
+      throw new Error('删除资料命令缺少材料 ID');
+    }
+    const trashed = await dependencies.importRepository.trashMaterial(materialId);
+    useLibraryStore.getState().removeMaterial(materialId);
+    useLibraryStore.getState().setTrashedMaterials([
+      ...useLibraryStore.getState().trashedMaterials.filter((item) => item.id !== trashed.id),
+      trashed,
+    ]);
+    useShellUiStore.getState().setStatusMessage(`已移入回收站:${trashed.title}`);
+  });
+
+  registry.register(COMMAND_IDS.libraryRestoreFromTrash, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    if (!materialId) {
+      throw new Error('恢复资料命令缺少材料 ID');
+    }
+    const restored = await dependencies.importRepository.restoreMaterial(materialId);
+    useLibraryStore.getState().removeTrashedMaterial(materialId);
+    useLibraryStore.getState().setMaterials([
+      ...useLibraryStore.getState().materials.filter((item) => item.id !== restored.id),
+      restored,
+    ]);
+    useShellUiStore.getState().setStatusMessage(`已恢复:${restored.title}`);
+  });
+
+  registry.register(COMMAND_IDS.libraryPurge, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    if (!materialId) {
+      throw new Error('永久删除资料命令缺少材料 ID');
+    }
+    await dependencies.importRepository.purgeMaterial(materialId);
+    useLibraryStore.getState().removeTrashedMaterial(materialId);
+    useShellUiStore.getState().setStatusMessage('已永久删除');
   });
 
   registry.register(COMMAND_IDS.libraryImport, async () => {

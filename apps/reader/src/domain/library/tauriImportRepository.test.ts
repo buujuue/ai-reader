@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { importRepositoryContract, type ImportContractHarness } from './importRepository.contract';
 import { importBatchContract, type ImportBatchContractHarness } from './importBatch.contract';
 import { metadataRepositoryContract } from './metadataRepository.contract';
+import { recycleBinRepositoryContract } from './recycleBinRepository.contract';
 import {
   createTauriImportRepository,
   IMPORT_COMMAND_NAMES,
@@ -28,6 +29,7 @@ function createFakeTauriBackend(): {
   const byFingerprint = new Map<string, ReadingMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
   const covers = new Map<string, Uint8Array>();
+  const trashed = new Set<string>();
 
   function base(id: string, title: string, author: string | null, language: string | null, fingerprint: string, sourceFileName: string): ReadingMaterial {
     return {
@@ -76,6 +78,7 @@ function createFakeTauriBackend(): {
         const existing = byFingerprint.get(staged.fingerprint);
         if (existing) {
           stashed.delete(staged.id);
+          trashed.delete(existing.id);
           return existing;
         }
         const material = base(
@@ -104,7 +107,40 @@ function createFakeTauriBackend(): {
         return btoaBinary(bytes);
       }
       case IMPORT_COMMAND_NAMES.list:
-        return [...materials.values()];
+        return [...materials.values()].filter((material) => !trashed.has(material.id));
+      case IMPORT_COMMAND_NAMES.listTrashed:
+        return [...materials.values()].filter((material) => trashed.has(material.id));
+      case IMPORT_COMMAND_NAMES.trash: {
+        const { materialId } = args as { materialId: string };
+        const current = materials.get(materialId);
+        if (!current || trashed.has(materialId)) {
+          throw new Error('material missing');
+        }
+        trashed.add(materialId);
+        return current;
+      }
+      case IMPORT_COMMAND_NAMES.restoreMaterial: {
+        const { materialId } = args as { materialId: string };
+        const current = materials.get(materialId);
+        if (!current || !trashed.has(materialId)) {
+          throw new Error('material missing');
+        }
+        trashed.delete(materialId);
+        return current;
+      }
+      case IMPORT_COMMAND_NAMES.purge: {
+        const { materialId } = args as { materialId: string };
+        const current = materials.get(materialId);
+        if (!current || !trashed.has(materialId)) {
+          throw new Error('material missing');
+        }
+        materials.delete(materialId);
+        byFingerprint.delete(current.fingerprint);
+        managedBytes.delete(materialId);
+        covers.delete(materialId);
+        trashed.delete(materialId);
+        return null;
+      }
       case IMPORT_COMMAND_NAMES.recover:
         stashed.clear();
         return null;
@@ -252,6 +288,10 @@ describe('元数据覆盖契约 · Tauri Adapter', () => {
   metadataRepositoryContract(createTauriHarness());
 });
 
+describe('回收站契约 · Tauri Adapter', () => {
+  recycleBinRepositoryContract(createTauriHarness());
+});
+
 describe('批量导入契约 · Tauri Adapter', () => {
   importBatchContract(createTauriBatchHarness());
 });
@@ -263,6 +303,10 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.discard).toBe('discard_import');
     expect(IMPORT_COMMAND_NAMES.commit).toBe('commit_import');
     expect(IMPORT_COMMAND_NAMES.list).toBe('list_materials');
+    expect(IMPORT_COMMAND_NAMES.listTrashed).toBe('list_trashed');
+    expect(IMPORT_COMMAND_NAMES.trash).toBe('trash_material');
+    expect(IMPORT_COMMAND_NAMES.restoreMaterial).toBe('restore_material');
+    expect(IMPORT_COMMAND_NAMES.purge).toBe('purge_material');
     expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');
     expect(IMPORT_COMMAND_NAMES.recover).toBe('recover_imports');
     expect(IMPORT_COMMAND_NAMES.applyMetadata).toBe('apply_material_metadata');

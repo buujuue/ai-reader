@@ -9,6 +9,7 @@ import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { createAppServices, type AppServices } from './bootstrap';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useReaderRuntime } from '../workbench/readerRuntime';
+import { useLibraryStore } from '../workbench/libraryStore';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
 
@@ -144,6 +145,105 @@ describe('阅读工作台外壳', () => {
 
     expect(screen.getByText('没有匹配的材料')).toBeInTheDocument();
     expect(screen.queryByText('示例书')).not.toBeInTheDocument();
+  });
+});
+
+describe('回收站:安全删除资料', () => {
+  let repository: WorkspaceRepository;
+  let services: AppServices;
+
+  beforeEach(() => {
+    repository = createInMemoryWorkspaceRepository();
+    services = createAppServices({ workspaceRepository: repository });
+    useWorkspaceStore.getState().resetToDefault();
+    useLibraryStore.getState().resetToDefault();
+  });
+
+  async function importAndOpenTrash(user: ReturnType<typeof userEvent.setup>) {
+    renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => {
+      expect(screen.getByText('示例书')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /移入回收站 示例书/ }));
+    await waitFor(() => {
+      expect(screen.queryByText('示例书')).not.toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /回收站/ }));
+  }
+
+  it('普通删除把材料移入回收站并从活跃书库隐藏', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => {
+      expect(screen.getByText('示例书')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /移入回收站 示例书/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('示例书')).not.toBeInTheDocument();
+    });
+    expect(useLibraryStore.getState().materials).toHaveLength(0);
+    expect(useLibraryStore.getState().trashedMaterials).toHaveLength(1);
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已移入回收站/);
+  });
+
+  it('从回收站恢复后重新回到活跃书库', async () => {
+    const user = userEvent.setup();
+    await importAndOpenTrash(user);
+    await waitFor(() => {
+      expect(screen.getByLabelText(`永久删除 示例书`)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /恢复 示例书/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText('示例书')).toBeInTheDocument();
+    });
+    expect(useLibraryStore.getState().trashedMaterials).toHaveLength(0);
+    expect(useLibraryStore.getState().materials).toHaveLength(1);
+  });
+
+  it('永久删除前需二次确认,取消不会删除任何数据', async () => {
+    const user = userEvent.setup();
+    await importAndOpenTrash(user);
+    await waitFor(() => {
+      expect(screen.getByLabelText(`永久删除 示例书`)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /永久删除 示例书/ }));
+
+    const dialog = screen.getByRole('dialog', { name: '永久删除确认' });
+    expect(dialog).toBeInTheDocument();
+    // 未输入书名时确认按钮禁用。
+    expect(screen.getByRole('button', { name: '永久删除' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(screen.queryByRole('dialog', { name: '永久删除确认' })).not.toBeInTheDocument();
+    expect(useLibraryStore.getState().trashedMaterials).toHaveLength(1);
+    expect(useLibraryStore.getState().materials).toHaveLength(0);
+  });
+
+  it('输入书名确认后永久删除,材料从回收站消失', async () => {
+    const user = userEvent.setup();
+    await importAndOpenTrash(user);
+    await waitFor(() => {
+      expect(screen.getByLabelText(`永久删除 示例书`)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /永久删除 示例书/ }));
+    await user.type(screen.getByLabelText('输入书名以确认永久删除'), '示例书');
+
+    await user.click(screen.getByRole('button', { name: '永久删除' }));
+
+    await waitFor(() => {
+      expect(useLibraryStore.getState().trashedMaterials).toHaveLength(0);
+    });
+    expect(screen.queryByRole('dialog', { name: '永久删除确认' })).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已永久删除/);
   });
 });
 

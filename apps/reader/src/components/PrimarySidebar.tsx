@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BookMarked, Search } from 'lucide-react';
+import { Archive, BookMarked, RotateCcw, Search, Trash2 } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -10,15 +10,18 @@ import { useShellUiStore } from '../workbench/shellUiStore';
 import { MaterialCover } from './MaterialCover';
 
 /**
- * 书库侧栏:紧凑封面网格 + 标题/作者即时筛选。
+ * 书库侧栏:紧凑封面网格 + 标题/作者即时筛选 + 回收站区块。
  * 迭代规则:读取领域对象(ReadingMaterial),封面按可见范围懒加载;
- * 点击或键盘激活卡片均执行既有 library.openBook Command,不绕过工作区状态所有者。
+ * 点击或键盘激活卡片均执行既有命令,不绕过工作区状态所有者。
  */
 export function PrimarySidebar() {
   const { commands } = useAppServices();
   const materials = useLibraryStore((state) => state.materials);
+  const trashedMaterials = useLibraryStore((state) => state.trashedMaterials);
   const openMetadataEditor = useShellUiStore((state) => state.openMetadataEditor);
+  const openPurgeConfirm = useShellUiStore((state) => state.openPurgeConfirm);
   const [query, setQuery] = useState('');
+  const [showTrash, setShowTrash] = useState(false);
 
   const filtered = useMemo(
     () => filterMaterialsByQuery(materials, query),
@@ -29,6 +32,18 @@ export function PrimarySidebar() {
     const material = materials.find((item) => item.id === materialId);
     if (!material) return;
     void commands.execute(COMMAND_IDS.libraryOpenBook, material).catch(() => undefined);
+  };
+
+  const handleTrash = (materialId: string) => {
+    void commands.execute(COMMAND_IDS.libraryTrash, materialId).catch(() => undefined);
+  };
+
+  const handleRestore = (materialId: string) => {
+    void commands.execute(COMMAND_IDS.libraryRestoreFromTrash, materialId).catch(() => undefined);
+  };
+
+  const handlePurge = (materialId: string) => {
+    openPurgeConfirm(materialId);
   };
 
   return (
@@ -105,21 +120,84 @@ export function PrimarySidebar() {
                       </p>
                     </div>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openMetadataEditor(material.id)}
-                    title={`编辑 ${material.title} 的元数据`}
-                    aria-label={`编辑 ${material.title} 的元数据`}
-                    className="absolute right-0.5 top-0.5 rounded-md bg-zinc-900/70 p-1 text-zinc-300 opacity-0 transition-opacity hover:text-zinc-100 focus-visible:opacity-100 group-hover:opacity-100"
-                  >
-                    <span className="text-[10px]">编辑</span>
-                  </button>
+                  <div className="absolute right-0.5 top-0.5 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => handleTrash(material.id)}
+                      title={`移入回收站 ${material.title}`}
+                      aria-label={`移入回收站 ${material.title}`}
+                      className="rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-red-300 focus-visible:opacity-100"
+                    >
+                      <Trash2 size={12} aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openMetadataEditor(material.id)}
+                      title={`编辑 ${material.title} 的元数据`}
+                      aria-label={`编辑 ${material.title} 的元数据`}
+                      className="rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-zinc-100"
+                    >
+                      <span className="text-[10px]">编辑</span>
+                    </button>
+                  </div>
                 </div>
               </li>
             );
           })}
         </ul>
       )}
+
+      {trashedMaterials.length > 0 ? (
+        <div className="border-t border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setShowTrash((visible) => !visible)}
+            aria-expanded={showTrash}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
+          >
+            <Archive size={14} aria-hidden />
+            回收站
+            <span className="ml-auto rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+              {trashedMaterials.length}
+            </span>
+          </button>
+          {showTrash ? (
+            <ul className="max-h-56 overflow-y-auto border-t border-zinc-800/60 px-2 py-1">
+              {trashedMaterials.map((material) => (
+                <li
+                  key={material.id}
+                  className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-zinc-800/50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] text-zinc-400">{material.title}</p>
+                    <p className="truncate text-[10px] text-zinc-600">
+                      {material.author ?? '未知作者'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRestore(material.id)}
+                    title={`恢复 ${material.title}`}
+                    aria-label={`恢复 ${material.title}`}
+                    className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
+                  >
+                    <RotateCcw size={13} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePurge(material.id)}
+                    title={`永久删除 ${material.title}`}
+                    aria-label={`永久删除 ${material.title}`}
+                    className="rounded p-1 text-zinc-500 transition-colors hover:bg-red-900/40 hover:text-red-300"
+                  >
+                    <Trash2 size={13} aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </aside>
   );
 }

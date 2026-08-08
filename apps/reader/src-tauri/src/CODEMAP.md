@@ -8,9 +8,9 @@ Rust 平台核心：独占 SQLite、迁移、托管文件与导入状态机，�
 - `main.rs`：二进制入口。
 - `error.rs`：统一错误类型 `AppError` 与 io 错误分类。
 - `fs.rs`：托管文件布局 `LibraryPaths`（暂存/书库目录）与流式复制 + SHA-256 完整内容指纹。
-- `commands/`：typed Tauri 命令层；`workspace.rs`（工作区状态）、`import.rs`（导入/读取/列表/恢复）。命令层只通过 `DatabaseHandle::with_connection` 访问数据库。
-- `db/`：`open_database` 顺序应用迁移、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`；`import.rs` 实现 `ImportRepository`（stage 写 pending → inspect → commit 完成/去重 → recover 完成或回滚）。
-- `db/migrations/`：编号递增的 SQL 迁移，当前 `0001_workspace.sql`、`0002_materials.sql`、`0003_import_pending.sql`。
+- `commands/`：typed Tauri 命令层；`workspace.rs`（工作区状态）、`import.rs`（导入/读取/列表/恢复/元数据覆盖/回收站）。命令层只通过 `DatabaseHandle::with_connection` 访问数据库。
+- `db/`：`open_database` 顺序应用迁移、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`；`import.rs` 实现 `ImportRepository`（stage 写 pending → inspect → commit 完成/去重/回收站去重复原 → recover 完成或回滚，以及 trash/restore/purge 回收站与元数据覆盖）。
+- `db/migrations/`：编号递增的 SQL 迁移，当前 `0001_workspace.sql`、`0002_materials.sql`、`0003_import_pending.sql`、`0004_material_overrides.sql`、`0005_material_trash.sql`。
 
 ## 依赖其它文件夹（树）
 

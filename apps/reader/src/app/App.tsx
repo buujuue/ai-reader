@@ -4,6 +4,7 @@ import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
+import { PurgeConfirmDialog } from '../components/PurgeConfirmDialog';
 import { StatusBar } from '../components/StatusBar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { WorkspaceState } from '../domain/workspace/workspaceState';
@@ -71,6 +72,7 @@ export function App() {
       </div>
       <StatusBar />
       <MetadataEditorDialog />
+      <PurgeConfirmDialog />
     </div>
   );
 }

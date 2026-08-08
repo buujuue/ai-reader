@@ -63,6 +63,48 @@ pub fn list_materials(
     database.with_connection(|connection| ImportRepository::new(connection).list_materials())
 }
 
+/// 列出回收站中的阅读材料(普通删除保留全部数据,仅从活跃书库隐藏)。
+#[tauri::command]
+pub fn list_trashed(
+    database: State<'_, DatabaseHandle>,
+) -> Result<Vec<ReadingMaterial>, AppError> {
+    database.with_connection(|connection| ImportRepository::new(connection).list_trashed())
+}
+
+/// 普通删除:把阅读材料移入回收站并从活跃书库隐藏,保留 BookId、托管文件、封面与全部数据。
+#[tauri::command]
+pub fn trash_material(
+    database: State<'_, DatabaseHandle>,
+    material_id: String,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).trash(&material_id)
+    })
+}
+
+/// 从回收站恢复阅读材料,继续使用原 BookId 与全部阅读数据。
+#[tauri::command]
+pub fn restore_material(
+    database: State<'_, DatabaseHandle>,
+    material_id: String,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).restore(&material_id)
+    })
+}
+
+/// 永久删除回收站中的材料:级联清理托管文件、封面与记录。不可恢复。
+#[tauri::command]
+pub fn purge_material(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+) -> Result<(), AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).purge(&material_id, &paths)
+    })
+}
+
 /// 读取已提交托管文件的原始字节(base64),交给前端 BookDocument 打开阅读。
 #[tauri::command]
 pub fn read_managed_file(

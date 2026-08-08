@@ -29,6 +29,8 @@ export function createInMemoryImportRepository(
   const stagedBytes = new Map<string, Uint8Array>();
   const overrides = new Map<string, MaterialOverride>();
   const covers = new Map<string, Uint8Array>();
+  /** 回收站:id 集合。普通删除只隐藏,保留全部数据;恢复即移除。 */
+  const trashed = new Set<string>();
   /** pending 记录:id → 暂存句柄。stage 时写入,commit/discard/recover 时移除。 */
   const pending = new Map<string, { originalFileName: string; fingerprint: string }>();
 
@@ -79,6 +81,10 @@ export function createInMemoryImportRepository(
       if (existing) {
         stagedBytes.delete(stagedImport.id);
         pending.delete(stagedImport.id);
+        // 回收站中相同内容指纹时恢复原 BookId,不新建。
+        if (trashed.has(existing.id)) {
+          trashed.delete(existing.id);
+        }
         return toMaterial(existing);
       }
       const internal: InternalMaterial = {
@@ -99,7 +105,46 @@ export function createInMemoryImportRepository(
     },
 
     async listMaterials(): Promise<ReadingMaterial[]> {
-      return [...materials.values()].map(toMaterial);
+      return [...materials.values()]
+        .filter((internal) => !trashed.has(internal.id))
+        .map(toMaterial);
+    },
+
+    async listTrashed(): Promise<ReadingMaterial[]> {
+      return [...materials.values()]
+        .filter((internal) => trashed.has(internal.id))
+        .map(toMaterial);
+    },
+
+    async trashMaterial(materialId): Promise<ReadingMaterial> {
+      const internal = requireInternal(materials, materialId);
+      if (trashed.has(materialId)) {
+        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+      }
+      trashed.add(materialId);
+      return toMaterial(internal);
+    },
+
+    async restoreMaterial(materialId): Promise<ReadingMaterial> {
+      const internal = requireInternal(materials, materialId);
+      if (!trashed.has(materialId)) {
+        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+      }
+      trashed.delete(materialId);
+      return toMaterial(internal);
+    },
+
+    async purgeMaterial(materialId): Promise<void> {
+      const internal = requireInternal(materials, materialId);
+      if (!trashed.has(materialId)) {
+        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+      }
+      materials.delete(materialId);
+      byFingerprint.delete(internal.fingerprint);
+      managedBytes.delete(materialId);
+      covers.delete(materialId);
+      overrides.delete(materialId);
+      trashed.delete(materialId);
     },
 
     async readManagedFile(materialId): Promise<Uint8Array> {
