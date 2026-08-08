@@ -3,6 +3,7 @@ import { describe, it } from 'vitest';
 import { createInMemoryFilePicker, type FilePicker } from '../../app/filePicker';
 import { importRepositoryContract, type ImportContractHarness } from './importRepository.contract';
 import { importBatchContract, type ImportBatchContractHarness } from './importBatch.contract';
+import { metadataRepositoryContract } from './metadataRepository.contract';
 import {
   addInMemorySource,
   createInMemoryImportRepository,
@@ -21,6 +22,9 @@ function createInMemoryHarness(): ImportContractHarness {
     async stage(name, bytes) {
       addInMemorySource(sources, name, bytes);
       return repository.stageImport(name);
+    },
+    registerCoverSource(name, bytes) {
+      addInMemorySource(sources, name, bytes);
     },
   };
 }
@@ -45,11 +49,22 @@ function createInMemoryBatchHarness(): ImportBatchContractHarness {
 }
 
 function createPicker(paths: string[] | null): FilePicker {
-  return { async pickEpubs() { return paths ? [...paths] : null; } };
+  return {
+    async pickEpubs() {
+      return paths ? [...paths] : null;
+    },
+    async pickImage() {
+      return null;
+    },
+  };
 }
 
 describe('ImportRepository 契约 · 内存 Adapter', () => {
   importRepositoryContract(createInMemoryHarness());
+});
+
+describe('元数据覆盖契约 · 内存 Adapter', () => {
+  metadataRepositoryContract(createInMemoryHarness());
 });
 
 describe('批量导入契约 · 内存 Adapter', () => {

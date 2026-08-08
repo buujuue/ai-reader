@@ -2,7 +2,12 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type { TauriInvoke } from '../tauriInvoke';
 import type { ImportRepository } from './importRepository';
-import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
+import type {
+  MaterialOverride,
+  ReadingMaterial,
+  SourceMetadata,
+  StagedImport,
+} from './material';
 
 export const IMPORT_COMMAND_NAMES = {
   stage: 'stage_import',
@@ -12,6 +17,11 @@ export const IMPORT_COMMAND_NAMES = {
   list: 'list_materials',
   readManaged: 'read_managed_file',
   recover: 'recover_imports',
+  applyMetadata: 'apply_material_metadata',
+  setCover: 'set_material_cover',
+  removeCover: 'remove_material_cover',
+  restore: 'restore_source_metadata',
+  readCover: 'read_material_cover',
 } as const;
 
 function assertStagedShape(raw: unknown): StagedImport {
@@ -29,6 +39,31 @@ function assertStagedShape(raw: unknown): StagedImport {
     id: candidate.id,
     originalFileName: candidate.originalFileName,
     fingerprint: candidate.fingerprint,
+  };
+}
+
+function assertSourceMetadata(raw: unknown): SourceMetadata {
+  const candidate = raw as Partial<SourceMetadata> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.title !== 'string'
+  ) {
+    throw new Error('source metadata payload is malformed');
+  }
+  return {
+    title: candidate.title,
+    author: candidate.author ?? null,
+    language: candidate.language ?? null,
+  };
+}
+
+function assertOverride(raw: unknown): MaterialOverride {
+  const candidate = (raw ?? null) as Partial<MaterialOverride> | null;
+  return {
+    title: candidate?.title ?? null,
+    author: candidate?.author ?? null,
+    coverSource: candidate?.coverSource ?? null,
   };
 }
 
@@ -51,6 +86,9 @@ function assertMaterialShape(raw: unknown): ReadingMaterial {
     language: candidate.language ?? null,
     fingerprint: candidate.fingerprint,
     sourceFileName: candidate.sourceFileName,
+    source: assertSourceMetadata(candidate.source),
+    override: assertOverride(candidate.override),
+    coverSource: candidate.coverSource ?? null,
   };
 }
 
@@ -103,6 +141,40 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     },
     async recoverImports(): Promise<void> {
       await invokeFn(IMPORT_COMMAND_NAMES.recover);
+    },
+    async applyMaterialMetadata(
+      materialId: string,
+      title: string | null,
+      author: string | null,
+    ): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.applyMetadata, {
+        materialId,
+        title,
+        author,
+      });
+      return assertMaterialShape(raw);
+    },
+    async setMaterialCover(materialId: string, sourcePath: string): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.setCover, { materialId, sourcePath });
+      return assertMaterialShape(raw);
+    },
+    async removeMaterialCover(materialId: string): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.removeCover, { materialId });
+      return assertMaterialShape(raw);
+    },
+    async restoreSourceMetadata(materialId: string): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.restore, { materialId });
+      return assertMaterialShape(raw);
+    },
+    async readCover(materialId: string): Promise<Uint8Array | null> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.readCover, { materialId });
+      if (raw === null) {
+        return null;
+      }
+      if (typeof raw !== 'string') {
+        throw new Error('cover bytes payload is not a string');
+      }
+      return base64ToBytes(raw);
     },
   };
 }

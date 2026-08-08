@@ -4,11 +4,12 @@
 
 阅读材料领域模型与导入契约，是「托管导入一份 EPUB」的核心。
 
-- `material.ts`：`ReadingMaterial`（稳定 BookId）、`StagedImport`（暂存句柄）、`SourceMetadata`（来源元数据快照）领域类型，serde 命名与 Rust 端 DTO 一致。
-- `importRepository.ts`：typed 导入 Repository 接口（`stageImport` / `readStagedFile` / `discardImport` / `commitImport` / `listMaterials` / `recoverImports`），是前端调用平台能力的窄边界。
-- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用 `stage_import` / `read_staged_file` / `discard_import` / `commit_import` / `list_materials` / `recover_imports` 命令。
-- `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并模拟 pending/ready 状态机（stage 记 pending，commit 去重/完成，recover 回滚 pending）。
+- `material.ts`：`ReadingMaterial`（稳定 BookId，含 `source` 来源快照、`override` 覆盖值与 `title/author/language/coverSource` 有效元数据）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
+- `importRepository.ts`：typed 导入 Repository 接口（`stageImport` / `readStagedFile` / `discardImport` / `commitImport` / `listMaterials` / `readManagedFile` / `recoverImports`，以及元数据覆盖 `applyMaterialMetadata` / `setMaterialCover` / `removeMaterialCover` / `restoreSourceMetadata` / `readCover`），是前端调用平台能力的窄边界。
+- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用 `stage_import` / `read_staged_file` / `discard_import` / `commit_import` / `list_materials` / `read_managed_file` / `recover_imports` / `apply_material_metadata` / `set_material_cover` / `remove_material_cover` / `restore_source_metadata` / `read_material_cover` 命令。
+- `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并模拟 pending/ready 状态机与「来源快照 + 覆盖值」的有效元数据合并。
 - `importRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的导入契约测试。
+- `metadataRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的元数据覆盖契约测试。
 - `importBatch.contract.ts`：内存与 Tauri 两个 Adapter 共享的批量导入契约测试。
 - `epub/`：最小 ZIP 解析器（`zip.ts`）、`EpubInspector`（`epubInspector.ts`，BookDocument 雏形，解析 container.xml → OPF → 元数据/封面）、演示/测试夹具构造器（`zipWriter.ts`、`testEpub.ts`）。
 - 对应 `*.test.ts`：Adapter 契约、Inspector 与编排测试。

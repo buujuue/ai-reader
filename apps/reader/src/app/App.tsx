@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
+import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
 import { StatusBar } from '../components/StatusBar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -69,6 +70,7 @@ export function App() {
         <EditorArea />
       </div>
       <StatusBar />
+      <MetadataEditorDialog />
     </div>
   );
 }

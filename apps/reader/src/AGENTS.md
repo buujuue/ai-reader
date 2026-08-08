@@ -8,9 +8,9 @@
 | --- | --- |
 | `app/` | `App.tsx` 应用外壳（启动恢复工作区、重启恢复阅读视图、卸载 flush）；`bootstrap.ts` 组装 `AppServices`（CommandRegistry + WorkspaceRepository + ImportRepository + FilePicker），按是否在 Tauri 运行时选择真实或内存 Adapter；`filePicker.ts` 系统文件选择器窄接口；`AppServicesContext.tsx` 服务上下文；`App.test.tsx` 应用级测试（含“打开 EPUB 并重启续读”验收）。 |
 | `commands/` | `commandRegistry.ts`：Command Registry 与稳定 Command ID 注册机制。 |
-| `components/` | 工作台外壳组件：`ActivityBar.tsx`（导入 EPUB + 切换主侧栏）、`PrimarySidebar.tsx`（书库列表，点击打开）、`EditorArea.tsx`（阅读标签栏 + 活动 ReadingView）、`ReadingView.tsx`（挂载 BookDocument 到容器，卸载 flush）、`StatusBar.tsx`。 |
+| `components/` | 工作台外壳组件：`ActivityBar.tsx`（导入 EPUB + 切换主侧栏）、`PrimarySidebar.tsx`（书库列表，点击打开 + 编辑元数据入口）、`EditorArea.tsx`（阅读标签栏 + 活动 ReadingView）、`ReadingView.tsx`（挂载 BookDocument 到容器，卸载 flush）、`MetadataEditorDialog.tsx`（覆盖标题/作者/封面并恢复来源元数据）、`StatusBar.tsx`。 |
 | `domain/` | 领域层：`workspace/` 工作区（Editor Group、阅读视图、阅读位置）、`library/` 书库与导入（含内建最小 `EpubInspector`）、`reader/` 阅读文档（`BookDocument`、`EpubBookDocument`、`ReadingLocation`、Foliate 视图宿主、内容清洗器）、`tauriInvoke.ts` 共享 invoke 类型。 |
-| `workbench/` | `workspaceStore.ts`（可序列化工作区状态）、`readerRuntime.ts`（活 BookDocument）、`positionPersister.ts`（阅读位置节流/flush）、`readerCommands.ts`（打开/翻页/关闭/恢复命令）、`workbenchCommands.ts` 命令注册、`libraryStore.ts`（书库）、`libraryCommands.ts`（导入/刷新命令）、`importBook.ts`（stage→inspect→commit 编排）、`shellUiStore.ts` 外壳 UI 状态，及对应测试。 |
+| `workbench/` | `workspaceStore.ts`（可序列化工作区状态）、`readerRuntime.ts`（活 BookDocument）、`positionPersister.ts`（阅读位置节流/flush）、`readerCommands.ts`（打开/翻页/关闭/恢复命令）、`workbenchCommands.ts` 命令注册、`libraryStore.ts`（书库）、`libraryCommands.ts`（导入/刷新/元数据覆盖命令）、`importBook.ts`（stage→inspect→commit 编排）、`shellUiStore.ts` 外壳 UI 状态（含元数据编辑器开关），及对应测试。 |
 | `test/setup.ts` | Vitest 测试环境配置。 |
 
 ## 约定

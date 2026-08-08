@@ -24,16 +24,39 @@ pub struct MaterialMetadata {
     pub language: Option<String>,
 }
 
+/// 不可编辑来源元数据快照(取自 materials 表列,整理操作永不改写)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceMetadata {
+    pub title: String,
+    pub author: Option<String>,
+    pub language: Option<String>,
+}
+
+/// 用户覆盖值(独立数据,存于 material_overrides 表)。字段为 None 表示清除该覆盖并回落来源。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterialOverride {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub cover_source: Option<String>,
+}
+
 /// 已提交的阅读材料领域对象。`id` 即稳定 BookId(UUID)。
+/// `source` 为不可编辑来源快照,`override` 为覆盖值,`title/author/language/cover_source` 为有效元数据(覆盖优先、来源兜底)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingMaterial {
     pub id: String,
+    pub fingerprint: String,
+    pub source_file_name: String,
+    pub source: SourceMetadata,
+    #[serde(rename = "override")]
+    pub user_override: MaterialOverride,
     pub title: String,
     pub author: Option<String>,
     pub language: Option<String>,
-    pub fingerprint: String,
-    pub source_file_name: String,
+    pub cover_source: Option<String>,
 }
 
 /// 导入的 typed repository。采用 `stage → inspect → commit`:
@@ -154,35 +177,121 @@ impl<'a> ImportRepository<'a> {
 
         Ok(ReadingMaterial {
             id: staged.id.clone(),
+            fingerprint: staged.fingerprint.clone(),
+            source_file_name: staged.original_file_name.clone(),
+            source: SourceMetadata {
+                title: metadata.title.clone(),
+                author: metadata.author.clone(),
+                language: metadata.language.clone(),
+            },
+            user_override: MaterialOverride::default(),
             title: metadata.title.clone(),
             author: metadata.author.clone(),
             language: metadata.language.clone(),
-            fingerprint: staged.fingerprint.clone(),
-            source_file_name: staged.original_file_name.clone(),
+            cover_source: None,
         })
     }
 
-    /// 列出活跃书库中的阅读材料。
+    /// 列出活跃书库中的阅读材料(带覆盖优先、来源兜底的有效元数据)。
     pub fn list_materials(&self) -> Result<Vec<ReadingMaterial>, AppError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, author, language, fingerprint, source_file_name
-             FROM materials WHERE status = 'ready' ORDER BY created_at",
+        self.load_materials("m.status = ?1", &[&"ready"])
+    }
+
+    /// 覆盖/清除标题与作者。title/author 为 None 表示清除对应覆盖并回落到来源。
+    /// 返回更新后的有效材料。
+    pub fn apply_metadata(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        author: Option<&str>,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.ensure_ready(id)?;
+        self.connection.execute(
+            "INSERT INTO material_overrides (material_id, title, author)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(material_id) DO UPDATE SET
+                title = excluded.title, author = excluded.author, updated_at = datetime('now')",
+            params![id, title, author],
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(ReadingMaterial {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                author: row.get(2)?,
-                language: row.get(3)?,
-                fingerprint: row.get(4)?,
-                source_file_name: row.get(5)?,
-            })
-        })?;
-        let mut materials = Vec::new();
-        for row in rows {
-            materials.push(row?);
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 把外部图片复制进托管封面空间并设为自定义封面。外部原文件不被修改或删除。
+    /// 返回更新后的有效材料。
+    pub fn set_cover(
+        &self,
+        id: &str,
+        source_path: &Path,
+        paths: &LibraryPaths,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.ensure_ready(id)?;
+        let cover_path = paths.cover_path(id);
+        std::fs::copy(source_path, &cover_path).map_err(classify_io_error)?;
+        let cover_source = id.to_string();
+        self.connection.execute(
+            "INSERT INTO material_overrides (material_id, cover_source)
+             VALUES (?1, ?2)
+             ON CONFLICT(material_id) DO UPDATE SET
+                cover_source = excluded.cover_source, updated_at = datetime('now')",
+            params![id, cover_source],
+        )?;
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 移除自定义封面:删除托管封面文件并清除封面覆盖,其他覆盖(标题/作者)保留。
+    /// 返回更新后的有效材料。
+    pub fn remove_cover(
+        &self,
+        id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.ensure_ready(id)?;
+        self.connection.execute(
+            "INSERT INTO material_overrides (material_id, cover_source)
+             VALUES (?1, NULL)
+             ON CONFLICT(material_id) DO UPDATE SET
+                cover_source = NULL, updated_at = datetime('now')",
+            [id],
+        )?;
+        let cover_path = paths.cover_path(id);
+        if cover_path.is_file() {
+            std::fs::remove_file(&cover_path).map_err(classify_io_error)?;
         }
-        Ok(materials)
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 一键清除标题、作者与封面的全部覆盖并恢复来源元数据。返回更新后的有效材料。
+    pub fn restore_source(
+        &self,
+        id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.ensure_ready(id)?;
+        self.connection
+            .execute("DELETE FROM material_overrides WHERE material_id = ?1", [id])?;
+        let cover_path = paths.cover_path(id);
+        if cover_path.is_file() {
+            std::fs::remove_file(&cover_path).map_err(classify_io_error)?;
+        }
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 读取托管封面文件的原始字节;无自定义封面时返回 None。
+    pub fn read_cover(
+        &self,
+        id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        self.ensure_ready(id)?;
+        let cover_path = paths.cover_path(id);
+        if !cover_path.is_file() {
+            return Ok(None);
+        }
+        Ok(Some(read_file_bytes(&cover_path)?))
     }
 
     /// 启动恢复:处理 pending 记录,并清理确认无主的暂存与托管文件。
@@ -223,6 +332,13 @@ impl<'a> ImportRepository<'a> {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
+        for entry in std::fs::read_dir(&paths.covers_dir)? {
+            let entry = entry?;
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            if entry.path().is_file() && self.find_by_id(&file_name)?.is_none() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
         Ok(())
     }
 
@@ -238,45 +354,95 @@ impl<'a> ImportRepository<'a> {
         Ok(ids)
     }
 
-    fn find_ready_by_fingerprint(&self, fingerprint: &str) -> Result<Option<ReadingMaterial>, AppError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, author, language, fingerprint, source_file_name
-             FROM materials
-             WHERE fingerprint = ?1 AND status = 'ready'
-             LIMIT 1",
-        )?;
-        let mut rows = statement.query(params![fingerprint])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(ReadingMaterial {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                author: row.get(2)?,
-                language: row.get(3)?,
-                fingerprint: row.get(4)?,
-                source_file_name: row.get(5)?,
-            })),
-            None => Ok(None),
-        }
+    fn find_ready_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<ReadingMaterial>, AppError> {
+        Ok(self
+            .load_materials("m.fingerprint = ?1 AND m.status = 'ready'", &[&fingerprint])?
+            .into_iter()
+            .next())
     }
 
     fn find_by_id(&self, id: &str) -> Result<Option<ReadingMaterial>, AppError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, author, language, fingerprint, source_file_name
-             FROM materials WHERE id = ?1 LIMIT 1",
-        )?;
-        let mut rows = statement.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(ReadingMaterial {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                author: row.get(2)?,
-                language: row.get(3)?,
-                fingerprint: row.get(4)?,
-                source_file_name: row.get(5)?,
-            })),
-            None => Ok(None),
+        Ok(self
+            .load_materials("m.id = ?1", &[&id])?
+            .into_iter()
+            .next())
+    }
+
+    /// 用 LEFT JOIN material_overrides 读取材料,并计算覆盖优先、来源兜底的有效元数据。
+    fn load_materials(
+        &self,
+        where_clause: &str,
+        params: &[&dyn rusqlite::ToSql],
+    ) -> Result<Vec<ReadingMaterial>, AppError> {
+        let sql = "SELECT
+                        m.id, m.fingerprint, m.source_file_name,
+                        m.title, m.author, m.language,
+                        o.title, o.author, o.cover_source
+                    FROM materials m
+                    LEFT JOIN material_overrides o ON o.material_id = m.id";
+        let full_sql = format!("{sql} WHERE {where_clause} ORDER BY m.created_at");
+        let mut statement = self.connection.prepare(&full_sql)?;
+        let rows = statement.query_map(params, material_from_row)?;
+        let mut materials = Vec::new();
+        for row in rows {
+            materials.push(row?);
+        }
+        Ok(materials)
+    }
+
+    /// 校验材料存在且为 ready 状态,用于元数据覆盖命令。
+    fn ensure_ready(&self, id: &str) -> Result<(), AppError> {
+        let status: Option<String> = self
+            .connection
+            .query_row("SELECT status FROM materials WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .ok();
+        match status.as_deref() {
+            Some("ready") => Ok(()),
+            _ => Err(AppError::MaterialNotFound(id.to_string())),
         }
     }
+}
+
+fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<ReadingMaterial> {
+    let id: String = row.get(0)?;
+    let fingerprint: String = row.get(1)?;
+    let source_file_name: String = row.get(2)?;
+    let source_title: String = row.get(3)?;
+    let source_author: Option<String> = row.get(4)?;
+    let source_language: Option<String> = row.get(5)?;
+    let override_title: Option<String> = row.get(6)?;
+    let override_author: Option<String> = row.get(7)?;
+    let override_cover: Option<String> = row.get(8)?;
+
+    let source = SourceMetadata {
+        title: source_title.clone(),
+        author: source_author.clone(),
+        language: source_language.clone(),
+    };
+    let user_override = MaterialOverride {
+        title: override_title,
+        author: override_author,
+        cover_source: override_cover,
+    };
+    Ok(ReadingMaterial {
+        id,
+        fingerprint,
+        source_file_name,
+        source,
+        title: user_override
+            .title
+            .clone()
+            .unwrap_or_else(|| source_title.clone()),
+        author: user_override.author.clone().or_else(|| source_author.clone()),
+        language: source_language,
+        cover_source: user_override.cover_source.clone(),
+        user_override,
+    })
 }
 
 #[cfg(test)]
@@ -291,6 +457,9 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(include_str!("migrations/0003_import_pending.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0004_material_overrides.sql"))
             .unwrap();
         connection
     }
@@ -674,5 +843,197 @@ mod tests {
 
         assert!(paths.managed_path(&material.id).is_file());
         assert_eq!(std::fs::read(&external).unwrap(), b"keep-me");
+    }
+
+    fn ready_material(
+        connection: &Connection,
+        paths: &LibraryPaths,
+        title: &str,
+        author: Option<&str>,
+    ) -> ReadingMaterial {
+        let repository = ImportRepository::new(connection);
+        let source = write_source(paths, "book.epub", b"metadata-content");
+        let staged = repository.stage(&source, paths).unwrap();
+        let metadata = MaterialMetadata {
+            title: title.to_string(),
+            author: author.map(str::to_string),
+            language: Some("zh".to_string()),
+        };
+        repository.commit(&staged, &metadata, paths).unwrap()
+    }
+
+    #[test]
+    fn apply_metadata_overrides_title_and_author_and_keeps_source_snapshot() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", Some("来源作者"));
+
+        let updated = repository
+            .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
+            .unwrap();
+
+        assert_eq!(updated.title, "整理标题");
+        assert_eq!(updated.author.as_deref(), Some("整理作者"));
+        assert_eq!(updated.source.title, "来源标题");
+        assert_eq!(updated.source.author.as_deref(), Some("来源作者"));
+        assert_eq!(updated.user_override.title.as_deref(), Some("整理标题"));
+
+        let listed = repository.list_materials().unwrap();
+        assert_eq!(listed[0].title, "整理标题");
+        assert_eq!(listed[0].source.title, "来源标题");
+    }
+
+    #[test]
+    fn apply_metadata_clear_falls_back_to_source() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", Some("来源作者"));
+        repository
+            .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
+            .unwrap();
+
+        let restored = repository
+            .apply_metadata(&material.id, None, None)
+            .unwrap();
+
+        assert_eq!(restored.title, "来源标题");
+        assert_eq!(restored.author.as_deref(), Some("来源作者"));
+        assert!(restored.user_override.title.is_none());
+        assert!(restored.user_override.author.is_none());
+    }
+
+    #[test]
+    fn set_cover_copies_to_managed_space_without_touching_source() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", None);
+        let external_cover = paths.stash_dir.join("cover.png");
+        std::fs::write(&external_cover, b"png-bytes").unwrap();
+
+        let updated = repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+
+        assert_eq!(updated.cover_source.as_deref(), Some(material.id.as_str()));
+        assert!(paths.cover_path(&material.id).is_file());
+        assert_eq!(std::fs::read(paths.cover_path(&material.id)).unwrap(), b"png-bytes");
+        // 外部原文件不被修改或删除。
+        assert_eq!(std::fs::read(&external_cover).unwrap(), b"png-bytes");
+        // 内容身份稳定。
+        assert_eq!(updated.fingerprint, material.fingerprint);
+        assert_eq!(updated.source.title, "来源标题");
+    }
+
+    #[test]
+    fn remove_cover_deletes_managed_cover_and_keeps_other_overrides() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", None);
+        let external_cover = paths.stash_dir.join("cover.png");
+        std::fs::write(&external_cover, b"png-bytes").unwrap();
+        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository
+            .apply_metadata(&material.id, Some("整理标题"), None)
+            .unwrap();
+
+        let removed = repository.remove_cover(&material.id, &paths).unwrap();
+
+        assert!(removed.cover_source.is_none());
+        assert!(!paths.cover_path(&material.id).exists());
+        // 其它覆盖(标题)保留。
+        assert_eq!(removed.title, "整理标题");
+    }
+
+    #[test]
+    fn restore_source_clears_all_overrides_and_cover() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", Some("来源作者"));
+        repository
+            .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
+            .unwrap();
+        let external_cover = paths.stash_dir.join("cover.png");
+        std::fs::write(&external_cover, b"png-bytes").unwrap();
+        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+
+        let restored = repository.restore_source(&material.id, &paths).unwrap();
+
+        assert_eq!(restored.title, "来源标题");
+        assert_eq!(restored.author.as_deref(), Some("来源作者"));
+        assert!(restored.cover_source.is_none());
+        assert!(restored.user_override.title.is_none());
+        assert!(!paths.cover_path(&material.id).exists());
+    }
+
+    #[test]
+    fn read_cover_returns_bytes_when_present_and_null_when_absent() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "来源标题", None);
+
+        assert!(repository.read_cover(&material.id, &paths).unwrap().is_none());
+
+        let external_cover = paths.stash_dir.join("cover.png");
+        std::fs::write(&external_cover, b"png-bytes").unwrap();
+        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+
+        assert_eq!(
+            repository.read_cover(&material.id, &paths).unwrap().unwrap(),
+            b"png-bytes"
+        );
+    }
+
+    #[test]
+    fn metadata_override_persists_across_restart() {
+        // 用真实文件数据库验证覆盖值在应用重启后保持。
+        let dir = std::env::temp_dir().join(format!("ai-reader-meta-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("ai-reader.db");
+        let paths = LibraryPaths::new(&dir).unwrap();
+
+        let material_id = {
+            let mut connection = Connection::open(&db_path).unwrap();
+            crate::db::run_migrations(&mut connection, crate::db::MIGRATIONS).unwrap();
+            let repository = ImportRepository::new(&connection);
+            let source = write_source(&paths, "book.epub", b"persist-content");
+            let staged = repository.stage(&source, &paths).unwrap();
+            let material = repository
+                .commit(&staged, &MaterialMetadata { title: "来源标题".to_string(), ..Default::default() }, &paths)
+                .unwrap();
+            repository
+                .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
+                .unwrap();
+            material.id
+        };
+
+        // 模拟重启:重新打开数据库与路径。
+        let mut connection = Connection::open(&db_path).unwrap();
+        crate::db::run_migrations(&mut connection, crate::db::MIGRATIONS).unwrap();
+        let repository = ImportRepository::new(&connection);
+
+        let loaded = repository.find_by_id(&material_id).unwrap().unwrap();
+        assert_eq!(loaded.title, "整理标题");
+        assert_eq!(loaded.author.as_deref(), Some("整理作者"));
+        assert_eq!(loaded.source.title, "来源标题");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn metadata_commands_reject_unknown_material() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+
+        let error = repository
+            .apply_metadata("no-such", Some("标题"), None)
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::MaterialNotFound(_)));
+        let _ = paths;
     }
 }

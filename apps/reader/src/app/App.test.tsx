@@ -145,7 +145,7 @@ describe('打开 EPUB 并重启续读', () => {
     renderApp(services);
 
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    const openButton = await screen.findByRole('button', { name: /示例书/ });
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
 
     await user.click(openButton);
 
@@ -160,7 +160,7 @@ describe('打开 EPUB 并重启续读', () => {
     const user = userEvent.setup();
     const firstRender = renderApp(services);
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    const openButton = await screen.findByRole('button', { name: /示例书/ });
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
     await user.click(openButton);
     await waitFor(() => {
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);

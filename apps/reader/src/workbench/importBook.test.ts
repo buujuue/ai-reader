@@ -27,7 +27,10 @@ function makeIo(overrides?: { sourcePaths?: string[]; bytes?: Record<string, Uin
 
 describe('importBooks 批量编排', () => {
   it('取消选择时返回 null 且不创建任何记录', async () => {
-    const filePicker: FilePicker = { pickEpubs: async () => null };
+    const filePicker: FilePicker = {
+      pickEpubs: async () => null,
+      pickImage: async () => null,
+    };
     const { importRepository } = makeIo();
 
     const result = await importBooks({ importRepository, filePicker });
@@ -129,7 +132,10 @@ describe('importBooks 对仓库 IO 失败的处理', () => {
       }
       return originalStage(sourcePath);
     };
-    const filePicker: FilePicker = { pickEpubs: async () => [badSource, goodSource] };
+    const filePicker: FilePicker = {
+      pickEpubs: async () => [badSource, goodSource],
+      pickImage: async () => null,
+    };
 
     const outcomes = (await importBooks({ importRepository: repository, filePicker }))!;
 
@@ -152,7 +158,10 @@ describe('importBooks 对仓库 IO 失败的处理', () => {
       stagedHandle = staged;
       throw new Error('磁盘空间不足:WriteZero');
     };
-    const filePicker: FilePicker = { pickEpubs: async () => [sourcePath] };
+    const filePicker: FilePicker = {
+      pickEpubs: async () => [sourcePath],
+      pickImage: async () => null,
+    };
 
     const outcomes = (await importBooks({ importRepository: repository, filePicker }))!;
 

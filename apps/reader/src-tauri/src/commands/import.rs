@@ -84,3 +84,74 @@ pub fn recover_imports(
 ) -> Result<(), AppError> {
     database.with_connection(|connection| ImportRepository::new(connection).recover(&paths))
 }
+
+/// 覆盖/清除阅读材料的标题与作者。title/author 为 null 表示清除该覆盖并回落来源。
+#[tauri::command]
+pub fn apply_material_metadata(
+    database: State<'_, DatabaseHandle>,
+    material_id: String,
+    title: Option<String>,
+    author: Option<String>,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).apply_metadata(
+            &material_id,
+            title.as_deref(),
+            author.as_deref(),
+        )
+    })
+}
+
+/// 把外部图片复制进托管封面空间并设为自定义封面。外部原文件不被修改或删除。
+#[tauri::command]
+pub fn set_material_cover(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+    source_path: String,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).set_cover(
+            &material_id,
+            std::path::Path::new(&source_path),
+            &paths,
+        )
+    })
+}
+
+/// 移除自定义封面:删除托管封面文件并清除封面覆盖,其他覆盖保留。
+#[tauri::command]
+pub fn remove_material_cover(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).remove_cover(&material_id, &paths)
+    })
+}
+
+/// 一键清除标题、作者与封面的全部覆盖并恢复来源元数据。
+#[tauri::command]
+pub fn restore_source_metadata(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).restore_source(&material_id, &paths)
+    })
+}
+
+/// 读取托管封面文件的原始字节(base64);无自定义封面时返回 null。
+#[tauri::command]
+pub fn read_material_cover(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+) -> Result<Option<String>, AppError> {
+    let bytes = database.with_connection(|connection| {
+        ImportRepository::new(connection).read_cover(&material_id, &paths)
+    })?;
+    Ok(bytes.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)))
+}

@@ -12,18 +12,22 @@ use crate::error::{classify_io_error, AppError};
 pub struct LibraryPaths {
     pub stash_dir: PathBuf,
     pub managed_dir: PathBuf,
+    pub covers_dir: PathBuf,
 }
 
 impl LibraryPaths {
-    /// 在应用数据目录下创建暂存目录与托管书库目录。
+    /// 在应用数据目录下创建暂存、托管书库与托管封面目录。
     pub fn new(app_data_dir: &Path) -> Result<Self, AppError> {
         let stash_dir = app_data_dir.join("stash");
         let managed_dir = app_data_dir.join("library");
+        let covers_dir = app_data_dir.join("covers");
         std::fs::create_dir_all(&stash_dir)?;
         std::fs::create_dir_all(&managed_dir)?;
+        std::fs::create_dir_all(&covers_dir)?;
         Ok(Self {
             stash_dir,
             managed_dir,
+            covers_dir,
         })
     }
 
@@ -33,6 +37,10 @@ impl LibraryPaths {
 
     pub fn managed_path(&self, id: &str) -> PathBuf {
         self.managed_dir.join(id)
+    }
+
+    pub fn cover_path(&self, id: &str) -> PathBuf {
+        self.covers_dir.join(id)
     }
 }
 
@@ -117,8 +125,10 @@ mod tests {
 
         assert!(paths.stash_dir.is_dir());
         assert!(paths.managed_dir.is_dir());
+        assert!(paths.covers_dir.is_dir());
         assert_eq!(paths.stash_path("abc"), dir.join("stash").join("abc"));
         assert_eq!(paths.managed_path("abc"), dir.join("library").join("abc"));
+        assert_eq!(paths.cover_path("abc"), dir.join("covers").join("abc"));
     }
 
     #[test]

@@ -22,6 +22,8 @@ pub enum AppError {
     StagedFileMissing(String),
     #[error("托管书库中不存在该阅读材料:{0}")]
     ManagedFileMissing(String),
+    #[error("阅读材料不存在:{0}")]
+    MaterialNotFound(String),
 }
 
 impl serde::Serialize for AppError {

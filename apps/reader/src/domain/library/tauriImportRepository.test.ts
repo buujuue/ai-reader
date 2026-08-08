@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { importRepositoryContract, type ImportContractHarness } from './importRepository.contract';
 import { importBatchContract, type ImportBatchContractHarness } from './importBatch.contract';
+import { metadataRepositoryContract } from './metadataRepository.contract';
 import {
   createTauriImportRepository,
   IMPORT_COMMAND_NAMES,
@@ -17,12 +18,30 @@ interface FakeStaged {
 }
 
 /** 模拟 Rust 端 typed import 命令:snake_case 命令名、serde camelCase DTO、按指纹去重。 */
-function createFakeTauriBackend(): { invoke: TauriInvoke; registerSource: (name: string, bytes: Uint8Array) => void } {
+function createFakeTauriBackend(): {
+  invoke: TauriInvoke;
+  registerSource: (name: string, bytes: Uint8Array) => void;
+} {
   const files = new Map<string, Uint8Array>();
   const stashed = new Map<string, FakeStaged>();
   const materials = new Map<string, ReadingMaterial>();
   const byFingerprint = new Map<string, ReadingMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
+  const covers = new Map<string, Uint8Array>();
+
+  function base(id: string, title: string, author: string | null, language: string | null, fingerprint: string, sourceFileName: string): ReadingMaterial {
+    return {
+      id,
+      title,
+      author,
+      language,
+      fingerprint,
+      sourceFileName,
+      source: { title, author, language },
+      override: { title: null, author: null, coverSource: null },
+      coverSource: null,
+    };
+  }
 
   const invoke: TauriInvoke = async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
     switch (command) {
@@ -59,14 +78,14 @@ function createFakeTauriBackend(): { invoke: TauriInvoke; registerSource: (name:
           stashed.delete(staged.id);
           return existing;
         }
-        const material: ReadingMaterial = {
-          id: crypto.randomUUID(),
-          title: metadata.title,
-          author: metadata.author ?? null,
-          language: metadata.language ?? null,
-          fingerprint: staged.fingerprint,
-          sourceFileName: staged.originalFileName,
-        };
+        const material = base(
+          crypto.randomUUID(),
+          metadata.title,
+          metadata.author ?? null,
+          metadata.language ?? null,
+          staged.fingerprint,
+          staged.originalFileName,
+        );
         materials.set(material.id, material);
         byFingerprint.set(material.fingerprint, material);
         const bytes = stashed.get(staged.id)?.bytes;
@@ -89,6 +108,83 @@ function createFakeTauriBackend(): { invoke: TauriInvoke; registerSource: (name:
       case IMPORT_COMMAND_NAMES.recover:
         stashed.clear();
         return null;
+      case IMPORT_COMMAND_NAMES.applyMetadata: {
+        const { materialId, title, author } = args as {
+          materialId: string;
+          title: string | null;
+          author: string | null;
+        };
+        const current = materials.get(materialId);
+        if (!current) {
+          throw new Error('material missing');
+        }
+        const override = { ...current.override, title, author };
+        const effective = {
+          ...current,
+          override,
+          title: override.title ?? current.source.title,
+          author: override.author ?? current.source.author,
+        };
+        materials.set(materialId, effective);
+        return effective;
+      }
+      case IMPORT_COMMAND_NAMES.setCover: {
+        const { materialId, sourcePath } = args as {
+          materialId: string;
+          sourcePath: string;
+        };
+        const current = materials.get(materialId);
+        if (!current) {
+          throw new Error('material missing');
+        }
+        const bytes = files.get(sourcePath);
+        if (!bytes) {
+          throw new Error('unknown cover source file');
+        }
+        const coverSource = materialId;
+        covers.set(materialId, bytes);
+        const override = { ...current.override, coverSource };
+        const effective = { ...current, override, coverSource };
+        materials.set(materialId, effective);
+        return effective;
+      }
+      case IMPORT_COMMAND_NAMES.removeCover: {
+        const { materialId } = args as { materialId: string };
+        const current = materials.get(materialId);
+        if (!current) {
+          throw new Error('material missing');
+        }
+        covers.delete(materialId);
+        const override = { ...current.override, coverSource: null };
+        const effective = { ...current, override, coverSource: null };
+        materials.set(materialId, effective);
+        return effective;
+      }
+      case IMPORT_COMMAND_NAMES.restore: {
+        const { materialId } = args as { materialId: string };
+        const current = materials.get(materialId);
+        if (!current) {
+          throw new Error('material missing');
+        }
+        covers.delete(materialId);
+        const effective = {
+          ...current,
+          override: { title: null, author: null, coverSource: null },
+          title: current.source.title,
+          author: current.source.author,
+          coverSource: null,
+        };
+        materials.set(materialId, effective);
+        return effective;
+      }
+      case IMPORT_COMMAND_NAMES.readCover: {
+        const { materialId } = args as { materialId: string };
+        const bytes = covers.get(materialId);
+        if (!bytes) {
+          return null;
+        }
+        return btoaBinary(bytes);
+      }
       default:
         throw new Error(`unknown tauri command: ${command}`);
     }
@@ -116,6 +212,9 @@ function createTauriHarness(): ImportContractHarness {
       backend.registerSource(name, bytes);
       return repository.stageImport(name);
     },
+    registerCoverSource(name, bytes) {
+      backend.registerSource(name, bytes);
+    },
   };
 }
 
@@ -133,13 +232,24 @@ function createTauriBatchHarness(): ImportBatchContractHarness {
       backend.registerSource(path, bytes);
     },
     createPicker(paths) {
-      return { async pickEpubs() { return paths ? [...paths] : null; } } satisfies FilePicker;
+      return {
+        async pickEpubs() {
+          return paths ? [...paths] : null;
+        },
+        async pickImage() {
+          return null;
+        },
+      } satisfies FilePicker;
     },
   };
 }
 
 describe('ImportRepository 契约 · Tauri Adapter', () => {
   importRepositoryContract(createTauriHarness());
+});
+
+describe('元数据覆盖契约 · Tauri Adapter', () => {
+  metadataRepositoryContract(createTauriHarness());
 });
 
 describe('批量导入契约 · Tauri Adapter', () => {
@@ -155,6 +265,11 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.list).toBe('list_materials');
     expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');
     expect(IMPORT_COMMAND_NAMES.recover).toBe('recover_imports');
+    expect(IMPORT_COMMAND_NAMES.applyMetadata).toBe('apply_material_metadata');
+    expect(IMPORT_COMMAND_NAMES.setCover).toBe('set_material_cover');
+    expect(IMPORT_COMMAND_NAMES.removeCover).toBe('remove_material_cover');
+    expect(IMPORT_COMMAND_NAMES.restore).toBe('restore_source_metadata');
+    expect(IMPORT_COMMAND_NAMES.readCover).toBe('read_material_cover');
   });
 
   it('暂存时把源路径放入 sourcePath 参数', async () => {

@@ -8,6 +8,8 @@ export interface LibraryStoreState {
   importing: boolean;
   setMaterials: (materials: ReadingMaterial[]) => void;
   setImporting: (importing: boolean) => void;
+  /** 用平台返回的权威结果替换单个材料(写入失败时不会只更新界面)。 */
+  updateMaterial: (material: ReadingMaterial) => void;
   resetToDefault: () => void;
 }
 
@@ -16,5 +18,9 @@ export const useLibraryStore = create<LibraryStoreState>()((set) => ({
   importing: false,
   setMaterials: (materials) => set({ materials }),
   setImporting: (importing) => set({ importing }),
+  updateMaterial: (material) =>
+    set((state) => ({
+      materials: state.materials.map((item) => (item.id === material.id ? material : item)),
+    })),
   resetToDefault: () => set({ materials: [], importing: false }),
 }));

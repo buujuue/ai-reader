@@ -4,6 +4,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 export interface FilePicker {
   /** 一次选择多份 EPUB;用户取消返回 null。 */
   pickEpubs(): Promise<string[] | null>;
+  /** 选择一张封面图片;用户取消返回 null。 */
+  pickImage(): Promise<string | null>;
 }
 
 export function createTauriFilePicker(): FilePicker {
@@ -20,6 +22,19 @@ export function createTauriFilePicker(): FilePicker {
       const paths = Array.isArray(selected) ? selected : [selected];
       return paths.filter((path): path is string => typeof path === 'string');
     },
+    async pickImage(): Promise<string | null> {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
+        ],
+      });
+      if (selected === null) {
+        return null;
+      }
+      return typeof selected === 'string' ? selected : null;
+    },
   };
 }
 
@@ -28,6 +43,9 @@ export function createInMemoryFilePicker(demoSourcePaths: string[]): FilePicker 
   return {
     async pickEpubs(): Promise<string[] | null> {
       return [...demoSourcePaths];
+    },
+    async pickImage(): Promise<string | null> {
+      return null;
     },
   };
 }

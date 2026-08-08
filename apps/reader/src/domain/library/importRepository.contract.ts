@@ -7,6 +7,8 @@ export interface ImportContractHarness {
   createRepository(): ImportRepository;
   /** 暂存一份内容并返回暂存句柄。语义:字节被复制到暂存区并计算指纹,源保持不变。 */
   stage(name: string, bytes: Uint8Array): Promise<StagedImport>;
+  /** 登记一份外部封面图片源文件,供 setMaterialCover 读取。可选:不支持封面的 Harness 可省略。 */
+  registerCoverSource?(name: string, bytes: Uint8Array): void;
 }
 
 /** TypeScript 导入契约:内存 Adapter 与 Tauri Adapter 必须通过同一组断言。 */
