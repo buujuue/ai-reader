@@ -121,6 +121,14 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   return {
     schemaVersion: candidate.schemaVersion,
     primarySidebarVisible: candidate.primarySidebarVisible,
+    annotationSidebarVisible:
+      typeof candidate.annotationSidebarVisible === 'boolean'
+        ? candidate.annotationSidebarVisible
+        : DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
+    primaryMaterialId:
+      candidate.primaryMaterialId === null || typeof candidate.primaryMaterialId === 'string'
+        ? candidate.primaryMaterialId ?? null
+        : DEFAULT_WORKSPACE_STATE.primaryMaterialId,
     splitDirection: normalizeSplitDirection(candidate.splitDirection),
     activeEditorGroupId: candidate.activeEditorGroupId ?? DEFAULT_EDITOR_GROUP_ID,
     editorGroups,

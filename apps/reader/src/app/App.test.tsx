@@ -27,6 +27,9 @@ import {
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { useLibraryStore } from '../workbench/libraryStore';
+import { useAnnotationStore } from '../workbench/annotationStore';
+import { createInMemoryAnnotationRepository } from '../domain/annotation/inMemoryAnnotationRepository';
+import type { Annotation } from '../domain/annotation/annotation';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -45,7 +48,7 @@ function createFakeViewHost(): FoliateViewHost {
     async init() {},
     async next() {},
     async prev() {},
-    async goToLocation() {},
+    goToLocation: vi.fn(async () => {}),
     async goToHref() {},
     getTOC() {
       return [];
@@ -97,6 +100,7 @@ describe('阅读工作台外壳', () => {
     repository = createInMemoryWorkspaceRepository();
     services = createAppServices({ workspaceRepository: repository });
     useWorkspaceStore.getState().resetToDefault();
+    useAnnotationStore.getState().resetToDefault();
   });
 
   it('呈现简体中文工作台外壳', () => {
@@ -235,6 +239,154 @@ describe('阅读工作台外壳', () => {
 
     expect(screen.getByText('没有匹配的材料')).toBeInTheDocument();
     expect(screen.queryByText('示例书')).not.toBeInTheDocument();
+  });
+
+  it('主要材料的批注侧栏按批注文本筛选并保持材料级集合', async () => {
+    const annotationRepository = createInMemoryAnnotationRepository();
+    const hosts: FoliateViewHost[] = [];
+    services = createAppServices({
+      workspaceRepository: repository,
+      annotationRepository,
+      viewHostFactory: () => {
+        const host = createFakeViewHost();
+        hosts.push(host);
+        return host;
+      },
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByText('示例书')).toBeInTheDocument());
+
+    const materialId = useLibraryStore.getState().materials[0]!.id;
+    const annotations: Annotation[] = [
+      {
+        id: 'annotation-1',
+        materialId,
+        anchor: {
+          cfi: 'epubcfi(/6/4)!/4/2/2/1:0',
+          quote: '第一段重要原文',
+          before: '',
+          after: '',
+          documentVersion: 'fingerprint',
+          recoveryState: 'resolved',
+        },
+        style: 'highlight',
+        color: '#ffd54f',
+        note: '需要回看',
+        createdAt: 1,
+        updatedAt: 1,
+        deletedAt: null,
+      },
+      {
+        id: 'annotation-2',
+        materialId,
+        anchor: {
+          cfi: 'epubcfi(/6/4)!/4/2/4/1:0',
+          quote: '第二段原文',
+          before: '',
+          after: '',
+          documentVersion: 'fingerprint',
+          recoveryState: 'orphaned',
+        },
+        style: 'highlight',
+        color: '#ffd54f',
+        note: '已失联',
+        createdAt: 2,
+        updatedAt: 2,
+        deletedAt: null,
+      },
+      {
+        id: 'annotation-3',
+        materialId,
+        anchor: {
+          cfi: 'pdf-text:2:0.10000:0.20000:0.30000:0.05000',
+          quote: '',
+          before: '',
+          after: '',
+          documentVersion: 'fingerprint',
+          recoveryState: 'resolved',
+        },
+        style: 'highlight',
+        color: '#ffd54f',
+        note: '',
+        createdAt: 3,
+        updatedAt: 3,
+        deletedAt: null,
+      },
+    ];
+    for (const annotation of annotations) await annotationRepository.saveAnnotation(annotation);
+
+    await user.click(screen.getByRole('button', { name: '设为主要材料 示例书' }));
+
+    const sidebar = screen.getByRole('complementary', { name: '批注侧栏' });
+    expect(sidebar).toHaveTextContent('第一段重要原文');
+    expect(sidebar).toHaveTextContent('第二段原文');
+    expect(sidebar).toHaveTextContent('失联');
+
+    const search = screen.getByRole('searchbox', { name: '筛选批注' });
+    await user.type(search, '需要回看');
+    expect(sidebar).toHaveTextContent('第一段重要原文');
+    expect(sidebar).not.toHaveTextContent('第二段原文');
+
+    await user.clear(search);
+    await user.click(screen.getByRole('button', { name: '跳转到批注 第一段重要原文' }));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(hosts[0]?.goToLocation).toHaveBeenCalledWith('epubcfi(/6/4)!/4/2/2/1:0');
+    });
+  });
+
+  it('批注侧栏的期望状态可以通过活动栏命令恢复', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '切换批注侧栏' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary', { name: '批注侧栏' })).not.toBeInTheDocument();
+    });
+    await expect(repository.loadState()).resolves.toEqual({
+      ...DEFAULT_WORKSPACE_STATE,
+      annotationSidebarVisible: false,
+    });
+  });
+
+  it('loads persisted primary material annotations before restoring views', async () => {
+    const annotationRepository = createInMemoryAnnotationRepository();
+    await annotationRepository.saveAnnotation({
+      id: 'annotation-persisted',
+      materialId: 'material-1',
+      anchor: {
+        cfi: 'epubcfi(/6/4)!/4/2/2/1:0',
+        quote: 'persisted quote',
+        before: '',
+        after: '',
+        documentVersion: 'fingerprint',
+        recoveryState: 'resolved',
+      },
+      style: 'highlight',
+      color: '#ffd54f',
+      note: 'persisted note',
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    });
+    await repository.saveState({
+      ...structuredClone(DEFAULT_WORKSPACE_STATE),
+      primaryMaterialId: 'material-1',
+    });
+    services = createAppServices({ workspaceRepository: repository, annotationRepository });
+    const execute = vi.spyOn(services.commands, 'execute');
+
+    renderApp(services);
+
+    await waitFor(() => {
+      expect(execute).toHaveBeenCalledWith(COMMAND_IDS.annotationLoadForMaterial, 'material-1');
+    });
+    expect(useAnnotationStore.getState().byMaterial['material-1']).toHaveLength(1);
   });
 });
 
@@ -393,6 +545,8 @@ describe('打开 EPUB 并重启续读', () => {
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
+      annotationSidebarVisible: workspace.annotationSidebarVisible,
+      primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,
@@ -530,6 +684,8 @@ describe('打开 EPUB 并重启续读', () => {
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
+      annotationSidebarVisible: workspace.annotationSidebarVisible,
+      primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,

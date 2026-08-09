@@ -125,7 +125,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       : createWindowLifecycle();
 
   const commands = new CommandRegistry();
-  registerWorkbenchCommands(commands, { workspaceRepository });
+  registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
   registerLibraryCommands(commands, {
     ...importServices,
     pdfLib: options.pdfLib,

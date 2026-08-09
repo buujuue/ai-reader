@@ -9,6 +9,7 @@ import {
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { ReadingMaterial } from '../domain/library/material';
 import type { BookDocument } from '../domain/reader/bookDocument';
+import { isPdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { useAnnotationStore } from './annotationStore';
 import { useLibraryStore } from './libraryStore';
 import { useReaderRuntime } from './readerRuntime';
@@ -134,6 +135,17 @@ async function recoverAnnotationsForDocument(
     if (annotation.anchor.documentVersion === currentVersion) {
       recovered.push(annotation);
       if (annotation.anchor.recoveryState === 'orphaned') orphanedCount += 1;
+      continue;
+    }
+
+    // PDF 区域锚点依赖页码与归一化矩形，不把它当作文本引文参与恢复，避免版本变化后误附着。
+    if (isPdfTextAnchor(annotation.anchor.cfi)) {
+      const next = await repository.saveAnnotation({
+        ...annotation,
+        anchor: { ...annotation.anchor, recoveryState: 'orphaned' },
+      });
+      recovered.push(next);
+      orphanedCount += 1;
       continue;
     }
 

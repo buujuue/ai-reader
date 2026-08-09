@@ -78,7 +78,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Workbench
 
-拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
+拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。`AnnotationSidebar` 只读取主要材料的材料级批注集合，筛选通过引文/笔记文本完成，点击后经 `annotation.goTo` 跳转；失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
 ### Command Registry
 
@@ -151,12 +151,12 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 10 切片**：版本变化后的文本锚点恢复（通过 `BookDocument.search()` 唯一匹配引文与前后文、迁移新 CFI 和文档指纹；歧义或失败时保留为失联批注且不绘制旧高亮）。
 - **第 11 切片**：多标签阅读工作区（标签激活与关闭 Command、标签顺序和活动视图持久化、非活动标签释放 Reader Runtime、重启时仅恢复活动标签、缺失材料不阻塞其它标签）。对应工单 #21。
 - **第 12 切片**：双 Editor Group 阅读工作区（向右/向下拆分、各组独立活动视图与输入焦点、同材料跨组阅读、最多两个活动渲染器、拆分布局与视图恢复）。对应工单 #22。
+- **第 13 切片**：显式主要阅读材料与集中批注面板（主要材料状态与批注侧栏期望状态持久化、单材料自动指定、材料级批注筛选、失联标识、EPUB/PDF 正文跳转）。对应工单 #23。
 
 ## 后续切片顺序
 
-1. 普通高亮、笔记与文本锚点恢复。
-2. PDF 文本批注和扫描页区域锚点。
-3. Markdown 批注锚点迁移。
-4. 显式主要阅读材料和响应式布局。
-5. 完整备份、整库恢复和单本批注导出。
-6. macOS、iPadOS、Android 平板原生启动与核心阅读验收。
+1. PDF 文本批注和扫描页区域锚点的创建交互。
+2. Markdown 批注锚点迁移。
+3. 响应式布局。
+4. 完整备份、整库恢复和单本批注导出。
+5. macOS、iPadOS、Android 平板原生启动与核心阅读验收。

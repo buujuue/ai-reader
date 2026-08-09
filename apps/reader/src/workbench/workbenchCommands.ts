@@ -1,15 +1,18 @@
 import type { CommandRegistry } from '../commands/commandRegistry';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import {
   WORKSPACE_STATE_SCHEMA_VERSION,
   type WorkspaceState,
 } from '../domain/workspace/workspaceState';
 import { useShellUiStore } from './shellUiStore';
+import { useAnnotationStore } from './annotationStore';
 import { useWorkspaceStore } from './workspaceStore';
 
 export interface WorkbenchCommandDependencies {
   workspaceRepository: WorkspaceRepository;
+  annotationRepository?: AnnotationRepository;
 }
 
 /** 从当前 Serialized Store 组装可持久化的工作区状态。 */
@@ -18,6 +21,8 @@ export function serializeWorkspaceState(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
     primarySidebarVisible: store.primarySidebarVisible,
+    annotationSidebarVisible: store.annotationSidebarVisible,
+    primaryMaterialId: store.primaryMaterialId,
     splitDirection: store.splitDirection,
     activeEditorGroupId: store.activeEditorGroupId,
     editorGroups: store.editorGroups,
@@ -53,6 +58,40 @@ export function registerWorkbenchCommands(
     useShellUiStore
       .getState()
       .setStatusMessage(nextVisible ? '已保存工作区状态:侧栏显示' : '已保存工作区状态:侧栏隐藏');
+  });
+
+  registry.register(COMMAND_IDS.workbenchToggleAnnotationSidebar, async () => {
+    const nextVisible = !useWorkspaceStore.getState().annotationSidebarVisible;
+
+    try {
+      const state = serializeWorkspaceState();
+      await dependencies.workspaceRepository.saveState({
+        ...state,
+        annotationSidebarVisible: nextVisible,
+      });
+    } catch (error) {
+      console.error('保存批注侧栏状态失败', error);
+      useShellUiStore.getState().setStatusMessage('保存批注侧栏状态失败');
+      throw error;
+    }
+
+    useWorkspaceStore.getState().setAnnotationSidebarVisible(nextVisible);
+    useShellUiStore
+      .getState()
+      .setStatusMessage(nextVisible ? '已显示批注侧栏' : '已隐藏批注侧栏');
+  });
+
+  registry.register(COMMAND_IDS.workbenchSetPrimaryMaterial, async (...args: unknown[]) => {
+    const materialId = args[0] as string | null | undefined;
+    if (typeof materialId !== 'string' || materialId.length === 0) return;
+    if (dependencies.annotationRepository) {
+      const annotations = await dependencies.annotationRepository.listByMaterial(materialId);
+      useAnnotationStore.getState().setMaterialAnnotations(materialId, annotations);
+    }
+    const state = serializeWorkspaceState();
+    await dependencies.workspaceRepository.saveState({ ...state, primaryMaterialId: materialId });
+    useWorkspaceStore.getState().setPrimaryMaterial(materialId);
+    useShellUiStore.getState().setStatusMessage('已指定主要阅读材料');
   });
 
   registry.register(COMMAND_IDS.workbenchToggleToc, async () => {

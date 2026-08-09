@@ -12,6 +12,8 @@ describe('Workspace Store', () => {
     const state = useWorkspaceStore.getState();
 
     expect(state.primarySidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.primarySidebarVisible);
+    expect(state.primaryMaterialId).toBe(DEFAULT_WORKSPACE_STATE.primaryMaterialId);
+    expect(state.annotationSidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.annotationSidebarVisible);
     expect(state.editorGroups).toEqual(DEFAULT_WORKSPACE_STATE.editorGroups);
   });
 
@@ -30,6 +32,31 @@ describe('Workspace Store', () => {
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
   });
 
+  it('还原只有一份已打开材料的旧状态时自动指定主要阅读材料', () => {
+    const viewId = crypto.randomUUID();
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      primaryMaterialId: null,
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: viewId,
+              materialId: 'material-1',
+              location: null,
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: viewId,
+        },
+      ],
+    });
+
+    expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-1');
+  });
+
   it('打开一本书会在活动组新增标签并设为活动视图', () => {
     useWorkspaceStore.getState().openView('material-1');
 
@@ -38,6 +65,31 @@ describe('Workspace Store', () => {
     expect(group.views[0]!.materialId).toBe('material-1');
     expect(group.views[0]!.location).toBeNull();
     expect(group.activeViewId).toBe(group.views[0]!.id);
+    expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-1');
+  });
+
+  it('打开第二份材料或切换焦点不会偷偷改变主要阅读材料', () => {
+    useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().openView('material-2');
+    useWorkspaceStore.getState().focusEditorGroup('group-1');
+
+    expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-1');
+  });
+
+  it('用户可以显式指定主要阅读材料并切换批注面板期望状态', () => {
+    useWorkspaceStore.getState().setPrimaryMaterial('material-2');
+    useWorkspaceStore.getState().setAnnotationSidebarVisible(false);
+
+    expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-2');
+    expect(useWorkspaceStore.getState().annotationSidebarVisible).toBe(false);
+  });
+
+  it('关闭材料后只剩一份材料时自动将它设为主要阅读材料', () => {
+    const firstViewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().openView('material-2');
+    useWorkspaceStore.getState().closeView(firstViewId);
+
+    expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-2');
   });
 
   it('重复打开同一本书会复用原标签并激活它', () => {

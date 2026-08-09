@@ -70,4 +70,29 @@ describe('工作台命令处理', () => {
     await registry.execute(COMMAND_IDS.workbenchToggleToc);
     expect(useShellUiStore.getState().tocVisible).toBe(false);
   });
+
+  it('切换批注侧栏命令会持久化面板期望状态', async () => {
+    await registry.execute(COMMAND_IDS.workbenchToggleAnnotationSidebar);
+
+    expect(useWorkspaceStore.getState().annotationSidebarVisible).toBe(false);
+    await expect(repository.loadState()).resolves.toEqual({
+      ...DEFAULT_WORKSPACE_STATE,
+      annotationSidebarVisible: false,
+    });
+  });
+
+  it('指定主要阅读材料命令不会依赖当前焦点并持久化材料身份', async () => {
+    useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().openView('material-2');
+
+    await registry.execute(COMMAND_IDS.workbenchSetPrimaryMaterial, 'material-2');
+    useWorkspaceStore.getState().focusEditorGroup('group-1');
+
+    expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-2');
+    await expect(repository.loadState()).resolves.toEqual({
+      ...DEFAULT_WORKSPACE_STATE,
+      editorGroups: useWorkspaceStore.getState().editorGroups,
+      primaryMaterialId: 'material-2',
+    });
+  });
 });

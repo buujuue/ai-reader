@@ -8,4 +8,4 @@ status: accepted
 
 文本 Anchor 保存 CFI、选中文字、前文、后文、文档版本和恢复状态。文档变化后先尝试原 CFI，再尝试唯一引文与上下文匹配；无法唯一恢复时保留批注并标记失联，绝不静默附着到错误位置。
 
-扫描 PDF 不做 OCR，但允许区域高亮与页内批注。其 Anchor 保存页码和归一化矩形，与文本 Anchor 使用不同类型。未来 OCR 只能通过 Anchor Interface 增加新的恢复能力。
+扫描 PDF 不做 OCR，但允许区域高亮与页内批注。其 Anchor 语义上保存页码和归一化矩形，与文本 Anchor 使用不同恢复规则。由于第一版既有 SQLite 表和 Tauri DTO 已按文本字段落地，当前兼容传输层用 `pdf-text:` 编码承载页码与矩形；加载时必须先识别该编码，版本变化后保留为失联批注，不得进入文本引文恢复。未来 schema 演进时可将其拆为显式的 `PdfAreaAnchor`，OCR 只能通过 Anchor Interface 增加新的恢复能力。

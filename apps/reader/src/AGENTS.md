@@ -15,6 +15,8 @@
 
 ## 约定
 
+- `AnnotationSidebar.tsx` 读取 Workspace Store 的主要阅读材料与批注 Store；指定主要材料、切换批注侧栏和批注跳转分别经稳定 Command 执行。
+
 - 用户意图一律走 Command：UI 组件执行 Command，不在组件里另接行为逻辑；命令必须在 `commands/` 注册稳定 ID。
 - 前端不接触 SQLite 表、SQL、数据库路径与文件细节；平台能力只经 typed Repository 接口调用 Rust 命令。
 - 内存 Adapter 与 Tauri Adapter 必须运行同一份 `workspaceRepository.contract.ts` 契约测试；Repository 接口变化时同步更新契约与两个 Adapter。

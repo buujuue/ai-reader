@@ -3,7 +3,7 @@ import type { NavigationHistory } from '../reader/navigationHistory';
 import type { ReadingTypography } from '../reader/typography';
 import { DEFAULT_READING_TYPOGRAPHY } from '../reader/typography';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 6;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 7;
 
 /** 第二个 Editor Group 的拆分方向。`right` 表示左右并排,`down` 表示上下并排。 */
 export type EditorGroupSplitDirection = 'right' | 'down';
@@ -33,6 +33,10 @@ export interface EditorGroupState {
 export interface WorkspaceState {
   schemaVersion: number;
   primarySidebarVisible: boolean;
+  /** 批注侧栏的用户期望状态;窄布局只改变呈现,不改写此值。 */
+  annotationSidebarVisible: boolean;
+  /** 用户显式指定的主要阅读材料;与当前焦点阅读视图独立。 */
+  primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
   activeEditorGroupId: string;
   editorGroups: EditorGroupState[];
@@ -48,6 +52,8 @@ export const SECOND_EDITOR_GROUP_ID = 'group-2';
 export const DEFAULT_WORKSPACE_STATE: WorkspaceState = Object.freeze({
   schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
   primarySidebarVisible: true,
+  annotationSidebarVisible: true,
+  primaryMaterialId: null,
   splitDirection: null,
   activeEditorGroupId: DEFAULT_EDITOR_GROUP_ID,
   editorGroups: [

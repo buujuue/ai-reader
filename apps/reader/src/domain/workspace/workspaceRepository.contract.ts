@@ -19,6 +19,8 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     const state: typeof DEFAULT_WORKSPACE_STATE = {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
+      annotationSidebarVisible: false,
+      primaryMaterialId: 'mat-1',
       splitDirection: 'down',
       activeEditorGroupId: 'group-1',
       editorGroups: [
@@ -55,6 +57,8 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
+      annotationSidebarVisible: false,
+      primaryMaterialId: null,
       splitDirection: null,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
@@ -65,6 +69,8 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
+      annotationSidebarVisible: true,
+      primaryMaterialId: 'mat-2',
       splitDirection: null,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
@@ -75,6 +81,8 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await expect(repository.loadState()).resolves.toEqual({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
+      annotationSidebarVisible: true,
+      primaryMaterialId: 'mat-2',
       splitDirection: null,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,

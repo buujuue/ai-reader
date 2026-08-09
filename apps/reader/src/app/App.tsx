@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 
 import { ActivityBar } from '../components/ActivityBar';
+import { AnnotationSidebar } from '../components/AnnotationSidebar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { MarkdownDirtyCloseDialog } from '../components/MarkdownDirtyCloseDialog';
@@ -21,6 +22,7 @@ export function App() {
   const { commands, workspaceRepository, importRepository, windowLifecycle } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const tocVisible = useShellUiStore((state) => state.tocVisible);
+  const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,6 +32,14 @@ export function App() {
         if (!cancelled) {
           useWorkspaceStore.getState().hydrate(state);
           await commands.execute(COMMAND_IDS.libraryRefresh);
+          const primaryMaterialId = useWorkspaceStore.getState().primaryMaterialId;
+          if (primaryMaterialId) {
+            await commands
+              .execute(COMMAND_IDS.annotationLoadForMaterial, primaryMaterialId)
+              .catch((error: unknown) => {
+                console.error('加载主要材料批注失败', error);
+              });
+          }
           await restoreViews();
           if (!cancelled) {
             await commands.execute(COMMAND_IDS.markdownCheckRecoveries);
@@ -143,6 +153,7 @@ export function App() {
         {tocVisible ? <TocSidebar /> : null}
         {primarySidebarVisible ? <PrimarySidebar /> : null}
         <EditorArea />
+        {annotationSidebarVisible ? <AnnotationSidebar /> : null}
       </div>
       <StatusBar />
       <MetadataEditorDialog />

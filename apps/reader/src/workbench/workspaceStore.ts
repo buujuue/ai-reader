@@ -24,6 +24,8 @@ import {
  */
 export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
+  annotationSidebarVisible: boolean;
+  primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
   activeEditorGroupId: string;
   editorGroups: EditorGroupState[];
@@ -32,6 +34,8 @@ export interface WorkspaceStoreState {
   /** 阅读材料级排版覆盖;键为 BookId。 */
   materialTypography: Record<string, Partial<ReadingTypography>>;
   setPrimarySidebarVisible: (visible: boolean) => void;
+  setAnnotationSidebarVisible: (visible: boolean) => void;
+  setPrimaryMaterial: (materialId: string | null) => void;
   focusEditorGroup: (groupId: string) => void;
   splitEditorGroup: (
     direction: EditorGroupSplitDirection,
@@ -64,6 +68,10 @@ function nextEditorGroupId(editorGroups: EditorGroupState[]): string {
     candidate = `group-${suffix}`;
   }
   return candidate;
+}
+
+function uniqueMaterialIds(editorGroups: EditorGroupState[]): string[] {
+  return [...new Set(editorGroups.flatMap((group) => group.views.map((view) => view.materialId)))];
 }
 
 function updateView(
@@ -124,6 +132,8 @@ function normalizeWorkspaceViews(
 
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
+  annotationSidebarVisible: DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
+  primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
   splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
   activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
   editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
@@ -131,6 +141,10 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
 
   setPrimarySidebarVisible: (visible) => set({ primarySidebarVisible: visible }),
+
+  setAnnotationSidebarVisible: (visible) => set({ annotationSidebarVisible: visible }),
+
+  setPrimaryMaterial: (materialId) => set({ primaryMaterialId: materialId }),
 
   focusEditorGroup: (groupId) =>
     set((state) =>
@@ -224,13 +238,22 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       history: createNavigationHistory(),
       sourceMode: false,
     };
-    set((state) => ({
-      editorGroups: state.editorGroups.map((group) =>
+    set((state) => {
+      const editorGroups = state.editorGroups.map((group) =>
         group.id === groupId
           ? { ...group, views: [...group.views, view], activeViewId: view.id }
           : group,
-      ),
-    }));
+      );
+      const materials = uniqueMaterialIds(editorGroups);
+      return {
+        editorGroups,
+        // 只有工作区从无材料进入单材料状态时自动指定,打开第二份不会随焦点漂移。
+        primaryMaterialId:
+          state.primaryMaterialId === null && materials.length === 1
+            ? materialId
+            : state.primaryMaterialId,
+      };
+    });
     return view.id;
   },
 
@@ -252,6 +275,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
           return { ...group, views, activeViewId };
         })
         .filter((group) => group.views.length > 0 || state.editorGroups.length === 1);
+      const materials = uniqueMaterialIds(nextGroups);
       const activeGroupId = nextGroups.some((group) => group.id === state.activeEditorGroupId)
         ? state.activeEditorGroupId
         : nextGroups[0]?.id ?? state.activeEditorGroupId;
@@ -260,6 +284,12 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
         splitDirection: nextGroups.length === 2 ? state.splitDirection : null,
         activeEditorGroupId: activeGroupId,
         editorGroups: nextGroups,
+        primaryMaterialId:
+          materials.length === 1
+            ? materials[0]!
+            : materials.length === 0
+              ? null
+              : state.primaryMaterialId,
       };
     });
   },
@@ -327,8 +357,12 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       state.activeEditorGroupId,
       state.splitDirection,
     );
+    const materials = uniqueMaterialIds(normalized.editorGroups);
     set({
       primarySidebarVisible: state.primarySidebarVisible,
+      annotationSidebarVisible: state.annotationSidebarVisible,
+      primaryMaterialId:
+        state.primaryMaterialId ?? (materials.length === 1 ? materials[0]! : null),
       splitDirection: normalized.splitDirection,
       activeEditorGroupId: normalized.activeEditorGroupId,
       editorGroups: structuredClone(normalized.editorGroups),
@@ -340,6 +374,8 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   resetToDefault: () =>
     set({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
+      annotationSidebarVisible: DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
+      primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
       splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),

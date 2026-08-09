@@ -30,12 +30,15 @@ import { useSearchStore } from './searchStore';
 import { ThrottledPositionPersister } from './positionPersister';
 import { loadAnnotationsForView } from './annotationCommands';
 import { useMarkdownSessionStore } from './markdownSessionStore';
+import { useAnnotationStore } from './annotationStore';
+import { useLibraryStore } from './libraryStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
 import {
   findView,
+  findViewByMaterialId,
   findViewGroupId,
   findViewInGroupByMaterialId,
   getActiveViewId,
@@ -59,6 +62,47 @@ export interface ReaderCommandDependencies {
  * 每个打开中的阅读视图对应一个节流写入器,关闭时强制 flush。
  */
 const persisters = new Map<string, ThrottledPositionPersister>();
+
+interface ViewMountReadiness {
+  promise: Promise<void>;
+  resolve: () => void;
+  settled: boolean;
+}
+
+const viewMountReadiness = new Map<string, ViewMountReadiness>();
+
+function getViewMountReadiness(viewId: string): ViewMountReadiness {
+  const existing = viewMountReadiness.get(viewId);
+  if (existing && !existing.settled) return existing;
+
+  let resolvePromise!: () => void;
+  const readiness: ViewMountReadiness = {
+    promise: new Promise<void>((resolve) => {
+      resolvePromise = resolve;
+    }),
+    resolve: () => {
+      if (readiness.settled) return;
+      readiness.settled = true;
+      resolvePromise();
+    },
+    settled: false,
+  };
+  viewMountReadiness.set(viewId, readiness);
+  return readiness;
+}
+
+async function waitForViewMount(viewId: string): Promise<void> {
+  const readiness = getViewMountReadiness(viewId);
+  if (readiness.settled) return;
+
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, 1000);
+    void readiness.promise.then(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
 
 /** 同一阅读视图尚在打开时,复用进行中的文档创建任务,避免快速重复点击触发并发读取。 */
 const pendingDocumentCreations = new Map<string, Promise<BookDocument | null>>();
@@ -215,6 +259,8 @@ async function disposeViewRuntime(viewId: string): Promise<void> {
     persisters.delete(viewId);
   }
   navigationIntents.delete(viewId);
+  viewMountReadiness.get(viewId)?.resolve();
+  viewMountReadiness.delete(viewId);
   clearSearch(viewId);
   useSearchStore.getState().close(viewId);
   useReaderRuntime.getState().removeDocument(viewId);
@@ -293,6 +339,7 @@ export function mountViewDocument(
   location: ReadingLocation | null,
   dependencies: ReaderCommandDependencies,
 ): ThrottledPositionPersister {
+  const readiness = getViewMountReadiness(viewId);
   const persister = new ThrottledPositionPersister({
     save: async (next) => {
       useWorkspaceStore.getState().setViewLocation(viewId, next);
@@ -341,11 +388,12 @@ export function mountViewDocument(
   });
 
   void document.open(container)
-    .then(() => {
+    .then(async () => {
       if (location) {
         navigationIntents.set(viewId, 'replace');
-        void document.goToLocation(location);
+        await document.goToLocation(location);
       }
+      readiness.resolve();
       // 文档打开后加载该材料批注并绘制到覆盖层。
       if (dependencies.annotationRepository) {
         void loadAnnotationsForView(
@@ -357,6 +405,7 @@ export function mountViewDocument(
       }
     })
     .catch((error: unknown) => {
+      readiness.resolve();
       console.error('打开阅读文档失败', error);
     });
 
@@ -429,6 +478,44 @@ export function registerReaderCommands(
       }
       throw error;
     }
+  }));
+
+  // 从主要材料批注面板跳转:优先复用已有视图,否则在当前组打开该材料。
+  // 失联批注绝不猜测位置,只保留并提示用户。
+  registry.register(COMMAND_IDS.annotationGoTo, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
+    const materialId = args[0] as string | undefined;
+    const annotationId = args[1] as string | undefined;
+    if (!materialId || !annotationId) return;
+
+    let annotation = useAnnotationStore
+      .getState()
+      .getMaterialAnnotations(materialId)
+      .find((item) => item.id === annotationId);
+    if (!annotation && dependencies.annotationRepository) {
+      const loaded = await dependencies.annotationRepository.listByMaterial(materialId);
+      useAnnotationStore.getState().setMaterialAnnotations(materialId, loaded);
+      annotation = loaded.find((item) => item.id === annotationId);
+    }
+    if (!annotation) return;
+    if (annotation.anchor.recoveryState === 'orphaned') {
+      useShellUiStore.getState().setStatusMessage('失联批注无法安全跳转');
+      return;
+    }
+
+    const material = useLibraryStore.getState().materials.find((item) => item.id === materialId);
+    if (!material) return;
+
+    const activeGroupId = useWorkspaceStore.getState().activeEditorGroupId;
+    const targetView =
+      findViewInGroupByMaterialId(activeGroupId, materialId) ?? findViewByMaterialId(materialId);
+    const targetGroupId = targetView ? findViewGroupId(targetView.id) : activeGroupId;
+    const previousViewId = targetGroupId ? getActiveViewId(targetGroupId) : null;
+    const viewId = targetView?.id ?? useWorkspaceStore.getState().openView(materialId);
+
+    const document = await activateViewRuntime(dependencies, viewId, material, previousViewId);
+    if (!document) return;
+    await waitForViewMount(viewId);
+    await jumpToCfi(viewId, dependencies, annotation.anchor.cfi);
   }));
 
   registry.register(COMMAND_IDS.readerActivateView, (...args: unknown[]) => enqueueRuntimeTransition(async () => {

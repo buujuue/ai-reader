@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Archive, BookMarked, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { Archive, BookMarked, BookOpenCheck, RotateCcw, Search, Trash2 } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -7,6 +7,7 @@ import { filterMaterialsByQuery } from '../domain/library/libraryFilter';
 import { formatFromSourceFileName, formatLabel } from '../domain/library/materialFormat';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
+import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { MaterialCover } from './MaterialCover';
 
 /**
@@ -20,6 +21,7 @@ export function PrimarySidebar() {
   const trashedMaterials = useLibraryStore((state) => state.trashedMaterials);
   const openMetadataEditor = useShellUiStore((state) => state.openMetadataEditor);
   const openPurgeConfirm = useShellUiStore((state) => state.openPurgeConfirm);
+  const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
   const [query, setQuery] = useState('');
   const [showTrash, setShowTrash] = useState(false);
 
@@ -44,6 +46,12 @@ export function PrimarySidebar() {
 
   const handlePurge = (materialId: string) => {
     openPurgeConfirm(materialId);
+  };
+
+  const handleSetPrimary = (materialId: string) => {
+    void commands
+      .execute(COMMAND_IDS.workbenchSetPrimaryMaterial, materialId)
+      .catch(() => undefined);
   };
 
   return (
@@ -138,6 +146,26 @@ export function PrimarySidebar() {
                       className="rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-zinc-100"
                     >
                       <span className="text-[10px]">编辑</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetPrimary(material.id)}
+                      title={
+                        primaryMaterialId === material.id
+                          ? `当前主要材料 ${material.title}`
+                          : `设为主要材料 ${material.title}`
+                      }
+                      aria-label={
+                        primaryMaterialId === material.id
+                          ? `当前主要材料 ${material.title}`
+                          : `设为主要材料 ${material.title}`
+                      }
+                      aria-pressed={primaryMaterialId === material.id}
+                      className={`rounded-md bg-zinc-900/70 p-1 transition-colors hover:text-sky-300 focus-visible:opacity-100 ${
+                        primaryMaterialId === material.id ? 'text-sky-300' : 'text-zinc-300'
+                      }`}
+                    >
+                      <BookOpenCheck size={12} aria-hidden />
                     </button>
                   </div>
                 </div>

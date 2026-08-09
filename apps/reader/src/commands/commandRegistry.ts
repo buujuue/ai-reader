@@ -1,5 +1,7 @@
 export const COMMAND_IDS = {
   workbenchTogglePrimarySidebar: 'workbench.togglePrimarySidebar',
+  workbenchToggleAnnotationSidebar: 'workbench.toggleAnnotationSidebar',
+  workbenchSetPrimaryMaterial: 'workbench.setPrimaryMaterial',
   workbenchToggleToc: 'workbench.toggleToc',
   workbenchSaveState: 'workbench.saveState',
   workbenchFocusEditorGroup: 'workbench.focusEditorGroup',
@@ -40,6 +42,7 @@ export const COMMAND_IDS = {
   annotationCreateHighlight: 'annotation.createHighlight',
   annotationUpdateNote: 'annotation.updateNote',
   annotationDelete: 'annotation.delete',
+  annotationGoTo: 'annotation.goTo',
   markdownToggleSourceMode: 'markdown.toggleSourceMode',
   markdownSave: 'markdown.save',
   markdownDiscard: 'markdown.discard',

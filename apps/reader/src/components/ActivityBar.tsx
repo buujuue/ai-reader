@@ -1,4 +1,4 @@
-import { LibraryBig, ListTree, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LibraryBig, ListTree, PanelLeftClose, PanelLeftOpen, StickyNote } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -11,6 +11,7 @@ export function ActivityBar() {
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const importing = useLibraryStore((state) => state.importing);
   const tocVisible = useShellUiStore((state) => state.tocVisible);
+  const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
 
   const handleTogglePrimarySidebar = () => {
     void commands.execute(COMMAND_IDS.workbenchTogglePrimarySidebar).catch(() => undefined);
@@ -22,6 +23,10 @@ export function ActivityBar() {
 
   const handleImport = () => {
     void commands.execute(COMMAND_IDS.libraryImport).catch(() => undefined);
+  };
+
+  const handleToggleAnnotations = () => {
+    void commands.execute(COMMAND_IDS.workbenchToggleAnnotationSidebar).catch(() => undefined);
   };
 
   return (
@@ -38,6 +43,16 @@ export function ActivityBar() {
         className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 disabled:opacity-50"
       >
         <LibraryBig size={18} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="切换批注侧栏"
+        aria-pressed={annotationSidebarVisible}
+        title={annotationSidebarVisible ? '隐藏批注侧栏' : '显示批注侧栏'}
+        onClick={handleToggleAnnotations}
+        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+      >
+        <StickyNote size={18} aria-hidden />
       </button>
       <button
         type="button"
