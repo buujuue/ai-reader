@@ -349,7 +349,7 @@ describe('打开 EPUB 并重启续读', () => {
     useWorkspaceStore.getState().resetToDefault();
   });
 
-  it('从书库打开一本书后会新增阅读标签', async () => {
+  it('从书库打开一本书后会新增阅读标签,再次点击会回到同一标签', async () => {
     const user = userEvent.setup();
     renderApp(services);
 
@@ -361,6 +361,13 @@ describe('打开 EPUB 并重启续读', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument();
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+
+    await user.click(openButton);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+      expect(screen.getAllByRole('tab', { name: /示例书/ })).toHaveLength(1);
     });
   });
 

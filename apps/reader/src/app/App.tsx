@@ -13,7 +13,6 @@ import { ReaderSettingsDialog } from '../components/ReaderSettingsDialog';
 import { StatusBar } from '../components/StatusBar';
 import { TocSidebar } from '../components/TocSidebar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
-import type { WorkspaceState } from '../domain/workspace/workspaceState';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useAppServices } from './AppServicesContext';
@@ -31,7 +30,7 @@ export function App() {
         if (!cancelled) {
           useWorkspaceStore.getState().hydrate(state);
           await commands.execute(COMMAND_IDS.libraryRefresh);
-          await restoreViews(state);
+          await restoreViews();
           if (!cancelled) {
             await commands.execute(COMMAND_IDS.markdownCheckRecoveries);
           }
@@ -110,9 +109,9 @@ export function App() {
   }, [commands]);
 
   // 重启恢复:为持久化的标签重建 BookDocument 并恢复其阅读位置。
-  async function restoreViews(state: WorkspaceState) {
+  async function restoreViews() {
     const materials = await importRepository.listMaterials();
-    const views = state.editorGroups.flatMap((group) => group.views);
+    const views = useWorkspaceStore.getState().editorGroups.flatMap((group) => group.views);
     for (const view of views) {
       const material = materials.find((material) => material.id === view.materialId) ?? null;
       if (!material) continue;

@@ -78,7 +78,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Workbench
 
-拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。最多两个 Editor Group。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
+拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。最多两个 Editor Group；每个阅读材料在整个工作区最多对应一个 ReadingView，从书库再次打开时激活原标签。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
 ### Command Registry
 

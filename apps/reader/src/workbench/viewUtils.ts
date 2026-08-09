@@ -22,3 +22,13 @@ export function getActiveViewId(): string | null {
 export function findViewMaterialId(viewId: string): string | null {
   return findView(viewId)?.materialId ?? null;
 }
+
+/** 在全部 Editor Group 中按材料 BookId 查找阅读视图;未找到时返回 undefined。 */
+export function findViewByMaterialId(materialId: string): ReadingViewState | undefined {
+  const state = useWorkspaceStore.getState();
+  for (const group of state.editorGroups) {
+    const view = group.views.find((view) => view.materialId === materialId);
+    if (view) return view;
+  }
+  return undefined;
+}

@@ -40,6 +40,93 @@ describe('Workspace Store', () => {
     expect(group.activeViewId).toBe(group.views[0]!.id);
   });
 
+  it('重复打开同一本书会复用原标签并激活它', () => {
+    const first = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().openView('material-2');
+
+    const reopened = useWorkspaceStore.getState().openView('material-1');
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(reopened).toBe(first);
+    expect(group.views).toHaveLength(2);
+    expect(group.activeViewId).toBe(first);
+  });
+
+  it('同一本书位于其他编辑器组时会切换到原标签所在组', () => {
+    const firstViewId = crypto.randomUUID();
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      activeEditorGroupId: 'group-2',
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: firstViewId,
+              materialId: 'material-1',
+              location: null,
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: firstViewId,
+        },
+        { id: 'group-2', views: [], activeViewId: null },
+      ],
+    });
+
+    const reopened = useWorkspaceStore.getState().openView('material-1');
+    const state = useWorkspaceStore.getState();
+
+    expect(reopened).toBe(firstViewId);
+    expect(state.activeEditorGroupId).toBe('group-1');
+    expect(state.editorGroups[0]!.activeViewId).toBe(firstViewId);
+    expect(state.editorGroups[1]!.views).toHaveLength(0);
+  });
+
+  it('恢复旧工作区时会清理同一本书的重复标签', () => {
+    const firstViewId = crypto.randomUUID();
+    const duplicateViewId = crypto.randomUUID();
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      activeEditorGroupId: 'group-2',
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: firstViewId,
+              materialId: 'material-1',
+              location: null,
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: firstViewId,
+        },
+        {
+          id: 'group-2',
+          views: [
+            {
+              id: duplicateViewId,
+              materialId: 'material-1',
+              location: null,
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: duplicateViewId,
+        },
+      ],
+    });
+
+    const state = useWorkspaceStore.getState();
+
+    expect(state.activeEditorGroupId).toBe('group-1');
+    expect(state.editorGroups.flatMap((group) => group.views)).toHaveLength(1);
+    expect(state.editorGroups[0]!.views[0]!.id).toBe(firstViewId);
+  });
+
   it('关闭活动标签后切换活动视图到相邻标签', () => {
     const first = useWorkspaceStore.getState().openView('material-1');
     const second = useWorkspaceStore.getState().openView('material-2');

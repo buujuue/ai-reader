@@ -61,6 +61,43 @@ function updateView(
   };
 }
 
+interface NormalizedWorkspaceViews {
+  activeEditorGroupId: string;
+  editorGroups: EditorGroupState[];
+}
+
+/** 恢复旧工作区时按材料身份去重,避免历史重复标签继续违反工作区不变量。 */
+function normalizeWorkspaceViews(
+  editorGroups: EditorGroupState[],
+  activeEditorGroupId: string,
+): NormalizedWorkspaceViews {
+  const seenMaterialIds = new Set<string>();
+  const normalizedGroups = editorGroups.map((group) => {
+    const views = group.views.filter((view) => {
+      if (seenMaterialIds.has(view.materialId)) return false;
+      seenMaterialIds.add(view.materialId);
+      return true;
+    });
+    const activeViewId = views.some((view) => view.id === group.activeViewId)
+      ? group.activeViewId
+      : views.at(-1)?.id ?? null;
+    return { ...group, views, activeViewId };
+  });
+
+  const activeGroup =
+    normalizedGroups.find(
+      (group) => group.id === activeEditorGroupId && group.views.length > 0,
+    ) ??
+    normalizedGroups.find((group) => group.views.length > 0) ??
+    normalizedGroups.find((group) => group.id === activeEditorGroupId) ??
+    normalizedGroups[0];
+
+  return {
+    activeEditorGroupId: activeGroup?.id ?? activeEditorGroupId,
+    editorGroups: normalizedGroups,
+  };
+}
+
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
   activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
@@ -99,7 +136,25 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   },
 
   openView: (materialId) => {
-    const groupId = get().activeEditorGroupId;
+    const state = get();
+    for (const group of state.editorGroups) {
+      const existingView = group.views.find((view) => view.materialId === materialId);
+      if (!existingView) continue;
+
+      // 同一材料在整个工作区只保留一个标签。书库再次点击时,
+      // 激活已有标签;即使它属于另一个编辑器组,也切换到该组。
+      set({
+        activeEditorGroupId: group.id,
+        editorGroups: state.editorGroups.map((currentGroup) =>
+          currentGroup.id === group.id
+            ? { ...currentGroup, activeViewId: existingView.id }
+            : currentGroup,
+        ),
+      });
+      return existingView.id;
+    }
+
+    const groupId = state.activeEditorGroupId;
     const view: ReadingViewState = {
       id: nextViewId(),
       materialId,
@@ -176,14 +231,16 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     );
   },
 
-  hydrate: (state) =>
+  hydrate: (state) => {
+    const normalized = normalizeWorkspaceViews(state.editorGroups, state.activeEditorGroupId);
     set({
       primarySidebarVisible: state.primarySidebarVisible,
-      activeEditorGroupId: state.activeEditorGroupId,
-      editorGroups: structuredClone(state.editorGroups),
+      activeEditorGroupId: normalized.activeEditorGroupId,
+      editorGroups: structuredClone(normalized.editorGroups),
       globalReadingTypography: state.globalReadingTypography,
       materialTypography: structuredClone(state.materialTypography),
-    }),
+    });
+  },
 
   resetToDefault: () =>
     set({

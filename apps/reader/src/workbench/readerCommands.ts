@@ -34,7 +34,7 @@ import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
-import { findView, getActiveViewId } from './viewUtils';
+import { findView, findViewByMaterialId, getActiveViewId } from './viewUtils';
 
 export interface ReaderCommandDependencies {
   importRepository: ImportRepository;
@@ -53,6 +53,9 @@ export interface ReaderCommandDependencies {
  * 每个打开中的阅读视图对应一个节流写入器,关闭时强制 flush。
  */
 const persisters = new Map<string, ThrottledPositionPersister>();
+
+/** 同一阅读视图尚在打开时,复用进行中的文档创建任务,避免快速重复点击触发并发读取。 */
+const pendingDocumentCreations = new Map<string, Promise<BookDocument | null>>();
 
 /**
  * 每个阅读视图的"本次导航意图"。普通翻页/滚动用 `replace`;显式跳转用 `push`。
@@ -254,11 +257,42 @@ export function registerReaderCommands(
     if (!material) {
       throw new Error('打开书籍命令缺少阅读材料参数');
     }
+    const existingView = findViewByMaterialId(material.id);
     const viewId = useWorkspaceStore.getState().openView(material.id);
+
+    // 书库点击已有材料只负责跳转到既有标签,不重复读取文件或构造文档。
+    const existingDocument = useReaderRuntime.getState().getDocument(viewId);
+    if (existingDocument) {
+      if (location) {
+        useWorkspaceStore.getState().setViewLocation(viewId, location);
+      }
+      await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+      return;
+    }
+
     try {
-      const document = await createDocumentForMaterial(dependencies, material);
+      let documentPromise = pendingDocumentCreations.get(viewId);
+      if (!documentPromise) {
+        documentPromise = createDocumentForMaterial(dependencies, material);
+        pendingDocumentCreations.set(viewId, documentPromise);
+        documentPromise.then(
+          () => {
+            if (pendingDocumentCreations.get(viewId) === documentPromise) {
+              pendingDocumentCreations.delete(viewId);
+            }
+          },
+          () => {
+            if (pendingDocumentCreations.get(viewId) === documentPromise) {
+              pendingDocumentCreations.delete(viewId);
+            }
+          },
+        );
+      }
+      const document = await documentPromise;
       if (!document) {
-        useWorkspaceStore.getState().closeView(viewId);
+        if (!existingView) {
+          useWorkspaceStore.getState().closeView(viewId);
+        }
         throw new Error(`无法打开阅读材料:${material.title}`);
       }
       useReaderRuntime.getState().setDocument(viewId, document);
@@ -267,7 +301,9 @@ export function registerReaderCommands(
       }
       await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
     } catch (error) {
-      useWorkspaceStore.getState().closeView(viewId);
+      if (!existingView) {
+        useWorkspaceStore.getState().closeView(viewId);
+      }
       throw error;
     }
   });

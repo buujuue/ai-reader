@@ -135,7 +135,7 @@ Status: ready-for-agent
 - 同一 Markdown 材料按 MaterialId 只有一个 `MarkdownDocumentSession`；多个 View 共享缓冲区。
 - Markdown 正文手动正式保存；编辑期间自动写恢复快照。正式保存由 Rust 原子替换文件，递增文档版本、更新指纹并触发锚点恢复。
 - Workbench 集中拥有最多两个 Editor Group、标签顺序、活动 View、主要阅读材料和面板期望状态。
-- 同一材料可在不同组拥有多个 ReadingView；位置与导航历史独立，资料级批注和排版覆盖共享。
+- 同一材料在整个工作区最多拥有一个 ReadingView；再次从书库打开时激活已有标签，位置与导航历史随该视图保留，资料级批注和排版覆盖按材料共享。
 - 主要阅读材料由用户显式指定；单材料时自动指定，焦点切换不改变它。
 - 只挂载每个可见 Editor Group 的活动 ReadingView；失活标签保存位置并释放渲染器。
 - 工作台由活动栏、主侧栏、中央 Editor Group、次侧栏和状态栏组成。右侧第一版展示主要阅读材料的批注，未来可承载 Agent。

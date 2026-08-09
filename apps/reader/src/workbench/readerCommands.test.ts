@@ -101,6 +101,31 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.has(group.views[0]!.id)).toBe(true);
   });
 
+  it('重复打开同一本书会跳转到原标签,不重复创建文档', async () => {
+    const material = await setupWithEpub();
+    const readManagedFile = vi.spyOn(importRepository, 'readManagedFile');
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    const firstOpen = registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const secondOpen = registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    await Promise.all([firstOpen, secondOpen]);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId);
+    useWorkspaceStore.getState().openView('another-material');
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(group.views).toHaveLength(2);
+    expect(group.activeViewId).toBe(firstViewId);
+    expect(useReaderRuntime.getState().getDocument(firstViewId)).toBe(firstDocument);
+    expect(readManagedFile).toHaveBeenCalledTimes(1);
+  });
+
   it('翻页命令作用于活动视图的 BookDocument', async () => {
     const material = await setupWithEpub();
     const nextSpy = vi.fn();
