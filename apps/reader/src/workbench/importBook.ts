@@ -5,6 +5,7 @@ import type { ReadingMaterial, SourceMetadata } from '../domain/library/material
 import { formatFromSourceFileName } from '../domain/library/materialFormat';
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import { PdfInspectError, inspectPdf } from '../domain/reader/pdf/pdfInspector';
+import { MarkdownInspectError, inspectMarkdown } from '../domain/reader/markdown/markdownInspector';
 
 export interface ImportBookDependencies {
   importRepository: ImportRepository;
@@ -86,7 +87,7 @@ async function importOneFile(
   }
 }
 
-/** 按源文件扩展名分派检查:EPUB 用 zip 清单解析,PDF 用 PDF.js 元数据解析。 */
+/** 按源文件扩展名分派检查:EPUB 用 zip 清单解析,PDF 用 PDF.js,Markdown 用解析器。 */
 async function inspectFile(
   bytes: Uint8Array,
   originalFileName: string,
@@ -101,12 +102,20 @@ async function inspectFile(
     const result = await inspectEpub(bytes);
     return result.metadata;
   }
-  throw new PdfInspectError('不支持的文件格式:仅支持 EPUB 与 PDF', 'unsupported');
+  if (format === 'markdown') {
+    const result = await inspectMarkdown(bytes, originalFileName);
+    return result.metadata;
+  }
+  throw new MarkdownInspectError('不支持的文件格式:仅支持 EPUB、PDF 与 Markdown', 'unsupported');
 }
 
 /** 把任意导入阶段的错误归类为带行动提示的领域化失败。 */
 export function classifyImportError(error: unknown): ImportFailure {
-  if (error instanceof EpubInspectError || error instanceof PdfInspectError) {
+  if (
+    error instanceof EpubInspectError ||
+    error instanceof PdfInspectError ||
+    error instanceof MarkdownInspectError
+  ) {
     return { kind: error.kind, message: error.message };
   }
   const text = error instanceof Error ? error.message : String(error);

@@ -2,7 +2,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 /** 系统文件选择器窄接口。取消选择返回 null,不产生任何记录或暂存文件。 */
 export interface FilePicker {
-  /** 一次选择多份阅读材料(EPUB/PDF);用户取消返回 null。 */
+  /** 一次选择多份阅读材料(EPUB/PDF/Markdown);用户取消返回 null。 */
   pickBooks(): Promise<string[] | null>;
   /** 选择一张封面图片;用户取消返回 null。 */
   pickImage(): Promise<string | null>;
@@ -15,7 +15,7 @@ export function createTauriFilePicker(): FilePicker {
         multiple: true,
         directory: false,
         filters: [
-          { name: '阅读材料', extensions: ['epub', 'pdf'] },
+          { name: '阅读材料', extensions: ['epub', 'pdf', 'md', 'markdown'] },
         ],
       });
       if (selected === null) {

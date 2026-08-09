@@ -147,6 +147,56 @@ describe('importBooks 对仓库 IO 失败的处理', () => {
     expect((await repository.listMaterials()).map((m) => m.title)).toEqual(['甲']);
   });
 
+  it('Markdown 文件成功导入并提取标题', async () => {
+    const io = makeIo({
+      sourcePaths: ['notes.md'],
+      bytes: {
+        'notes.md': new TextEncoder().encode('# 我的笔记\n\n正文'),
+      },
+    });
+
+    const outcomes = (await importBooks(io))!;
+
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.kind).toBe('success');
+    if (outcomes[0]?.kind === 'success') {
+      expect(outcomes[0].material.title).toBe('我的笔记');
+    }
+  });
+
+  it('Markdown 无标题时用文件名兜底', async () => {
+    const io = makeIo({
+      sourcePaths: ['my-notes.md'],
+      bytes: {
+        'my-notes.md': new TextEncoder().encode('只有正文没有标题'),
+      },
+    });
+
+    const outcomes = (await importBooks(io))!;
+
+    expect(outcomes[0]?.kind).toBe('success');
+    if (outcomes[0]?.kind === 'success') {
+      expect(outcomes[0].material.title).toBe('my notes');
+    }
+  });
+
+  it('空 Markdown 文件记为 empty 失败', async () => {
+    const io = makeIo({
+      sourcePaths: ['empty.md'],
+      bytes: {
+        'empty.md': new Uint8Array(0),
+      },
+    });
+
+    const outcomes = (await importBooks(io))!;
+
+    const failed = outcomes[0];
+    expect(failed?.kind).toBe('failure');
+    if (failed?.kind === 'failure') {
+      expect(failed.failure.kind).toBe('empty');
+    }
+  });
+
   it('提交失败(如空间不足)记为 space 失败且失败文件不留 ready 记录', async () => {
     const sourcePath = 'big.epub';
     const sources = new Map<string, Uint8Array>();

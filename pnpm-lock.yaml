@@ -25,6 +25,9 @@ importers:
       lucide-react:
         specifier: ^1.28.0
         version: 1.28.0(react@19.2.8)
+      marked:
+        specifier: ^18.0.9
+        version: 18.0.9
       pdfjs-dist:
         specifier: ^5.7.284
         version: 5.7.284
@@ -1221,6 +1224,11 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  marked@18.0.9:
+    resolution: {integrity: sha512-/Sa4qiiHZxf0/FQdBBowr9q4r10krCwMvpK48FUBdXdUXScDxiQGR9zCPrFgRVR5LU3iySOiIjy09ZQvADir1w==}
+    engines: {node: '>= 20'}
+    hasBin: true
 
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
@@ -2487,6 +2495,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  marked@18.0.9: {}
 
   mdn-data@2.27.1: {}
 

@@ -139,6 +139,33 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.has(viewId)).toBe(false);
     expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(0);
   });
+
+  it('Markdown 材料打开后注册 MarkdownBookDocument', async () => {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(
+      sources,
+      '演示书/示例笔记.md',
+      new TextEncoder().encode('# 我的笔记\n\n正文'),
+    );
+    importRepository = createInMemoryImportRepository(sources);
+    const staged = await importRepository.stageImport('演示书/示例笔记.md');
+    const bytes = await importRepository.readStagedFile(staged);
+    const { inspectMarkdown } = await import('../domain/reader/markdown/markdownInspector');
+    const { metadata } = await inspectMarkdown(bytes, '示例笔记.md');
+    const material = await importRepository.commitImport(staged, metadata);
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(group.views).toHaveLength(1);
+    const book = useReaderRuntime.getState().getDocument(group.views[0]!.id)!;
+    expect(book.format).toBe('markdown');
+  });
 });
 
 describe('Reader 导航命令', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeEpubContent } from './sanitizer';
+import { sanitizeEpubContent, sanitizeHtmlFragment } from './sanitizer';
 
 describe('sanitizeEpubContent', () => {
   it('移除 script 元素及其内容', () => {
@@ -77,5 +77,36 @@ describe('sanitizeEpubContent', () => {
 
     expect(output).toContain('chapter2.xhtml');
     expect(output).toContain('#sec1');
+  });
+});
+
+describe('sanitizeHtmlFragment', () => {
+  it('清洗脚本、iframe、对象嵌入与事件处理器属性', () => {
+    const input = `<p>正文</p><script>alert(1)</script><iframe src="x"></iframe><img src="y" onerror="fetch(1)">`;
+
+    const output = sanitizeHtmlFragment(input);
+
+    expect(output).not.toContain('<script');
+    expect(output).not.toContain('iframe');
+    expect(output).not.toContain('onerror');
+    expect(output).toContain('正文');
+  });
+
+  it('移除危险 URL 并保留合法链接', () => {
+    const input = `<a href="javascript:alert(1)">坏</a><a href="https://safe.example">好</a><a href="#sec">锚</a>`;
+
+    const output = sanitizeHtmlFragment(input);
+
+    expect(output).not.toContain('javascript:');
+    expect(output).toContain('https://safe.example');
+    expect(output).toContain('#sec');
+  });
+
+  it('拒绝协议相对 URL(//,网络路径引用)', () => {
+    const input = `<a href="//evil.example/x">坏</a><img src="//evil.example/img.png">`;
+
+    const output = sanitizeHtmlFragment(input);
+
+    expect(output).not.toContain('//evil.example');
   });
 });

@@ -16,19 +16,25 @@ export interface EpubBookDocumentOptions {
   viewHostFactory: FoliateViewHostFactory;
   /** 是否启用内容清洗(安全开关,默认开启且不可在阅读时关闭)。 */
   sanitize?: boolean;
+  /** 文档格式(EPUB 实现缺省为 epub;Markdown 子类传入 markdown)。 */
+  format?: 'epub' | 'markdown';
+  /** ReadingLocation 的 kind(缺省与 format 一致;Markdown 子类传入 markdown)。 */
+  locationKind?: 'epub' | 'markdown';
 }
 
 /**
- * EPUB 的 BookDocument 实现。它把不可信内容清洗、Foliate 渲染器挂载、
- * 位置读取/恢复与导航统一封装在窄接口之后;上层绝不直接操作 Foliate View。
+ * EPUB(及复用 Foliate 分页器的 Markdown)的 BookDocument 实现。
+ * 它把不可信内容清洗、Foliate 渲染器挂载、位置读取/恢复与导航统一封装在窄接口之后;
+ * 上层绝不直接操作 Foliate View。
  */
 export class EpubBookDocument implements BookDocument {
-  readonly format = 'epub' as const;
+  readonly format: 'epub' | 'markdown';
   readonly metadata: BookDocumentMetadata;
 
   private readonly bytes: Uint8Array;
   private readonly viewHostFactory: FoliateViewHostFactory;
   private readonly sanitize: boolean;
+  private readonly locationKind: 'epub' | 'markdown';
   private typography: ReadingTypography = DEFAULT_READING_TYPOGRAPHY;
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
@@ -44,6 +50,8 @@ export class EpubBookDocument implements BookDocument {
     this.metadata = options.metadata;
     this.viewHostFactory = options.viewHostFactory;
     this.sanitize = options.sanitize ?? true;
+    this.format = options.format ?? 'epub';
+    this.locationKind = options.locationKind ?? this.format;
   }
 
   async open(container: HTMLElement): Promise<void> {
@@ -76,7 +84,7 @@ export class EpubBookDocument implements BookDocument {
   }
 
   async goToLocation(location: ReadingLocation): Promise<void> {
-    if (location.kind !== 'epub') {
+    if (location.kind !== this.locationKind) {
       throw new Error(`不支持的阅读位置类型:${location.kind}`);
     }
     await this.host?.goToLocation(location.cfi);
@@ -194,7 +202,7 @@ export class EpubBookDocument implements BookDocument {
     }
     // 位置变化事件:把渲染器 CFI 转成可序列化的 ReadingLocation。
     this.host.onRelocate((cfi) => {
-      const location: ReadingLocation = { kind: 'epub', cfi };
+      const location: ReadingLocation = { kind: this.locationKind, cfi };
       this.currentLocation = location;
       for (const listener of this.locationListeners) {
         listener(location);

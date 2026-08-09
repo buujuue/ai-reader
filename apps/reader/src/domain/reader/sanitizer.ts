@@ -34,6 +34,17 @@ export function sanitizeEpubContent(input: string): string {
   return new XMLSerializer().serializeToString(doc);
 }
 
+/**
+ * 清洗一段 HTML 片段(如 Markdown 渲染结果),返回清洗后的 body 内部 HTML。
+ * 与 `sanitizeEpubContent` 共用同一套标签/属性/URL 黑名单,落实 ADR-0010。
+ * 片段解析使用宽松的 `text/html`,不要求完整文档结构。
+ */
+export function sanitizeHtmlFragment(input: string): string {
+  const doc = new DOMParser().parseFromString(input, 'text/html');
+  sanitizeElementTree(doc.body);
+  return doc.body.innerHTML;
+}
+
 function parseDocument(input: string): Document {
   const xhtml = new DOMParser().parseFromString(input, 'application/xhtml+xml');
   if (!xhtml.documentElement || xhtml.getElementsByTagName('parsererror').length > 0) {
@@ -81,6 +92,11 @@ function isAllowedUrl(value: string): boolean {
     return true;
   }
   if (BLOCKED_URL_PROTOCOLS.test(value)) {
+    return false;
+  }
+  // 协议相对 URL(以 // 开头)是网络路径引用,会解析到当前协议下的远程主机,
+  // 不是真正安全的相对路径。阅读内容一律视为不可信,予以拒绝。
+  if (/^\/\//.test(value)) {
     return false;
   }
   if (value.startsWith('data:')) {

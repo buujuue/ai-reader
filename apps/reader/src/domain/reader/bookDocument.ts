@@ -19,7 +19,7 @@ export interface BookDocumentMetadata {
  * 都集中在 BookDocument 的 EPUB 实现内,不泄漏到上层。
  */
 export interface BookDocument {
-  readonly format: 'epub' | 'pdf';
+  readonly format: 'epub' | 'pdf' | 'markdown';
   readonly metadata: BookDocumentMetadata;
 
   /**

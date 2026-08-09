@@ -22,6 +22,7 @@
     "@tauri-apps/plugin-opener": "^2.5.3",
     "foliate-js": "^1.0.1",
     "lucide-react": "^1.28.0",
+    "marked": "^18.0.9",
     "pdfjs-dist": "^5.7.284",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

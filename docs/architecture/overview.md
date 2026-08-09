@@ -145,6 +145,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。
 - **第 5 切片**：当前资料目录、搜索、导航历史与基本排版（`TocSidebar`、增量搜索 `searchStore`/`searchRunner`、导航历史后退/前进、阅读排版 `typography.ts` 与 `ReaderSettingsDialog`、排版设置持久化）。
 - **第 6 切片**：PDF 固定版式阅读（`pdf/` 子模块：`PdfBookDocument` + `pdfjs-dist`、范围读取并发上限、过期渲染取消、Canvas 内存预算、缩放/页面适配与视口恢复、扫描页无文字层仍显示、`readerSetPdfViewport`/`readerSetPdfFlow` 命令）。对应工单 #14。
+- **第 7 切片**：Markdown 安全导入并阅读（`markdown/` 子模块：`marked` 渲染 + `sanitizeHtmlFragment` 清洗、按一级标题分段、内存 EPUB 组装、`MarkdownBookDocument` 复用 Foliate 宿主、标题/作者提取与文件名兜底、`library.openBook` 读取）。对应工单 #17。
 
 ## 后续切片顺序
 

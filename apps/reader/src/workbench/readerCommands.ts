@@ -16,6 +16,7 @@ import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import { loadPdfLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
+import { MarkdownBookDocument } from '../domain/reader/markdown/markdownBookDocument';
 import type { ReadingTypography } from '../domain/reader/typography';
 import { resolveTypography } from '../domain/reader/typography';
 import { inspectEpub } from '../domain/library/epub/epubInspector';
@@ -120,6 +121,33 @@ async function createPdfDocument(
   });
 }
 
+/**
+ * 读取托管 Markdown 字节,构造 BookDocument。
+ * 元数据直接取自材料来源快照(导入时已做标题/作者提取与文件名兜底),
+ * 避免在读取时重复解析;`MarkdownBookDocument` 构造器内部完成渲染与清洗。
+ * 返回 null 表示读取失败。
+ */
+async function createMarkdownDocument(
+  dependencies: ReaderCommandDependencies,
+  material: ReadingMaterial,
+): Promise<BookDocument | null> {
+  let bytes: Uint8Array;
+  try {
+    bytes = await dependencies.importRepository.readManagedFile(material.id);
+  } catch {
+    return null;
+  }
+  return new MarkdownBookDocument({
+    text: new TextDecoder('utf-8').decode(bytes),
+    metadata: {
+      title: material.title,
+      author: material.author,
+      language: material.language,
+    },
+    viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
+  });
+}
+
 /** 按材料格式分派创建对应 BookDocument;未知格式返回 null。 */
 async function createDocumentForMaterial(
   dependencies: ReaderCommandDependencies,
@@ -131,6 +159,8 @@ async function createDocumentForMaterial(
       return createPdfDocument(dependencies, material);
     case 'epub':
       return createEpubDocument(dependencies, material);
+    case 'markdown':
+      return createMarkdownDocument(dependencies, material);
     default:
       return null;
   }
@@ -536,6 +566,8 @@ async function jumpToCfi(
         fit: 'width',
       });
     }
+  } else if (document instanceof MarkdownBookDocument) {
+    await document.goToLocation({ kind: 'markdown', cfi });
   } else {
     await document.goToLocation({ kind: 'epub', cfi });
   }

@@ -20,6 +20,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | @tauri-apps/plugin-opener | ^2 | MIT / Apache-2.0 | 外部链接交给系统浏览器 |
 | foliate-js | ^1.0.1 | MIT | EPUB 渲染内核;《view.js》《epub.js》《paginator.js》等源自 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js) |
 | pdfjs-dist | ^5.7.284 | Apache-2.0 | PDF 固定版式阅读内核（工单 #14 引入） |
+| marked | ^18 | MIT | Markdown 渲染内核（工单 #17 引入） |
 
 精确版本以 `pnpm-lock.yaml` 为准。
 
@@ -60,6 +61,13 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 使用范围:范围读取、解码、渲染、文本层与封面提取;所有直接调用集中在 `apps/reader/src/domain/reader/pdf/` 子模块, 上层只经 `PdfBookDocument`(实现 `BookDocument`)窄接口交互。
 - 安全边界:加载时关闭 `isEvalSupported`, 不执行 PDF 内脚本;渲染内容不触发远程资源加载。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/pdfjs-dist@5.7.284/node_modules/pdfjs-dist/LICENSE`。
+
+## marked 引入记录
+
+- 已于第 7 个切片(Markdown 安全导入并阅读, 工单 #17)经 npm 引入上游 `marked@18`(MIT), 来源 [markedjs/marked](https://github.com/markedjs/marked)。
+- 使用范围:把 Markdown 源渲染为 HTML,再经 `sanitizeHtmlFragment` 清洗并按一级标题分段;所有直接调用集中在 `apps/reader/src/domain/reader/markdown/` 子模块,上层只经 `MarkdownBookDocument`(实现 `BookDocument`)窄接口交互。
+- 安全边界:Markdown 渲染结果视为不可信输入,`domain/reader/sanitizer.ts` 的 `sanitizeHtmlFragment` 在进入任何渲染器前移除脚本、iframe、对象嵌入、事件处理器与危险 URL,落实 ADR-0010。
+- upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/marked@*/node_modules/marked/LICENSE.md`。
 
 ## 借鉴说明
 

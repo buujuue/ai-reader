@@ -30,8 +30,18 @@ export interface PdfReadingLocation {
   fit: PdfFitMode;
 }
 
+/** Markdown 阅读位置:复用 Foliate 分页器的 CFI(与 EPUB 一致)。 */
+export interface MarkdownReadingLocation {
+  kind: 'markdown';
+  /** Markdown 章节内规范化位置(CFI)。 */
+  cfi: string;
+}
+
 /** 统一的阅读位置。 */
-export type ReadingLocation = EpubReadingLocation | PdfReadingLocation;
+export type ReadingLocation =
+  | EpubReadingLocation
+  | PdfReadingLocation
+  | MarkdownReadingLocation;
 
 export function isPdfFitMode(value: unknown): value is PdfFitMode {
   return value === 'width' || value === 'height' || value === 'page' || value === 'actual';
@@ -42,7 +52,7 @@ export function isReadingLocation(value: unknown): value is ReadingLocation {
     return false;
   }
   const candidate = value as Record<string, unknown>;
-  if (candidate.kind === 'epub') {
+  if (candidate.kind === 'epub' || candidate.kind === 'markdown') {
     return typeof candidate.cfi === 'string';
   }
   if (candidate.kind === 'pdf') {
