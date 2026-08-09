@@ -36,6 +36,10 @@ export const COMMAND_IDS = {
   annotationCreateHighlight: 'annotation.createHighlight',
   annotationUpdateNote: 'annotation.updateNote',
   annotationDelete: 'annotation.delete',
+  markdownToggleSourceMode: 'markdown.toggleSourceMode',
+  markdownSave: 'markdown.save',
+  markdownDiscard: 'markdown.discard',
+  markdownCloseDirty: 'markdown.closeDirty',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];

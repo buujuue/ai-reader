@@ -63,6 +63,7 @@ function assertViewShape(raw: unknown): ReadingViewState {
     materialId: candidate.materialId,
     location: candidate.location ?? null,
     history: normalizeHistory(candidate.history),
+    sourceMode: candidate.sourceMode ?? false,
   };
 }
 

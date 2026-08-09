@@ -8,6 +8,7 @@ import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { MarkdownSourceEditor } from './MarkdownSourceEditor';
 import { SearchBar } from './SearchBar';
 import { SelectionToolbar } from './SelectionToolbar';
 
@@ -20,6 +21,13 @@ export function ReadingView({ viewId }: { viewId: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { commands, importRepository, workspaceRepository, annotationRepository } = useAppServices();
   const document = useReaderRuntime((state) => state.documents.get(viewId));
+  const sourceMode = useWorkspaceStore((state) => {
+    for (const group of state.editorGroups) {
+      const view = group.views.find((v) => v.id === viewId);
+      if (view) return view.sourceMode;
+    }
+    return false;
+  });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -130,15 +138,23 @@ export function ReadingView({ viewId }: { viewId: string }) {
     };
   }, [viewId, document]);
 
+  const isMarkdownSourceMode = sourceMode && document?.format === 'markdown';
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
-      <SearchBar viewId={viewId} />
-      <SelectionToolbar viewId={viewId} />
-      <div
-        ref={containerRef}
-        data-view-id={viewId}
-        className="h-full w-full overflow-hidden bg-zinc-950"
-      />
+      {isMarkdownSourceMode ? (
+        <MarkdownSourceEditor viewId={viewId} />
+      ) : (
+        <>
+          <SearchBar viewId={viewId} />
+          <SelectionToolbar viewId={viewId} />
+          <div
+            ref={containerRef}
+            data-view-id={viewId}
+            className="h-full w-full overflow-hidden bg-zinc-950"
+          />
+        </>
+      )}
     </div>
   );
 }

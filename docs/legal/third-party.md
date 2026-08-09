@@ -21,6 +21,9 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | foliate-js | ^1.0.1 | MIT | EPUB 渲染内核;《view.js》《epub.js》《paginator.js》等源自 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js) |
 | pdfjs-dist | ^5.7.284 | Apache-2.0 | PDF 固定版式阅读内核（工单 #14 引入） |
 | marked | ^18 | MIT | Markdown 渲染内核（工单 #17 引入） |
+| codemirror | ^6 | MIT | Markdown 源码编辑器内核（工单 #18 引入） |
+| @codemirror/lang-markdown | ^6 | MIT | CodeMirror 的 Markdown 语法高亮 |
+| @codemirror/view | ^6 | MIT | CodeMirror 视图层与 keymap |
 
 精确版本以 `pnpm-lock.yaml` 为准。
 
@@ -68,6 +71,13 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 使用范围:把 Markdown 源渲染为 HTML,再经 `sanitizeHtmlFragment` 清洗并按一级标题分段;所有直接调用集中在 `apps/reader/src/domain/reader/markdown/` 子模块,上层只经 `MarkdownBookDocument`(实现 `BookDocument`)窄接口交互。
 - 安全边界:Markdown 渲染结果视为不可信输入,`domain/reader/sanitizer.ts` 的 `sanitizeHtmlFragment` 在进入任何渲染器前移除脚本、iframe、对象嵌入、事件处理器与危险 URL,落实 ADR-0010。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/marked@*/node_modules/marked/LICENSE.md`。
+
+## CodeMirror 引入记录
+
+- 已于第 8 个切片(共享编辑 Markdown 并正式保存, 工单 #18)经 npm 引入上游 `codemirror@6`(MIT), 来源 [codemirror/codemirror.next](https://github.com/codemirror/codemirror.next), 随附 `@codemirror/lang-markdown` 与 `@codemirror/view`。
+- 使用范围:Markdown 源码模式编辑器, 提供高亮、撤销重做与查找替换(basicSetup);所有直接调用集中在 `apps/reader/src/components/MarkdownSourceEditor.tsx`, 仅在首次进入源码模式时懒加载。
+- 编辑内容读写统一的 `MarkdownDocumentSession` 共享缓冲区;保存由稳定 Command 触发, 经 Rust 原子写托管文件, 上层不直接写文件。
+- upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/codemirror@*/node_modules/codemirror/LICENSE`。
 
 ## 借鉴说明
 

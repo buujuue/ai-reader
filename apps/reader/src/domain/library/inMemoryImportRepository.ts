@@ -13,6 +13,8 @@ interface InternalMaterial {
   fingerprint: string;
   sourceFileName: string;
   source: SourceMetadata;
+  /** 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,为 0)。 */
+  documentVersion: number;
 }
 
 /**
@@ -46,6 +48,7 @@ export function createInMemoryImportRepository(
       author: override.author ?? internal.source.author,
       language: internal.source.language,
       coverSource: override.coverSource ?? null,
+      documentVersion: internal.documentVersion,
     };
   }
 
@@ -95,6 +98,7 @@ export function createInMemoryImportRepository(
         fingerprint: stagedImport.fingerprint,
         sourceFileName: stagedImport.originalFileName,
         source: { ...metadata },
+        documentVersion: 0,
       };
       materials.set(internal.id, internal);
       byFingerprint.set(internal.fingerprint, internal);
@@ -205,6 +209,17 @@ export function createInMemoryImportRepository(
         return null;
       }
       return new Uint8Array(bytes);
+    },
+
+    async saveMarkdown(materialId, content): Promise<ReadingMaterial> {
+      const internal = requireInternal(materials, materialId);
+      const bytes = new TextEncoder().encode(content);
+      const fingerprint = await sha256Hex(bytes);
+      managedBytes.set(materialId, bytes);
+      internal.fingerprint = fingerprint;
+      internal.documentVersion += 1;
+      byFingerprint.set(fingerprint, internal);
+      return toMaterial(internal);
     },
   };
 }

@@ -14,6 +14,7 @@ function material(overrides: Partial<ReadingMaterial>): ReadingMaterial {
     author: '来源作者',
     language: 'zh',
     coverSource: null,
+    documentVersion: 0,
     ...overrides,
   };
 }

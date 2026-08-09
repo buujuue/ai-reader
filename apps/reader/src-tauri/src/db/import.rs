@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{classify_io_error, AppError};
-use crate::fs::{read_file_bytes, stream_copy_with_fingerprint, LibraryPaths};
+use crate::fs::{atomic_write, fingerprint_bytes, read_file_bytes, stream_copy_with_fingerprint, LibraryPaths};
 
 /// Rust 暂存后的导入句柄。`id` 同时作为暂存文件名,TS 端据此读取字节检查格式。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +57,8 @@ pub struct ReadingMaterial {
     pub author: Option<String>,
     pub language: Option<String>,
     pub cover_source: Option<String>,
+    /// 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,保持 0)。
+    pub document_version: i64,
 }
 
 /// 导入的 typed repository。采用 `stage → inspect → commit`:
@@ -134,6 +136,31 @@ impl<'a> ImportRepository<'a> {
         read_file_bytes(&managed_path)
     }
 
+    /// 正式保存 Markdown 内容(ADR-0009):用托管文件原子替换、递增文档版本并更新
+    /// 完整内容指纹,BookId 保持不变。TS 端不直接写文件,只调用本命令。
+    ///
+    /// 顺序:先原子写入托管文件,再更新指纹与版本。若原子写入失败,数据库记录与
+    /// 旧文件保持一致,不会出现半本内容。返回更新后的有效材料。
+    pub fn save_markdown(
+        &self,
+        id: &str,
+        content: &str,
+        paths: &LibraryPaths,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.ensure_ready(id)?;
+        let managed_path = paths.managed_path(id);
+        atomic_write(&managed_path, content.as_bytes())?;
+        let fingerprint = fingerprint_bytes(content.as_bytes());
+        self.connection.execute(
+            "UPDATE materials
+             SET fingerprint = ?1, document_version = document_version + 1, updated_at = datetime('now')
+             WHERE id = ?2",
+            params![fingerprint, id],
+        )?;
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
     /// 提交导入:按 ready 状态指纹去重;去重命中则清理暂存与 pending 记录并返回既有材料;
     /// 否则移动托管文件并把 pending 记录升级为 ready。复用暂存 id 作为稳定 BookId,保证恢复、覆盖与应用升级中身份稳定。
     /// 顺序:先把来源元数据写入 pending 记录、再移动托管文件、最后置 ready。
@@ -199,6 +226,7 @@ impl<'a> ImportRepository<'a> {
             author: metadata.author.clone(),
             language: metadata.language.clone(),
             cover_source: None,
+            document_version: 0,
         })
     }
 
@@ -448,7 +476,7 @@ impl<'a> ImportRepository<'a> {
                         m.id, m.fingerprint, m.source_file_name,
                         m.title, m.author, m.language,
                         o.title, o.author, o.cover_source,
-                        m.deleted_at
+                        m.deleted_at, m.document_version
                     FROM materials m
                     LEFT JOIN material_overrides o ON o.material_id = m.id";
         let full_sql = format!("{sql} WHERE {where_clause} ORDER BY m.created_at");
@@ -518,6 +546,7 @@ fn material_from_row(
     let override_author: Option<String> = row.get(7)?;
     let override_cover: Option<String> = row.get(8)?;
     let deleted_at: Option<String> = row.get(9)?;
+    let document_version: i64 = row.get(10)?;
 
     let source = SourceMetadata {
         title: source_title.clone(),
@@ -543,6 +572,7 @@ fn material_from_row(
             language: source_language,
             cover_source: user_override.cover_source.clone(),
             user_override,
+            document_version,
         },
         deleted_at.is_some(),
     ))
@@ -566,6 +596,12 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(include_str!("migrations/0005_material_trash.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0006_annotations.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0007_material_document_version.sql"))
             .unwrap();
         connection
     }
@@ -800,6 +836,66 @@ mod tests {
         let bytes = repository.read_managed(&material.id, &paths).unwrap();
 
         assert_eq!(bytes, b"managed-epub-bytes");
+    }
+
+    #[test]
+    fn save_markdown_atomically_replaces_file_increments_version_and_updates_fingerprint() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.md", "# title\n\nbody".as_bytes());
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata { title: "标题".to_string(), ..Default::default() }, &paths)
+            .unwrap();
+        assert_eq!(material.document_version, 0);
+
+        let updated = repository
+            .save_markdown(&material.id, "# 标题\n\n新的正文", &paths)
+            .unwrap();
+
+        assert_eq!(updated.id, material.id);
+        assert_eq!(updated.document_version, 1);
+        assert_ne!(updated.fingerprint, material.fingerprint);
+        assert_eq!(
+            std::fs::read(paths.managed_path(&material.id)).unwrap(),
+            "# 标题\n\n新的正文".as_bytes()
+        );
+        // 写入后指纹与内容一致。
+        assert_eq!(
+            updated.fingerprint,
+            fingerprint_bytes("# 标题\n\n新的正文".as_bytes())
+        );
+    }
+
+    #[test]
+    fn save_markdown_increments_version_on_each_save() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.md", b"v0");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        let v1 = repository.save_markdown(&material.id, "v1", &paths).unwrap();
+        let v2 = repository.save_markdown(&material.id, "v2", &paths).unwrap();
+
+        assert_eq!(v1.document_version, 1);
+        assert_eq!(v2.document_version, 2);
+        assert!(!paths.stash_path(&staged.id).exists());
+    }
+
+    #[test]
+    fn save_markdown_rejects_unknown_material() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+
+        let error = repository.save_markdown("no-such", "content", &paths).unwrap_err();
+
+        assert!(matches!(error, AppError::MaterialNotFound(_)));
     }
 
     #[test]

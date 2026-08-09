@@ -8,6 +8,7 @@ import { useAnnotationStore } from './annotationStore';
 import { useLibraryStore } from './libraryStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useWorkspaceStore } from './workspaceStore';
+import { findViewMaterialId } from './viewUtils';
 
 export interface AnnotationCommandDependencies {
   annotationRepository: AnnotationRepository;
@@ -17,15 +18,6 @@ const DEFAULT_HIGHLIGHT_COLOR = '#ffd54f';
 
 function nextAnnotationId(): string {
   return crypto.randomUUID();
-}
-
-function findViewMaterialId(viewId: string): string | null {
-  const state = useWorkspaceStore.getState();
-  for (const group of state.editorGroups) {
-    const view = group.views.find((view) => view.id === viewId);
-    if (view) return view.materialId;
-  }
-  return null;
 }
 
 function materialFingerprint(materialId: string): string {

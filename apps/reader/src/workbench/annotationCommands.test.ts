@@ -60,7 +60,7 @@ describe('Annotation 命令', () => {
       editorGroups: [
         {
           id: 'group-1',
-          views: [{ id: 'view-1', materialId: 'material-1', location: null, history: { positions: [], index: -1 } }],
+          views: [{ id: 'view-1', materialId: 'material-1', location: null, sourceMode: false, history: { positions: [], index: -1 } }],
           activeViewId: 'view-1',
         },
       ],
@@ -68,7 +68,7 @@ describe('Annotation 命令', () => {
     const doc = createFakeDocument();
     useReaderRuntime.setState({ documents: new Map([['view-1', doc as never]]) });
     useLibraryStore.setState({
-      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.epub', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null }],
+      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.epub', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 0 }],
     });
 
     const container = document.createElement('p');
@@ -128,7 +128,7 @@ describe('Annotation 命令', () => {
       editorGroups: [
         {
           id: 'group-1',
-          views: [{ id: 'view-1', materialId: 'material-1', location: null, history: { positions: [], index: -1 } }],
+          views: [{ id: 'view-1', materialId: 'material-1', location: null, sourceMode: false, history: { positions: [], index: -1 } }],
           activeViewId: 'view-1',
         },
       ],

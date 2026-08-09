@@ -131,6 +131,48 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     const bytes = await repository.readManagedFile(material.id);
     expect(new TextDecoder().decode(bytes)).toBe('keep-me');
   });
+
+  it('正式保存 Markdown 原子替换内容、递增版本并更新指纹,BookId 保持不变', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.md', encodeUtf8('第一版'));
+    const material = await repository.commitImport(staged, {
+      title: '笔记',
+      author: null,
+      language: null,
+    });
+    expect(material.documentVersion).toBe(0);
+    const originalFingerprint = material.fingerprint;
+
+    const updated = await repository.saveMarkdown(material.id, '第二版内容');
+
+    expect(updated.id).toBe(material.id);
+    expect(updated.documentVersion).toBe(1);
+    expect(updated.fingerprint).not.toBe(originalFingerprint);
+    const bytes = await repository.readManagedFile(material.id);
+    expect(new TextDecoder().decode(bytes)).toBe('第二版内容');
+  });
+
+  it('正式保存 Markdown 后再次保存继续递增版本', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.md', encodeUtf8('v0'));
+    const material = await repository.commitImport(staged, {
+      title: '笔记',
+      author: null,
+      language: null,
+    });
+
+    const v1 = await repository.saveMarkdown(material.id, 'v1');
+    const v2 = await repository.saveMarkdown(material.id, 'v2');
+
+    expect(v1.documentVersion).toBe(1);
+    expect(v2.documentVersion).toBe(2);
+  });
+
+  it('正式保存不存在的材料抛出错误', async () => {
+    const repository = harness.createRepository();
+
+    await expect(repository.saveMarkdown('no-such-id', '内容')).rejects.toThrow();
+  });
 }
 
 function encodeUtf8(text: string): Uint8Array {

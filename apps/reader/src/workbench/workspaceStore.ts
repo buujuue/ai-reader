@@ -36,6 +36,7 @@ export interface WorkspaceStoreState {
   openView: (materialId: string) => string;
   closeView: (viewId: string) => void;
   setActiveView: (groupId: string, viewId: string) => void;
+  setViewSourceMode: (viewId: string, sourceMode: boolean) => void;
   setViewLocation: (viewId: string, location: WorkspaceState['editorGroups'][number]['views'][number]['location']) => void;
   pushViewLocation: (viewId: string, location: ReadingLocation) => void;
   setViewHistory: (viewId: string, history: NavigationHistory) => void;
@@ -104,6 +105,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       materialId,
       location: null,
       history: createNavigationHistory(),
+      sourceMode: false,
     };
     set((state) => ({
       editorGroups: state.editorGroups.map((group) =>
@@ -135,6 +137,12 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
         group.id === groupId ? { ...group, activeViewId: viewId } : group,
       ),
     }));
+  },
+
+  setViewSourceMode: (viewId, sourceMode) => {
+    set((state) =>
+      updateView(state, viewId, (view) => ({ ...view, sourceMode })),
+    );
   },
 
   setViewLocation: (viewId, location) => {

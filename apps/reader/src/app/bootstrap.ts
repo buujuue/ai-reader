@@ -11,6 +11,7 @@ import { createDefaultTauriWorkspaceRepository } from '../domain/workspace/tauri
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { registerAnnotationCommands } from '../workbench/annotationCommands';
 import { registerLibraryCommands } from '../workbench/libraryCommands';
+import { registerMarkdownCommands } from '../workbench/markdownCommands';
 import {
   registerReaderCommands,
   type ReaderCommandDependencies,
@@ -103,6 +104,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     pdfLib: options.pdfLib,
   });
   registerAnnotationCommands(commands, { annotationRepository });
+  registerMarkdownCommands(commands, {
+    importRepository: importServices.importRepository,
+    workspaceRepository,
+    ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
+  });
   // 暴露批注 Store 到 window,供真实浏览器验收脚本读取(仅开发/测试用)。
   if (typeof window !== 'undefined') {
     (window as unknown as { __annotationStore: unknown }).__annotationStore = useAnnotationStore;

@@ -73,10 +73,39 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
+/// 计算给定字节的完整内容指纹(SHA-256 十六进制)。用于保存后重新计算新版本的指纹。
+pub fn fingerprint_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex(&hasher.finalize())
+}
+
 /// 读取文件全部字节。仅用于把暂存文件交给 TypeScript 端检查格式与提取元数据,
 /// 不用于大文件指纹计算(那部分始终走流式)。
 pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>, AppError> {
     std::fs::read(path).map_err(classify_io_error)
+}
+
+/// 原子写入:把字节写入同一目录下的临时文件,再原子替换目标路径。
+/// 用于正式保存 Markdown(ADR-0009):先用临时文件写全内容,替换成功后
+/// 目标文件要么是旧的完整版本、要么是新的完整版本,不会出现半本内容。
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let temp_path = parent.join(format!(".{file_name}.tmp-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&temp_path, bytes).map_err(classify_io_error)?;
+    match std::fs::rename(&temp_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(classify_io_error(error))
+        }
+    }
 }
 
 #[cfg(test)]

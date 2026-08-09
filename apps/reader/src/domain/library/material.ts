@@ -40,6 +40,8 @@ export interface ReadingMaterial {
   language: string | null;
   /** 有效封面托管文件名(自定义封面);无自定义封面时为 null。 */
   coverSource: string | null;
+  /** 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,为 0)。 */
+  documentVersion: number;
 }
 
 /** Rust 暂存后的导入句柄。 */

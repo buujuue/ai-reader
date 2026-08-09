@@ -84,6 +84,9 @@ pub struct ReadingViewState {
     pub location: Option<ReadingLocation>,
     #[serde(default)]
     pub history: NavigationHistory,
+    /// 视图显示模式:源码模式(true)或阅读模式(false)。旧数据缺失时回退 false。
+    #[serde(default)]
+    pub source_mode: bool,
 }
 
 /// 一个编辑器组的可序列化状态。
@@ -135,7 +138,7 @@ pub struct PartialTypography {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 4,
+            schema_version: 5,
             primary_sidebar_visible: true,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
@@ -217,7 +220,7 @@ mod tests {
             },
         );
         WorkspaceState {
-            schema_version: 4,
+            schema_version: 5,
             primary_sidebar_visible: false,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
@@ -244,6 +247,7 @@ mod tests {
                         }],
                         index: 0,
                     },
+                    source_mode: true,
                 }],
                 active_view_id: Some("view-1".to_string()),
             }],
@@ -285,7 +289,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":4,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
+            r#"{"schemaVersion":5,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
         );
     }
 

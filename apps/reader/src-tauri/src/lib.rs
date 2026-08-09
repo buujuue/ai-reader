@@ -51,6 +51,7 @@ pub fn run() {
             commands::import::restore_material,
             commands::import::purge_material,
             commands::import::read_managed_file,
+            commands::import::save_markdown,
             commands::import::recover_imports,
             commands::import::apply_material_metadata,
             commands::import::set_material_cover,

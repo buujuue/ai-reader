@@ -26,6 +26,7 @@ export const IMPORT_COMMAND_NAMES = {
   removeCover: 'remove_material_cover',
   restore: 'restore_source_metadata',
   readCover: 'read_material_cover',
+  saveMarkdown: 'save_markdown',
 } as const;
 
 function assertStagedShape(raw: unknown): StagedImport {
@@ -93,6 +94,7 @@ function assertMaterialShape(raw: unknown): ReadingMaterial {
     source: assertSourceMetadata(candidate.source),
     override: assertOverride(candidate.override),
     coverSource: candidate.coverSource ?? null,
+    documentVersion: typeof candidate.documentVersion === 'number' ? candidate.documentVersion : 0,
   };
 }
 
@@ -194,6 +196,10 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
         throw new Error('cover bytes payload is not a string');
       }
       return base64ToBytes(raw);
+    },
+    async saveMarkdown(materialId: string, content: string): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.saveMarkdown, { materialId, content });
+      return assertMaterialShape(raw);
     },
   };
 }

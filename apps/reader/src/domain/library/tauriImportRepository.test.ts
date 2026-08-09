@@ -42,6 +42,7 @@ function createFakeTauriBackend(): {
       source: { title, author, language },
       override: { title: null, author: null, coverSource: null },
       coverSource: null,
+      documentVersion: 0,
     };
   }
 
@@ -221,6 +222,25 @@ function createFakeTauriBackend(): {
         }
         return btoaBinary(bytes);
       }
+      case IMPORT_COMMAND_NAMES.saveMarkdown: {
+        const { materialId, content } = args as { materialId: string; content: string };
+        const current = materials.get(materialId);
+        if (!current) {
+          throw new Error('material missing');
+        }
+        const bytes = new TextEncoder().encode(content);
+        const fingerprint = await sha256Hex(bytes);
+        managedBytes.set(materialId, bytes);
+        const effective = {
+          ...current,
+          fingerprint,
+          documentVersion: (current.documentVersion ?? 0) + 1,
+        };
+        materials.set(materialId, effective);
+        byFingerprint.delete(current.fingerprint);
+        byFingerprint.set(fingerprint, effective);
+        return effective;
+      }
       default:
         throw new Error(`unknown tauri command: ${command}`);
     }
@@ -314,6 +334,7 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.removeCover).toBe('remove_material_cover');
     expect(IMPORT_COMMAND_NAMES.restore).toBe('restore_source_metadata');
     expect(IMPORT_COMMAND_NAMES.readCover).toBe('read_material_cover');
+    expect(IMPORT_COMMAND_NAMES.saveMarkdown).toBe('save_markdown');
   });
 
   it('暂存时把源路径放入 sourcePath 参数', async () => {

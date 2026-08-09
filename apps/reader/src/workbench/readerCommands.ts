@@ -29,10 +29,12 @@ import { cancelAllSearches, cancelSearch, clearSearch, runSearch } from './searc
 import { useSearchStore } from './searchStore';
 import { ThrottledPositionPersister } from './positionPersister';
 import { loadAnnotationsForView } from './annotationCommands';
+import { useMarkdownSessionStore } from './markdownSessionStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
+import { findView, getActiveViewId } from './viewUtils';
 
 export interface ReaderCommandDependencies {
   importRepository: ImportRepository;
@@ -58,21 +60,6 @@ const persisters = new Map<string, ThrottledPositionPersister>();
  * 这是活对象,不进入持久化状态。
  */
 const navigationIntents = new Map<string, 'replace' | 'push'>();
-
-function getActiveViewId(): string | null {
-  const state = useWorkspaceStore.getState();
-  const group = state.editorGroups.find((group) => group.id === state.activeEditorGroupId);
-  return group?.activeViewId ?? null;
-}
-
-function findView(viewId: string) {
-  const state = useWorkspaceStore.getState();
-  for (const group of state.editorGroups) {
-    const view = group.views.find((view) => view.id === viewId);
-    if (view) return view;
-  }
-  return undefined;
-}
 
 /**
  * 读取并检查托管 EPUB 字节,构造 BookDocument。
@@ -137,8 +124,13 @@ async function createMarkdownDocument(
   } catch {
     return null;
   }
+  const text = new TextDecoder('utf-8').decode(bytes);
+  // 打开 Markdown 视图时建立或复用该材料的共享会话(缓冲区、脏标记、已保存版本)。
+  useMarkdownSessionStore
+    .getState()
+    .openSession(material.id, text, material.documentVersion);
   return new MarkdownBookDocument({
-    text: new TextDecoder('utf-8').decode(bytes),
+    text,
     metadata: {
       title: material.title,
       author: material.author,
@@ -406,6 +398,17 @@ export function registerReaderCommands(
     const viewIdParam = args[0] as string | undefined;
     const targetId = viewIdParam ?? getActiveViewId();
     if (!targetId) return;
+
+    // Markdown 脏文档:先询问保存/放弃/取消,不直接关闭。
+    const targetView = findView(targetId);
+    if (targetView) {
+      const session = useMarkdownSessionStore.getState().getSession(targetView.materialId);
+      // 会话仅由打开 Markdown 阅读视图时建立;存在且脏时才拦截。
+      if (session?.dirty) {
+        useShellUiStore.getState().openMarkdownDirtyClose(targetId, 'close');
+        return;
+      }
+    }
 
     const persister = persisters.get(targetId);
     if (persister) {

@@ -3,7 +3,7 @@ import type { NavigationHistory } from '../reader/navigationHistory';
 import type { ReadingTypography } from '../reader/typography';
 import { DEFAULT_READING_TYPOGRAPHY } from '../reader/typography';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 4;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 5;
 
 /** 一个编辑器组内的一次阅读视图(标签)的可序列化描述。 */
 export interface ReadingViewState {
@@ -15,6 +15,8 @@ export interface ReadingViewState {
   location: ReadingLocation | null;
   /** 本视图的导航历史(可序列化,最多 50 个节点)。 */
   history: NavigationHistory;
+  /** 本视图的显示模式:true 表示 Markdown 源码模式,false 表示阅读模式。 */
+  sourceMode: boolean;
 }
 
 /** 一个编辑器组的可序列化状态。第一版最多两个组。 */

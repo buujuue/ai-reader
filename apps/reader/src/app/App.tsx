@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
+import { MarkdownDirtyCloseDialog } from '../components/MarkdownDirtyCloseDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { NoteEditorDialog } from '../components/NoteEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
@@ -93,6 +94,7 @@ export function App() {
       </div>
       <StatusBar />
       <MetadataEditorDialog />
+      <MarkdownDirtyCloseDialog />
       <PurgeConfirmDialog />
       <ExternalLinkDialog />
       <ReaderSettingsDialog />

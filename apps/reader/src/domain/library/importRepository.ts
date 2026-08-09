@@ -38,4 +38,6 @@ export interface ImportRepository {
   restoreSourceMetadata(materialId: string): Promise<ReadingMaterial>;
   /** 读取托管封面文件的原始字节供界面渲染;无自定义封面时返回 null。 */
   readCover(materialId: string): Promise<Uint8Array | null>;
+  /** 正式保存 Markdown 内容:由 Rust 原子替换托管文件、递增文档版本并更新完整内容指纹,BookId 保持不变。 */
+  saveMarkdown(materialId: string, content: string): Promise<ReadingMaterial>;
 }

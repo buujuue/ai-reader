@@ -28,6 +28,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
               id: 'view-1',
               materialId: 'mat-1',
               location,
+              sourceMode: true,
               history: {
                 positions: [{ kind: 'epub', cfi: 'epubcfi(/6/3)' }, location],
                 index: 1,

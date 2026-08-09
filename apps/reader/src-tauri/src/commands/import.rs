@@ -118,6 +118,20 @@ pub fn read_managed_file(
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// 正式保存 Markdown 内容:由 Rust 原子替换托管文件、递增文档版本并更新完整内容指纹,
+/// BookId 保持不变。TS 端不直接写文件。
+#[tauri::command]
+pub fn save_markdown(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+    content: String,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).save_markdown(&material_id, &content, &paths)
+    })
+}
+
 /// 启动时恢复:清理暂存目录与孤儿托管文件。
 #[tauri::command]
 pub fn recover_imports(

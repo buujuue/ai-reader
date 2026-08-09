@@ -1,7 +1,8 @@
-import { ArrowLeft, ArrowRight, BookOpen, Settings2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Code2, Settings2, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import { formatFromSourceFileName } from '../domain/library/materialFormat';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
@@ -38,6 +39,18 @@ export function EditorArea() {
     useWorkspaceStore.getState().setActiveView(activeEditorGroupId, group.activeViewId);
     useShellUiStore.getState().openTypographyEditor(group.activeViewId);
   };
+
+  const handleToggleSourceMode = () => {
+    if (!group?.activeViewId) return;
+    void commands.execute(COMMAND_IDS.markdownToggleSourceMode, group.activeViewId).catch(() => undefined);
+  };
+
+  const activeMaterial = activeView
+    ? materials.find((material) => material.id === activeView.materialId) ?? null
+    : null;
+  const activeIsMarkdown =
+    activeMaterial && formatFromSourceFileName(activeMaterial.sourceFileName) === 'markdown';
+  const activeInSourceMode = activeView?.sourceMode ?? false;
 
   if (!group || group.views.length === 0) {
     return (
@@ -92,6 +105,21 @@ export function EditorArea() {
           >
             <Settings2 size={15} aria-hidden />
           </button>
+          {activeIsMarkdown ? (
+            <button
+              type="button"
+              aria-label={activeInSourceMode ? '退出源码模式' : '进入源码模式'}
+              title={activeInSourceMode ? '退出源码模式' : '进入源码模式(Ctrl+切换)'}
+              onClick={handleToggleSourceMode}
+              className={`flex h-7 w-7 items-center justify-center rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 ${
+                activeInSourceMode
+                  ? 'bg-sky-600/20 text-sky-300'
+                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+              }`}
+            >
+              <Code2 size={15} aria-hidden />
+            </button>
+          ) : null}
         </div>
         {group.views.map((view) => {
           const material = materials.find((material) => material.id === view.materialId);

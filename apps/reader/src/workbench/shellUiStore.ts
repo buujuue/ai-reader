@@ -15,6 +15,10 @@ export interface ShellUiStoreState {
   tocVisible: boolean;
   /** 正在编辑笔记的批注(materialId + annotationId);null 表示未打开笔记编辑器。 */
   noteEditorTarget: { materialId: string; annotationId: string } | null;
+  /** 等待脏 Markdown 视图关闭确认的 viewId;null 表示未打开脏文档关闭对话框。 */
+  markdownDirtyCloseViewId: string | null;
+  /** 脏文档对话框确认后要执行的动作:关闭视图或退出源码模式。 */
+  markdownDirtyCloseAction: 'close' | 'exitSource' | null;
   setStatusMessage: (message: string) => void;
   clearStatusMessage: () => void;
   openMetadataEditor: (materialId: string) => void;
@@ -27,6 +31,8 @@ export interface ShellUiStoreState {
   closeTypographyEditor: () => void;
   openNoteEditor: (materialId: string, annotationId: string) => void;
   closeNoteEditor: () => void;
+  openMarkdownDirtyClose: (viewId: string, action: 'close' | 'exitSource') => void;
+  closeMarkdownDirtyClose: () => void;
   setTocVisible: (visible: boolean) => void;
   toggleToc: () => void;
 }
@@ -39,6 +45,8 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   typographyEditorViewId: null,
   tocVisible: false,
   noteEditorTarget: null,
+  markdownDirtyCloseViewId: null,
+  markdownDirtyCloseAction: null,
   setStatusMessage: (message) => set({ statusMessage: message }),
   clearStatusMessage: () => set({ statusMessage: '' }),
   openMetadataEditor: (materialId) => set({ metadataEditorMaterialId: materialId }),
@@ -52,6 +60,9 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   openNoteEditor: (materialId, annotationId) =>
     set({ noteEditorTarget: { materialId, annotationId } }),
   closeNoteEditor: () => set({ noteEditorTarget: null }),
+  openMarkdownDirtyClose: (viewId, action) =>
+    set({ markdownDirtyCloseViewId: viewId, markdownDirtyCloseAction: action }),
+  closeMarkdownDirtyClose: () => set({ markdownDirtyCloseViewId: null, markdownDirtyCloseAction: null }),
   setTocVisible: (visible) => set({ tocVisible: visible }),
   toggleToc: () => set((state) => ({ tocVisible: !state.tocVisible })),
 }));
