@@ -11,6 +11,12 @@
  * 原生文件桥接(参考 Readest `packages/foliate-js/pdf.js` 的 MAX_CONCURRENT_RANGES)。
  */
 
+// worker 经 Vite 按独立资源解析。注意:不要用 `?url` 后缀(如 `new URL('...mjs?url',
+// import.meta.url)` 或 `import x from '...mjs?url'`),否则 dev 模式下 vite 会把 worker
+// 请求当作「返回 URL 字符串」处理,worker 拿到非法脚本导致初始化永久挂起(工单 #16)。
+// 用不带 `?url` 的 `new URL(...)`,vite 会把它解析为可直接作模块 worker 加载的干净资源
+// URL(dev 为 `/@fs/...`,构建为 `/assets/pdf.worker.*.mjs`)。
+
 /** PDF.js 页面视口(只读窄描述)。 */
 export interface PdfViewport {
   readonly width: number;
@@ -108,11 +114,8 @@ export function loadPdfLib(): Promise<PdfJsLib> {
   if (!pdfLibPromise) {
     pdfLibPromise = import('pdfjs-dist').then((module) => {
       const lib = module as unknown as PdfJsLib;
-      // Vite 会把 `?url` 资源输出为独立文件,workerSrc 指向它。
-      const workerUrl = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs?url',
-        import.meta.url,
-      ).toString();
+      // 不带 `?url`,vite 解析为可直接加载的干净 worker 资源 URL(dev 和构建均如此)。
+      const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
       lib.GlobalWorkerOptions.workerSrc = workerUrl;
       return lib;
     });

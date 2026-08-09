@@ -49,4 +49,28 @@ describe('inspectPdf 错误 PDF 分类', () => {
     expect(result.pageCount).toBe(3);
     expect(result.metadata).toMatchObject({ title: '示例 PDF', author: '示例作者' });
   });
+
+  it('多作者 dc:creator 数组归一化为「、」连接的字符串,避免 commit 序列化失败', async () => {
+    const document = makeFakeDocument(2);
+    const lib = makeFakeLib(document);
+    (document.getMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+      info: {},
+      metadata: {
+        get: (name: string) => {
+          if (name === 'dc:title') return '示例 PDF';
+          if (name === 'dc:creator') return ['作者甲', '作者乙'];
+          if (name === 'dc:language') return 'zh-CN';
+          return null;
+        },
+      },
+    });
+
+    const result = await inspectPdf(pdfBytes(), lib);
+
+    expect(result.metadata).toMatchObject({
+      title: '示例 PDF',
+      author: '作者甲、作者乙',
+      language: 'zh-CN',
+    });
+  });
 });

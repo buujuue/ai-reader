@@ -11,7 +11,6 @@ import type {
 } from './pdfLibrary';
 import { loadPdfLib } from './pdfLibrary';
 import type { PdfPageRasterizer } from './pdfPageRenderer';
-import { createConcurrentRangeTransport, type RangeFileLike } from './pdfRangeTransport';
 import { PdfRenderer } from './pdfRenderer';
 import { searchPdf } from './pdfSearch';
 import {
@@ -31,17 +30,6 @@ export interface PdfBookDocumentOptions {
   pdfLib?: PdfJsLib | undefined;
   /** 页面光栅化函数(测试注入伪实现,生产用 PDF.js page.render)。 */
   rasterize?: PdfPageRasterizer | undefined;
-}
-
-/** 把字节数组包装成可范围读取的文件窄接口。 */
-function rangeFileFromBytes(bytes: Uint8Array): RangeFileLike {
-  return {
-    size: bytes.length,
-    slice: (begin, end) => ({
-      arrayBuffer: async () =>
-        bytes.subarray(begin, end).slice().buffer as ArrayBuffer,
-    }),
-  };
 }
 
 /** 把 PDF.js 目录条目转成 TocItem;href 承载 dest 的 JSON,供 goToHref 解析。 */
@@ -112,13 +100,12 @@ export class PdfBookDocument implements BookDocument {
     this.container = container;
 
     const lib = this.pdfLib ?? (await loadPdfLib());
-    // 范围读取带并发上限,防止大文件解析时请求洪泛平台文件桥接。
-    const { transport } = createConcurrentRangeTransport(
-      rangeFileFromBytes(this.bytes),
-      (size, initial) => new lib.PDFDataRangeTransport(size, initial),
-    );
+    // 用 `data` 直接交给 PDF.js(与 inspectPdf 一致)。这里已持有完整字节,无需范围读取;
+    // 且 `getDocument({ data })` 会把 ArrayBuffer 转移给 worker,若紧跟在前一次
+    // `getDocument({ data })` 之后用 `getDocument({ range })`,pdfjs 模块级 worker 状态
+    // 会让范围传输读到空文件。复制一份字节再给 `data`,避免脱离本实例持有的 buffer。
     const document = await lib
-      .getDocument({ range: transport, isEvalSupported: false })
+      .getDocument({ data: this.bytes.slice(), isEvalSupported: false })
       .promise;
     this.pdf = document;
 
