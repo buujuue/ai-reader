@@ -16,6 +16,7 @@ import {
   DEFAULT_EDITOR_GROUP_ID,
   DEFAULT_WORKSPACE_STATE,
   WORKSPACE_STATE_SCHEMA_VERSION,
+  type EditorGroupSplitDirection,
   type EditorGroupState,
   type ReadingViewState,
   type WorkspaceState,
@@ -45,6 +46,10 @@ function normalizeHistory(raw: unknown): NavigationHistory {
     return raw;
   }
   return createNavigationHistory();
+}
+
+function normalizeSplitDirection(raw: unknown): EditorGroupSplitDirection | null {
+  return raw === 'right' || raw === 'down' ? raw : null;
 }
 
 function assertViewShape(raw: unknown): ReadingViewState {
@@ -116,6 +121,7 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   return {
     schemaVersion: candidate.schemaVersion,
     primarySidebarVisible: candidate.primarySidebarVisible,
+    splitDirection: normalizeSplitDirection(candidate.splitDirection),
     activeEditorGroupId: candidate.activeEditorGroupId ?? DEFAULT_EDITOR_GROUP_ID,
     editorGroups,
     globalReadingTypography,

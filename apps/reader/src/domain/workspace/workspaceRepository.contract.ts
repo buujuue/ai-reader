@@ -19,6 +19,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     const state: typeof DEFAULT_WORKSPACE_STATE = {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
+      splitDirection: 'down',
       activeEditorGroupId: 'group-1',
       editorGroups: [
         {
@@ -54,6 +55,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
+      splitDirection: null,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
@@ -63,6 +65,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
+      splitDirection: null,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
@@ -72,6 +75,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await expect(repository.loadState()).resolves.toEqual({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
+      splitDirection: null,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,

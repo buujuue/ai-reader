@@ -13,7 +13,7 @@ import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
-import { findView, getActiveViewId } from './viewUtils';
+import { findView, getActiveViewId, isViewActive } from './viewUtils';
 
 export interface MarkdownCommandDependencies {
   importRepository: ImportRepository;
@@ -40,8 +40,8 @@ function getSession(materialId: string) {
 }
 
 /**
- * 保存/放弃后重建该材料所有视图的 MarkdownBookDocument,使阅读模式视图显示新内容。
- * 源码模式视图也会重建其文档,以便退出源码模式后立即呈现新内容。
+ * 保存/放弃后重建该材料仍在 Runtime 中的活动 MarkdownBookDocument,使阅读模式视图显示新内容。
+ * 非活动标签没有渲染器，不在这里创建新 Runtime；重新激活时由 Reader Command 按保存位置重建。
  * 缓存位置仍在 Workspace Store,ReadingView 挂载时按位置恢复。
  */
 async function rebuildMarkdownDocuments(
@@ -58,8 +58,10 @@ async function rebuildMarkdownDocuments(
     .map((view) => view.id);
   const factory = dependencies.viewHostFactory ?? createFoliateViewHostFactory();
   for (const viewId of viewIds) {
+    if (!isViewActive(viewId)) continue;
     const existing = runtime.documents.get(viewId);
-    existing?.close();
+    if (!existing) continue;
+    existing.close();
     runtime.setDocument(
       viewId,
       new MarkdownBookDocument({

@@ -18,6 +18,7 @@ export function serializeWorkspaceState(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
     primarySidebarVisible: store.primarySidebarVisible,
+    splitDirection: store.splitDirection,
     activeEditorGroupId: store.activeEditorGroupId,
     editorGroups: store.editorGroups,
     globalReadingTypography: store.globalReadingTypography,
@@ -56,6 +57,13 @@ export function registerWorkbenchCommands(
 
   registry.register(COMMAND_IDS.workbenchToggleToc, async () => {
     useShellUiStore.getState().toggleToc();
+  });
+
+  registry.register(COMMAND_IDS.workbenchFocusEditorGroup, async (...args: unknown[]) => {
+    const groupId = args[0] as string | undefined;
+    if (!groupId || useWorkspaceStore.getState().activeEditorGroupId === groupId) return;
+    useWorkspaceStore.getState().focusEditorGroup(groupId);
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
   registry.register(COMMAND_IDS.workbenchSaveState, async () => {

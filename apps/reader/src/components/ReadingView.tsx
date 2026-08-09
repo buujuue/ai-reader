@@ -21,6 +21,13 @@ export function ReadingView({ viewId }: { viewId: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { commands, importRepository, workspaceRepository, annotationRepository } = useAppServices();
   const document = useReaderRuntime((state) => state.documents.get(viewId));
+  const groupId = useWorkspaceStore((state) =>
+    state.editorGroups.find((group) => group.views.some((view) => view.id === viewId))?.id ?? null,
+  );
+  const isActiveView = useWorkspaceStore((state) => {
+    const group = state.editorGroups.find((candidate) => candidate.id === groupId);
+    return state.activeEditorGroupId === groupId && group?.activeViewId === viewId;
+  });
   const sourceMode = useWorkspaceStore((state) => {
     for (const group of state.editorGroups) {
       const view = group.views.find((v) => v.id === viewId);
@@ -62,8 +69,15 @@ export function ReadingView({ viewId }: { viewId: string }) {
       {
         nextCommandId: COMMAND_IDS.readerNextPage,
         prevCommandId: COMMAND_IDS.readerPrevPage,
-        execute: (commandId, targetViewId) =>
-          void commands.execute(commandId as CommandId, targetViewId).catch(() => undefined),
+        execute: (commandId, targetViewId) => {
+          const focus =
+            groupId && useWorkspaceStore.getState().activeEditorGroupId !== groupId
+              ? commands.execute(COMMAND_IDS.workbenchFocusEditorGroup, groupId)
+              : Promise.resolve();
+          return focus
+            .then(() => commands.execute(commandId as CommandId, targetViewId))
+            .catch(() => undefined);
+        },
         getFlow: () =>
           useWorkspaceStore.getState().getEffectiveTypography(materialId).flow,
       },
@@ -80,6 +94,19 @@ export function ReadingView({ viewId }: { viewId: string }) {
         return;
       }
       detachList.push(controller.attach(doc));
+      const handleContentSearchShortcut = (event: KeyboardEvent) => {
+        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return;
+        event.preventDefault();
+        const focus =
+          groupId && useWorkspaceStore.getState().activeEditorGroupId !== groupId
+            ? commands.execute(COMMAND_IDS.workbenchFocusEditorGroup, groupId)
+            : Promise.resolve();
+        void focus
+          .then(() => commands.execute(COMMAND_IDS.readerSearchOpen, viewId))
+          .catch(() => undefined);
+      };
+      doc.addEventListener('keydown', handleContentSearchShortcut);
+      detachList.push(() => doc.removeEventListener('keydown', handleContentSearchShortcut));
     };
     for (const doc of book.getContentDocs()) {
       attachDoc(doc);
@@ -98,7 +125,9 @@ export function ReadingView({ viewId }: { viewId: string }) {
         hasModifier: event.ctrlKey || event.metaKey || event.altKey,
       });
     };
-    window.addEventListener('keydown', handleWindowKeyDown);
+    if (isActiveView) {
+      window.addEventListener('keydown', handleWindowKeyDown);
+    }
 
     return () => {
       window.removeEventListener('keydown', handleWindowKeyDown);
@@ -107,7 +136,7 @@ export function ReadingView({ viewId }: { viewId: string }) {
         detach();
       }
     };
-  }, [commands, viewId, document]);
+  }, [commands, groupId, isActiveView, viewId, document]);
 
   // 批注交互:点击高亮覆盖层打开对应批注的笔记编辑器。
   useEffect(() => {
@@ -136,7 +165,16 @@ export function ReadingView({ viewId }: { viewId: string }) {
   const isMarkdownSourceMode = sourceMode && document?.format === 'markdown';
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-zinc-950">
+    <div
+      className="relative h-full w-full overflow-hidden bg-zinc-950"
+      onPointerDown={() => {
+        if (groupId && useWorkspaceStore.getState().activeEditorGroupId !== groupId) {
+          void commands
+            .execute(COMMAND_IDS.workbenchFocusEditorGroup, groupId)
+            .catch(() => undefined);
+        }
+      }}
+    >
       {isMarkdownSourceMode ? (
         <MarkdownSourceEditor viewId={viewId} />
       ) : (

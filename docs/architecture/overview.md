@@ -78,7 +78,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Workbench
 
-拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。最多两个 Editor Group；每个阅读材料在整个工作区最多对应一个 ReadingView，从书库再次打开时激活原标签。标签激活通过 `reader.activateView` Command 完成，非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
+拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
 ### Command Registry
 
@@ -98,7 +98,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Reader Runtime
 
-按活动 ReadingView 持有当前 Foliate View、加载任务、选区和搜索；按 MaterialId 持有 MarkdownDocumentSession。非活动标签不保留阅读器 Runtime，重新激活时根据 Workspace Store 的可序列化状态重建。
+按每个 Editor Group 的活动 ReadingView 持有当前 Foliate/PDF View、加载任务、选区和搜索；全应用最多保留两个活动渲染器；按 MaterialId 持有共享的 MarkdownDocumentSession。每组的非活动标签不保留阅读器 Runtime，重新激活时根据 Workspace Store 的可序列化状态重建。
 
 ### Annotation
 
@@ -150,12 +150,13 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 9 切片**：恢复未保存的 Markdown 内容（1 秒节制且按材料串行写入版本化 Recovery Snapshot、Tauri 关闭请求等待 flush、页面隐藏时尽力 flush、无关闭回调的异常终止依靠已落盘周期快照、启动恢复/丢弃、基础版本冲突、损坏与空间不足安全退化、正式保存后清理）。对应工单 #19。
 - **第 10 切片**：版本变化后的文本锚点恢复（通过 `BookDocument.search()` 唯一匹配引文与前后文、迁移新 CFI 和文档指纹；歧义或失败时保留为失联批注且不绘制旧高亮）。
 - **第 11 切片**：多标签阅读工作区（标签激活与关闭 Command、标签顺序和活动视图持久化、非活动标签释放 Reader Runtime、重启时仅恢复活动标签、缺失材料不阻塞其它标签）。对应工单 #21。
+- **第 12 切片**：双 Editor Group 阅读工作区（向右/向下拆分、各组独立活动视图与输入焦点、同材料跨组阅读、最多两个活动渲染器、拆分布局与视图恢复）。对应工单 #22。
 
 ## 后续切片顺序
 
 1. 普通高亮、笔记与文本锚点恢复。
 2. PDF 文本批注和扫描页区域锚点。
 3. Markdown 批注锚点迁移。
-4. 第二 Editor Group、显式主要阅读材料和响应式布局。
+4. 显式主要阅读材料和响应式布局。
 5. 完整备份、整库恢复和单本批注导出。
 6. macOS、iPadOS、Android 平板原生启动与核心阅读验收。

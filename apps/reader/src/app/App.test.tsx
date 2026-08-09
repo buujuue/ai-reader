@@ -393,6 +393,7 @@ describe('打开 EPUB 并重启续读', () => {
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
+      splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,
       globalReadingTypography: workspace.globalReadingTypography,
@@ -529,6 +530,7 @@ describe('打开 EPUB 并重启续读', () => {
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
+      splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
       editorGroups: workspace.editorGroups,
       globalReadingTypography: workspace.globalReadingTypography,

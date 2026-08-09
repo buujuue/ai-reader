@@ -112,24 +112,28 @@ export function App() {
   async function restoreViews() {
     const materials = await importRepository.listMaterials();
     const state = useWorkspaceStore.getState();
-    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
-    if (!group) return;
+    const orderedGroups = [
+      ...state.editorGroups.filter((group) => group.id !== state.activeEditorGroupId),
+      ...state.editorGroups.filter((group) => group.id === state.activeEditorGroupId),
+    ];
 
-    const activeView = group.views.find((view) => view.id === group.activeViewId);
-    const fallbackView =
-      (activeView && materials.some((material) => material.id === activeView.materialId)
-        ? activeView
-        : null) ??
-      group.views.find((view) => materials.some((material) => material.id === view.materialId));
-    if (!fallbackView) return;
+    for (const group of orderedGroups) {
+      const activeView = group.views.find((view) => view.id === group.activeViewId);
+      const fallbackView =
+        (activeView && materials.some((material) => material.id === activeView.materialId)
+          ? activeView
+          : null) ??
+        group.views.find((view) => materials.some((material) => material.id === view.materialId));
+      if (!fallbackView) continue;
 
-    const material = materials.find((candidate) => candidate.id === fallbackView.materialId);
-    if (!material) return;
-    await commands
-      .execute(COMMAND_IDS.readerActivateView, fallbackView.id, material)
-      .catch((error: unknown) => {
-        console.error('恢复阅读视图失败', error);
-      });
+      const material = materials.find((candidate) => candidate.id === fallbackView.materialId);
+      if (!material) continue;
+      await commands
+        .execute(COMMAND_IDS.readerActivateView, fallbackView.id, material)
+        .catch((error: unknown) => {
+          console.error('恢复阅读视图失败', error);
+        });
+    }
   }
 
   return (

@@ -52,43 +52,33 @@ describe('Workspace Store', () => {
     expect(group.activeViewId).toBe(first);
   });
 
-  it('同一本书位于其他编辑器组时会切换到原标签所在组', () => {
-    const firstViewId = crypto.randomUUID();
-    useWorkspaceStore.getState().hydrate({
-      ...DEFAULT_WORKSPACE_STATE,
-      activeEditorGroupId: 'group-2',
-      editorGroups: [
-        {
-          id: 'group-1',
-          views: [
-            {
-              id: firstViewId,
-              materialId: 'material-1',
-              location: null,
-              history: { positions: [], index: -1 },
-              sourceMode: false,
-            },
-          ],
-          activeViewId: firstViewId,
-        },
-        { id: 'group-2', views: [], activeViewId: null },
-      ],
-    });
+  it('向右拆分当前阅读任务并复制视图状态到第二组', () => {
+    const viewId = useWorkspaceStore.getState().openView('material-1');
+    const location = { kind: 'epub' as const, cfi: 'epubcfi(/6/4)' };
+    useWorkspaceStore.getState().setViewLocation(viewId, location);
+    useWorkspaceStore.getState().setViewSourceMode(viewId, true);
 
-    const reopened = useWorkspaceStore.getState().openView('material-1');
+    const result = useWorkspaceStore.getState().splitEditorGroup('right');
     const state = useWorkspaceStore.getState();
+    const secondGroup = state.editorGroups[1]!;
+    const copiedView = secondGroup.views[0]!;
 
-    expect(reopened).toBe(firstViewId);
-    expect(state.activeEditorGroupId).toBe('group-1');
-    expect(state.editorGroups[0]!.activeViewId).toBe(firstViewId);
-    expect(state.editorGroups[1]!.views).toHaveLength(0);
+    expect(result).toEqual({ groupId: 'group-2', viewId: copiedView.id });
+    expect(state.splitDirection).toBe('right');
+    expect(state.activeEditorGroupId).toBe('group-2');
+    expect(copiedView.id).not.toBe(viewId);
+    expect(copiedView.materialId).toBe('material-1');
+    expect(copiedView.location).toEqual(location);
+    expect(copiedView.sourceMode).toBe(true);
+    expect(state.editorGroups[0]!.views[0]!.id).toBe(viewId);
   });
 
-  it('恢复旧工作区时会清理同一本书的重复标签', () => {
+  it('同一本书可以在两个编辑器组拥有独立阅读视图', () => {
     const firstViewId = crypto.randomUUID();
     const duplicateViewId = crypto.randomUUID();
     useWorkspaceStore.getState().hydrate({
       ...DEFAULT_WORKSPACE_STATE,
+      splitDirection: 'down',
       activeEditorGroupId: 'group-2',
       editorGroups: [
         {
@@ -122,9 +112,61 @@ describe('Workspace Store', () => {
 
     const state = useWorkspaceStore.getState();
 
-    expect(state.activeEditorGroupId).toBe('group-1');
-    expect(state.editorGroups.flatMap((group) => group.views)).toHaveLength(1);
+    expect(state.activeEditorGroupId).toBe('group-2');
+    expect(state.splitDirection).toBe('down');
+    expect(state.editorGroups.flatMap((group) => group.views)).toHaveLength(2);
     expect(state.editorGroups[0]!.views[0]!.id).toBe(firstViewId);
+    expect(state.editorGroups[1]!.views[0]!.id).toBe(duplicateViewId);
+  });
+
+  it('活动组已有同一本书时复用标签,但另一组可以再打开同一本书', () => {
+    const firstViewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().splitEditorGroup('right');
+
+    const secondViewId = useWorkspaceStore.getState().openView('material-1');
+    const reopenedInSecondGroup = useWorkspaceStore.getState().openView('material-1');
+    const state = useWorkspaceStore.getState();
+
+    expect(secondViewId).not.toBe(firstViewId);
+    expect(reopenedInSecondGroup).toBe(secondViewId);
+    expect(state.editorGroups[0]!.views).toHaveLength(1);
+    expect(state.editorGroups[1]!.views).toHaveLength(1);
+  });
+
+  it('第二次拆分不会递归增加编辑器组', () => {
+    useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().splitEditorGroup('right');
+
+    const result = useWorkspaceStore.getState().splitEditorGroup('down');
+    const state = useWorkspaceStore.getState();
+
+    expect(result).toBeNull();
+    expect(state.editorGroups).toHaveLength(2);
+    expect(state.splitDirection).toBe('right');
+  });
+
+  it('关闭第二组最后一个标签时收起拆分并保留第一组', () => {
+    useWorkspaceStore.getState().openView('material-1');
+    const result = useWorkspaceStore.getState().splitEditorGroup('right');
+    useWorkspaceStore.getState().closeView(result!.viewId!);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.editorGroups).toHaveLength(1);
+    expect(state.splitDirection).toBeNull();
+    expect(state.activeEditorGroupId).toBe('group-1');
+  });
+
+  it('删除原始组后再次拆分仍保持编辑器组 id 唯一', () => {
+    const firstViewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().splitEditorGroup('right');
+    useWorkspaceStore.getState().focusEditorGroup('group-1');
+    useWorkspaceStore.getState().closeView(firstViewId);
+
+    const result = useWorkspaceStore.getState().splitEditorGroup('down');
+    const state = useWorkspaceStore.getState();
+
+    expect(result?.groupId).toBe('group-3');
+    expect(new Set(state.editorGroups.map((group) => group.id)).size).toBe(2);
   });
 
   it('关闭活动标签后切换活动视图到相邻标签', () => {

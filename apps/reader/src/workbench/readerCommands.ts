@@ -34,7 +34,13 @@ import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
-import { findView, findViewByMaterialId, getActiveViewId } from './viewUtils';
+import {
+  findView,
+  findViewGroupId,
+  findViewInGroupByMaterialId,
+  getActiveViewId,
+  isViewActive,
+} from './viewUtils';
 
 export interface ReaderCommandDependencies {
   importRepository: ImportRepository;
@@ -176,12 +182,6 @@ async function createDocumentForMaterial(
   }
 }
 
-function getViewGroupId(viewId: string): string | undefined {
-  return useWorkspaceStore
-    .getState()
-    .editorGroups.find((group) => group.views.some((view) => view.id === viewId))?.id;
-}
-
 function getOrCreatePendingDocument(
   dependencies: ReaderCommandDependencies,
   viewId: string,
@@ -229,7 +229,7 @@ async function ensureActiveViewDocument(
   if (existing) return existing;
 
   const view = findView(viewId);
-  if (!view || getActiveViewId() !== viewId) return null;
+  if (!view || !isViewActive(viewId)) return null;
 
   const targetMaterial =
     material ??
@@ -244,7 +244,7 @@ async function ensureActiveViewDocument(
 
   // A tab may have been switched away while the file was being inspected.
   // Do not leave a renderer behind for an inactive or closed view.
-  if (generation !== runtimeGeneration || getActiveViewId() !== viewId || !findView(viewId)) {
+  if (generation !== runtimeGeneration || !isViewActive(viewId) || !findView(viewId)) {
     document.close();
     return null;
   }
@@ -265,11 +265,11 @@ async function activateViewRuntime(
   previousViewIdOverride?: string | null,
 ): Promise<BookDocument | null> {
   const view = findView(viewId);
-  const groupId = getViewGroupId(viewId);
+  const groupId = findViewGroupId(viewId);
   if (!view || !groupId) return null;
 
   const previousViewId =
-    previousViewIdOverride === undefined ? getActiveViewId() : previousViewIdOverride;
+    previousViewIdOverride === undefined ? getActiveViewId(groupId) : previousViewIdOverride;
   if (previousViewId && previousViewId !== viewId) {
     await disposeViewRuntime(previousViewId);
   }
@@ -367,14 +367,33 @@ export function registerReaderCommands(
   registry: CommandRegistry,
   dependencies: ReaderCommandDependencies,
 ): void {
+  const registerEditorGroupSplit = (
+    commandId: typeof COMMAND_IDS.workbenchSplitEditorGroupRight | typeof COMMAND_IDS.workbenchSplitEditorGroupDown,
+    direction: 'right' | 'down',
+  ) => {
+    registry.register(commandId, (..._args: unknown[]) => enqueueRuntimeTransition(async () => {
+      const result = useWorkspaceStore.getState().splitEditorGroup(direction);
+      if (!result) return;
+
+      if (result.viewId) {
+        await ensureActiveViewDocument(dependencies, result.viewId);
+      }
+      await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    }));
+  };
+
+  registerEditorGroupSplit(COMMAND_IDS.workbenchSplitEditorGroupRight, 'right');
+  registerEditorGroupSplit(COMMAND_IDS.workbenchSplitEditorGroupDown, 'down');
+
   registry.register(COMMAND_IDS.libraryOpenBook, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const material = args[0] as ReadingMaterial | undefined;
     const location = (args[1] as ReadingLocation | null | undefined) ?? null;
     if (!material) {
       throw new Error('打开书籍命令缺少阅读材料参数');
     }
-    const existingView = findViewByMaterialId(material.id);
-    const previousViewId = getActiveViewId();
+    const activeGroupId = useWorkspaceStore.getState().activeEditorGroupId;
+    const existingView = findViewInGroupByMaterialId(activeGroupId, material.id);
+    const previousViewId = getActiveViewId(activeGroupId);
     const viewId = useWorkspaceStore.getState().openView(material.id);
 
     try {
@@ -547,6 +566,7 @@ export function registerReaderCommands(
     const viewIdParam = args[0] as string | undefined;
     const targetId = viewIdParam ?? getActiveViewId();
     if (!targetId) return;
+    const targetGroupId = findViewGroupId(targetId);
 
     // Markdown 脏文档:先询问保存/放弃/取消,不直接关闭。
     const targetView = findView(targetId);
@@ -561,7 +581,7 @@ export function registerReaderCommands(
 
     await disposeViewRuntime(targetId);
     useWorkspaceStore.getState().closeView(targetId);
-    const nextViewId = getActiveViewId();
+    const nextViewId = targetGroupId ? getActiveViewId(targetGroupId) : getActiveViewId();
     if (nextViewId) {
       await ensureActiveViewDocument(dependencies, nextViewId);
     }
@@ -587,7 +607,11 @@ export function registerReaderCommands(
       store.globalReadingTypography,
       useWorkspaceStore.getState().materialTypography[view.materialId],
     );
-    useReaderRuntime.getState().getDocument(viewId)?.applyTypography(effective);
+    for (const [openViewId, document] of useReaderRuntime.getState().documents) {
+      if (findView(openViewId)?.materialId === view.materialId) {
+        document.applyTypography(effective);
+      }
+    }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
@@ -600,7 +624,11 @@ export function registerReaderCommands(
     useWorkspaceStore.getState().resetMaterialTypography(view.materialId);
     const store = useWorkspaceStore.getState();
     const effective = resolveTypography(store.globalReadingTypography, null);
-    useReaderRuntime.getState().getDocument(viewId)?.applyTypography(effective);
+    for (const [openViewId, document] of useReaderRuntime.getState().documents) {
+      if (findView(openViewId)?.materialId === view.materialId) {
+        document.applyTypography(effective);
+      }
+    }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
@@ -650,7 +678,14 @@ export function registerReaderCommands(
       store.globalReadingTypography,
       useWorkspaceStore.getState().materialTypography[view.materialId],
     );
-    document.applyTypography(effective);
+    for (const [openViewId, openDocument] of useReaderRuntime.getState().documents) {
+      if (
+        openDocument instanceof PdfBookDocument &&
+        findView(openViewId)?.materialId === view.materialId
+      ) {
+        openDocument.applyTypography(effective);
+      }
+    }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
@@ -660,7 +695,7 @@ export function registerReaderCommands(
     const location = (args[2] as ReadingLocation | null | undefined) ?? null;
     if (!viewId || !material) return;
 
-    if (getActiveViewId() !== viewId) return;
+    if (!isViewActive(viewId)) return;
     if (location) {
       useWorkspaceStore.getState().setViewLocation(viewId, location);
     }

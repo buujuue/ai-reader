@@ -121,6 +121,39 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.has(group.views[0]!.id)).toBe(true);
   });
 
+  it('拆分当前阅读任务后两个编辑器组各自保留一个活跃阅读器', async () => {
+    const firstMaterial = (await setupWithEpubMaterials())[0]!;
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    useWorkspaceStore.getState().setViewLocation(firstViewId, {
+      kind: 'epub',
+      cfi: 'epubcfi(/6/4)',
+    });
+
+    await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
+
+    const state = useWorkspaceStore.getState();
+    const secondViewId = state.editorGroups[1]!.views[0]!.id;
+    expect(state.splitDirection).toBe('right');
+    expect(state.editorGroups).toHaveLength(2);
+    expect(state.activeEditorGroupId).toBe('group-2');
+    expect(state.editorGroups[0]!.views[0]!.id).toBe(firstViewId);
+    expect(state.editorGroups[1]!.views[0]!.materialId).toBe(firstMaterial.id);
+    expect(state.editorGroups[1]!.views[0]!.location).toEqual({
+      kind: 'epub',
+      cfi: 'epubcfi(/6/4)',
+    });
+    expect(useReaderRuntime.getState().documents.size).toBe(2);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
+    expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(true);
+  });
+
   it('重复打开同一本书会跳转到原标签,不重复创建文档', async () => {
     const material = await setupWithEpub();
     const readManagedFile = vi.spyOn(importRepository, 'readManagedFile');

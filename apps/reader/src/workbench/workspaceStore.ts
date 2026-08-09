@@ -11,6 +11,8 @@ import type { ReadingTypography } from '../domain/reader/typography';
 import { resolveTypography } from '../domain/reader/typography';
 import {
   DEFAULT_WORKSPACE_STATE,
+  SECOND_EDITOR_GROUP_ID,
+  type EditorGroupSplitDirection,
   type EditorGroupState,
   type ReadingViewState,
   type WorkspaceState,
@@ -22,6 +24,7 @@ import {
  */
 export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
+  splitDirection: EditorGroupSplitDirection | null;
   activeEditorGroupId: string;
   editorGroups: EditorGroupState[];
   /** 全局阅读默认设置。 */
@@ -29,6 +32,10 @@ export interface WorkspaceStoreState {
   /** 阅读材料级排版覆盖;键为 BookId。 */
   materialTypography: Record<string, Partial<ReadingTypography>>;
   setPrimarySidebarVisible: (visible: boolean) => void;
+  focusEditorGroup: (groupId: string) => void;
+  splitEditorGroup: (
+    direction: EditorGroupSplitDirection,
+  ) => { groupId: string; viewId: string | null } | null;
   setGlobalReadingTypography: (settings: ReadingTypography) => void;
   setMaterialTypography: (materialId: string, override: Partial<ReadingTypography>) => void;
   resetMaterialTypography: (materialId: string) => void;
@@ -48,6 +55,17 @@ function nextViewId(): string {
   return crypto.randomUUID();
 }
 
+function nextEditorGroupId(editorGroups: EditorGroupState[]): string {
+  const usedIds = new Set(editorGroups.map((group) => group.id));
+  let suffix = 2;
+  let candidate = `group-${suffix}`;
+  while (usedIds.has(candidate)) {
+    suffix += 1;
+    candidate = `group-${suffix}`;
+  }
+  return candidate;
+}
+
 function updateView(
   state: Pick<WorkspaceStoreState, 'editorGroups'>,
   viewId: string,
@@ -62,6 +80,7 @@ function updateView(
 }
 
 interface NormalizedWorkspaceViews {
+  splitDirection: EditorGroupSplitDirection | null;
   activeEditorGroupId: string;
   editorGroups: EditorGroupState[];
 }
@@ -70,9 +89,13 @@ interface NormalizedWorkspaceViews {
 function normalizeWorkspaceViews(
   editorGroups: EditorGroupState[],
   activeEditorGroupId: string,
+  splitDirection: EditorGroupSplitDirection | null,
 ): NormalizedWorkspaceViews {
-  const seenMaterialIds = new Set<string>();
-  const normalizedGroups = editorGroups.map((group) => {
+  const sourceGroups = editorGroups.length > 0
+    ? editorGroups
+    : structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups);
+  const normalizedGroups = sourceGroups.slice(0, 2).map((group) => {
+    const seenMaterialIds = new Set<string>();
     const views = group.views.filter((view) => {
       if (seenMaterialIds.has(view.materialId)) return false;
       seenMaterialIds.add(view.materialId);
@@ -93,19 +116,64 @@ function normalizeWorkspaceViews(
     normalizedGroups[0];
 
   return {
-    activeEditorGroupId: activeGroup?.id ?? activeEditorGroupId,
+    splitDirection: normalizedGroups.length === 2 ? splitDirection : null,
+    activeEditorGroupId: activeGroup?.id ?? normalizedGroups[0]?.id ?? activeEditorGroupId,
     editorGroups: normalizedGroups,
   };
 }
 
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
+  splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
   activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
   editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
   globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
   materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
 
   setPrimarySidebarVisible: (visible) => set({ primarySidebarVisible: visible }),
+
+  focusEditorGroup: (groupId) =>
+    set((state) =>
+      state.editorGroups.some((group) => group.id === groupId)
+        ? { activeEditorGroupId: groupId }
+        : state,
+    ),
+
+  splitEditorGroup: (direction) => {
+    const state = get();
+    if (state.editorGroups.length >= 2) {
+      return null;
+    }
+
+    const sourceGroup = state.editorGroups.find(
+      (group) => group.id === state.activeEditorGroupId,
+    );
+    if (!sourceGroup) {
+      return null;
+    }
+
+    const sourceView = sourceGroup.views.find((view) => view.id === sourceGroup.activeViewId);
+    const copiedView = sourceView
+      ? {
+          ...structuredClone(sourceView),
+          id: nextViewId(),
+        }
+      : null;
+    const secondGroup: EditorGroupState = {
+      id: state.editorGroups.some((group) => group.id === SECOND_EDITOR_GROUP_ID)
+        ? nextEditorGroupId(state.editorGroups)
+        : SECOND_EDITOR_GROUP_ID,
+      views: copiedView ? [copiedView] : [],
+      activeViewId: copiedView?.id ?? null,
+    };
+
+    set({
+      splitDirection: direction,
+      activeEditorGroupId: secondGroup.id,
+      editorGroups: [...state.editorGroups, secondGroup],
+    });
+    return { groupId: secondGroup.id, viewId: copiedView?.id ?? null };
+  },
 
   setGlobalReadingTypography: (settings) => set({ globalReadingTypography: settings }),
 
@@ -137,24 +205,18 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
 
   openView: (materialId) => {
     const state = get();
-    for (const group of state.editorGroups) {
-      const existingView = group.views.find((view) => view.materialId === materialId);
-      if (!existingView) continue;
-
-      // 同一材料在整个工作区只保留一个标签。书库再次点击时,
-      // 激活已有标签;即使它属于另一个编辑器组,也切换到该组。
+    const groupId = state.activeEditorGroupId;
+    const activeGroup = state.editorGroups.find((group) => group.id === groupId);
+    const existingView = activeGroup?.views.find((view) => view.materialId === materialId);
+    if (existingView) {
       set({
-        activeEditorGroupId: group.id,
-        editorGroups: state.editorGroups.map((currentGroup) =>
-          currentGroup.id === group.id
-            ? { ...currentGroup, activeViewId: existingView.id }
-            : currentGroup,
+        editorGroups: state.editorGroups.map((group) =>
+          group.id === groupId ? { ...group, activeViewId: existingView.id } : group,
         ),
       });
       return existingView.id;
     }
 
-    const groupId = state.activeEditorGroupId;
     const view: ReadingViewState = {
       id: nextViewId(),
       materialId,
@@ -173,19 +235,40 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   },
 
   closeView: (viewId) => {
-    set((state) => ({
-      editorGroups: state.editorGroups.map((group) => {
-        if (!group.views.some((view) => view.id === viewId)) {
-          return group;
-        }
-        const views = group.views.filter((view) => view.id !== viewId);
-        const activeViewId =
-          group.activeViewId === viewId ? (views.at(-1)?.id ?? null) : group.activeViewId;
-        return { ...group, views, activeViewId };
-      }),
-    }));
+    set((state) => {
+      const targetGroup = state.editorGroups.find((group) =>
+        group.views.some((view) => view.id === viewId),
+      );
+      if (!targetGroup) {
+        return state;
+      }
+
+      const nextGroups = state.editorGroups
+        .map((group) => {
+          if (group.id !== targetGroup.id) return group;
+          const views = group.views.filter((view) => view.id !== viewId);
+          const activeViewId =
+            group.activeViewId === viewId ? (views.at(-1)?.id ?? null) : group.activeViewId;
+          return { ...group, views, activeViewId };
+        })
+        .filter((group) => group.views.length > 0 || state.editorGroups.length === 1);
+      const activeGroupId = nextGroups.some((group) => group.id === state.activeEditorGroupId)
+        ? state.activeEditorGroupId
+        : nextGroups[0]?.id ?? state.activeEditorGroupId;
+      return {
+        ...state,
+        splitDirection: nextGroups.length === 2 ? state.splitDirection : null,
+        activeEditorGroupId: activeGroupId,
+        editorGroups: nextGroups,
+      };
+    });
   },
 
+  /*
+   * Keep the rest of the view actions group-agnostic: view ids are globally
+   * unique, so location, history and Markdown mode remain independent across
+   * split groups even when materialId is shared.
+   */
   setActiveView: (groupId, viewId) => {
     set((state) => {
       const group = state.editorGroups.find((candidate) => candidate.id === groupId);
@@ -239,9 +322,14 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   },
 
   hydrate: (state) => {
-    const normalized = normalizeWorkspaceViews(state.editorGroups, state.activeEditorGroupId);
+    const normalized = normalizeWorkspaceViews(
+      state.editorGroups,
+      state.activeEditorGroupId,
+      state.splitDirection,
+    );
     set({
       primarySidebarVisible: state.primarySidebarVisible,
+      splitDirection: normalized.splitDirection,
       activeEditorGroupId: normalized.activeEditorGroupId,
       editorGroups: structuredClone(normalized.editorGroups),
       globalReadingTypography: state.globalReadingTypography,
@@ -252,6 +340,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   resetToDefault: () =>
     set({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
+      splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
       editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,

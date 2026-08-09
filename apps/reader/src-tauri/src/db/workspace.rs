@@ -105,6 +105,8 @@ pub struct EditorGroupState {
 pub struct WorkspaceState {
     pub schema_version: u32,
     pub primary_sidebar_visible: bool,
+    #[serde(default)]
+    pub split_direction: Option<String>,
     pub active_editor_group_id: String,
     pub editor_groups: Vec<EditorGroupState>,
     /// 全局阅读默认设置。旧数据缺失时回退到默认值。
@@ -138,8 +140,9 @@ pub struct PartialTypography {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 5,
+            schema_version: 6,
             primary_sidebar_visible: true,
+            split_direction: None,
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
                 id: "group-1".to_string(),
@@ -220,8 +223,9 @@ mod tests {
             },
         );
         WorkspaceState {
-            schema_version: 5,
+            schema_version: 6,
             primary_sidebar_visible: false,
+            split_direction: Some("down".to_string()),
             active_editor_group_id: "group-1".to_string(),
             editor_groups: vec![EditorGroupState {
                 id: "group-1".to_string(),
@@ -289,7 +293,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":5,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
+            r#"{"schemaVersion":6,"primarySidebarVisible":true,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
         );
     }
 

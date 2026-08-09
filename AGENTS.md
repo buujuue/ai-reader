@@ -87,9 +87,9 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 - Rust 拥有持久化、文件和平台完整性：SQLite、迁移与事务、托管文件、原子替换、完整内容指纹、备份恢复、平台路径与精细 Tauri Command/Capability。
 - Rust 不理解 React 焦点、标签布局或选区；TypeScript 不接触数据库表、任意 SQL、数据库路径或文件提交细节。
 - EPUB、PDF 与 Markdown 统一通过 `BookDocument` 能力面向上层；外部模块不得直接操纵具体阅读器运行时对象。
-- 每个阅读材料在整个工作区最多对应一个 ReadingView；再次从书库打开时激活已有标签，不创建重复标签。
+- 同一 Editor Group 内每个阅读材料最多对应一个 ReadingView；第一版最多两个 Editor Group，允许同一材料跨组同时打开。再次从书库打开时优先在当前组激活已有标签，不创建同组重复标签。
 - 用户意图通过稳定的 Command 表达，已经发生的事实通过 Event 表达。按钮、菜单、键盘和触摸适配器执行同一 Command。
-- Workspace State 必须可序列化；Foliate View、加载任务、当前选区等 Reader Runtime 活对象不得混入持久化状态。
+- Workspace State 必须可序列化；Foliate/PDF View、加载任务、当前选区等 Reader Runtime 活对象不得混入持久化状态。每组只保留一个活动渲染器，全应用最多两个。
 - 阅读材料一律视为不可信内容。禁止执行书内脚本、加载未经允许的远程资源或把任意文件系统能力暴露给阅读内容。
 - 所有导入材料进入托管书库；稳定 `BookId` 与完整内容指纹职责分离。不得仅按标题、作者或文件路径合并资料。
 - 普通高亮与批注属于第一版核心领域。锚点必须版本化、可恢复；无法安全恢复时保留为失联批注，不得静默附着到错误内容。
