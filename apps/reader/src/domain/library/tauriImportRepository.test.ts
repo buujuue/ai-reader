@@ -10,6 +10,7 @@ import {
 } from './tauriImportRepository';
 import type { TauriInvoke } from '../tauriInvoke';
 import type { ReadingMaterial, StagedImport } from './material';
+import type { MarkdownRecoverySnapshot } from './importRepository';
 import type { FilePicker } from '../../app/filePicker';
 
 interface FakeStaged {
@@ -30,6 +31,10 @@ function createFakeTauriBackend(): {
   const managedBytes = new Map<string, Uint8Array>();
   const covers = new Map<string, Uint8Array>();
   const trashed = new Set<string>();
+  const markdownRecoveries = new Map<
+    string,
+    Omit<MarkdownRecoverySnapshot, 'status'>
+  >();
 
   function base(id: string, title: string, author: string | null, language: string | null, fingerprint: string, sourceFileName: string): ReadingMaterial {
     return {
@@ -139,6 +144,7 @@ function createFakeTauriBackend(): {
         byFingerprint.delete(current.fingerprint);
         managedBytes.delete(materialId);
         covers.delete(materialId);
+        markdownRecoveries.delete(materialId);
         trashed.delete(materialId);
         return null;
       }
@@ -240,6 +246,36 @@ function createFakeTauriBackend(): {
         byFingerprint.delete(current.fingerprint);
         byFingerprint.set(fingerprint, effective);
         return effective;
+      }
+      case IMPORT_COMMAND_NAMES.writeMarkdownRecovery: {
+        const { materialId, content, baseDocumentVersion } = args as {
+          materialId: string;
+          content: string;
+          baseDocumentVersion: number;
+        };
+        if (!materials.has(materialId)) {
+          throw new Error('material missing');
+        }
+        markdownRecoveries.set(materialId, {
+          materialId,
+          content,
+          baseDocumentVersion,
+          updatedAt: Date.now(),
+        });
+        return null;
+      }
+      case IMPORT_COMMAND_NAMES.listMarkdownRecoveries:
+        return [...markdownRecoveries.values()].map((snapshot) => ({
+          ...snapshot,
+          status:
+            materials.get(snapshot.materialId)?.documentVersion === snapshot.baseDocumentVersion
+              ? 'available'
+              : 'conflict',
+        }));
+      case IMPORT_COMMAND_NAMES.discardMarkdownRecovery: {
+        const { materialId } = args as { materialId: string };
+        markdownRecoveries.delete(materialId);
+        return null;
       }
       default:
         throw new Error(`unknown tauri command: ${command}`);

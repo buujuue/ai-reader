@@ -13,6 +13,7 @@ pub struct LibraryPaths {
     pub stash_dir: PathBuf,
     pub managed_dir: PathBuf,
     pub covers_dir: PathBuf,
+    pub recovery_dir: PathBuf,
 }
 
 impl LibraryPaths {
@@ -21,13 +22,16 @@ impl LibraryPaths {
         let stash_dir = app_data_dir.join("stash");
         let managed_dir = app_data_dir.join("library");
         let covers_dir = app_data_dir.join("covers");
+        let recovery_dir = app_data_dir.join("recovery");
         std::fs::create_dir_all(&stash_dir)?;
         std::fs::create_dir_all(&managed_dir)?;
         std::fs::create_dir_all(&covers_dir)?;
+        std::fs::create_dir_all(&recovery_dir)?;
         Ok(Self {
             stash_dir,
             managed_dir,
             covers_dir,
+            recovery_dir,
         })
     }
 
@@ -41,6 +45,17 @@ impl LibraryPaths {
 
     pub fn cover_path(&self, id: &str) -> PathBuf {
         self.covers_dir.join(id)
+    }
+
+    pub fn recovery_path(&self, material_id: &str) -> Result<PathBuf, AppError> {
+        let mut components = Path::new(material_id).components();
+        let is_single_normal_component =
+            matches!(components.next(), Some(std::path::Component::Normal(_)))
+                && components.next().is_none();
+        if material_id.is_empty() || !is_single_normal_component {
+            return Err(AppError::InvalidMaterialId(material_id.to_string()));
+        }
+        Ok(self.recovery_dir.join(format!("{material_id}.json")))
     }
 }
 
@@ -155,9 +170,33 @@ mod tests {
         assert!(paths.stash_dir.is_dir());
         assert!(paths.managed_dir.is_dir());
         assert!(paths.covers_dir.is_dir());
+        assert!(paths.recovery_dir.is_dir());
         assert_eq!(paths.stash_path("abc"), dir.join("stash").join("abc"));
         assert_eq!(paths.managed_path("abc"), dir.join("library").join("abc"));
         assert_eq!(paths.cover_path("abc"), dir.join("covers").join("abc"));
+        assert_eq!(
+            paths.recovery_path("abc").unwrap(),
+            dir.join("recovery").join("abc.json")
+        );
+    }
+
+    #[test]
+    fn recovery_path_rejects_directory_traversal_and_absolute_paths() {
+        let dir = temp_dir();
+        let paths = LibraryPaths::new(&dir).unwrap();
+
+        assert!(matches!(
+            paths.recovery_path("../outside"),
+            Err(AppError::InvalidMaterialId(_))
+        ));
+        assert!(matches!(
+            paths.recovery_path("/outside"),
+            Err(AppError::InvalidMaterialId(_))
+        ));
+        assert!(matches!(
+            paths.recovery_path("nested/material"),
+            Err(AppError::InvalidMaterialId(_))
+        ));
     }
 
     #[test]

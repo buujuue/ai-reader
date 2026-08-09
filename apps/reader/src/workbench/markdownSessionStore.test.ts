@@ -30,16 +30,36 @@ describe('MarkdownDocumentSession Store', () => {
     expect(session?.dirty).toBe(true);
   });
 
-  it('markSaved 清除脏标记并更新已保存版本', () => {
+  it('recordFormalSave 在缓冲区未变化时清除脏标记并更新已保存版本', () => {
     useMarkdownSessionStore.getState().openSession('mat-1', '第一版', 0);
     useMarkdownSessionStore.getState().updateText('mat-1', '修改后的文本');
 
-    useMarkdownSessionStore.getState().markSaved('mat-1', 1);
+    const unchanged = useMarkdownSessionStore
+      .getState()
+      .recordFormalSave('mat-1', '修改后的文本', 1);
 
+    expect(unchanged).toBe(true);
     const session = useMarkdownSessionStore.getState().getSession('mat-1');
     expect(session?.dirty).toBe(false);
     expect(session?.savedVersion).toBe(1);
     expect(session?.text).toBe('修改后的文本');
+  });
+
+  it('recordFormalSave 在保存期间又有输入时保留脏标记并升级基础版本', () => {
+    useMarkdownSessionStore.getState().openSession('mat-1', '# original', 0);
+    useMarkdownSessionStore.getState().updateText('mat-1', '# saving');
+    useMarkdownSessionStore.getState().updateText('mat-1', '# latest');
+
+    const unchanged = useMarkdownSessionStore
+      .getState()
+      .recordFormalSave('mat-1', '# saving', 1);
+
+    expect(unchanged).toBe(false);
+    expect(useMarkdownSessionStore.getState().getSession('mat-1')).toMatchObject({
+      text: '# latest',
+      dirty: true,
+      savedVersion: 1,
+    });
   });
 
   it('discard 把缓冲区回退到已保存文本并清除脏标记', () => {

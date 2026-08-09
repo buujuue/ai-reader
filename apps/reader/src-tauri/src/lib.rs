@@ -58,6 +58,9 @@ pub fn run() {
             commands::import::remove_material_cover,
             commands::import::restore_source_metadata,
             commands::import::read_material_cover,
+            commands::markdown_recovery::write_markdown_recovery,
+            commands::markdown_recovery::list_markdown_recoveries,
+            commands::markdown_recovery::discard_markdown_recovery,
         ])
         .run(tauri::generate_context!())
         .expect("启动 AI Reader 失败");

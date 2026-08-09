@@ -7,10 +7,10 @@ Rust 平台核心：独占 SQLite、迁移、托管文件与导入状态机，�
 - `lib.rs`：应用入口 `run()`，打开数据库、注入 `DatabaseHandle` 与 `LibraryPaths`，注册全部 typed 命令，启动时执行中断导入恢复。
 - `main.rs`：二进制入口。
 - `error.rs`：统一错误类型 `AppError` 与 io 错误分类。
-- `fs.rs`：托管文件布局 `LibraryPaths`（暂存/书库目录）与流式复制 + SHA-256 完整内容指纹。
-- `commands/`：typed Tauri 命令层；`workspace.rs`（工作区状态）、`import.rs`（导入/读取/列表/恢复/元数据覆盖/回收站）。命令层只通过 `DatabaseHandle::with_connection` 访问数据库。
-- `db/`：`open_database` 顺序应用迁移、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`；`import.rs` 实现 `ImportRepository`（stage 写 pending → inspect → commit 完成/去重/回收站去重复原 → recover 完成或回滚，以及 trash/restore/purge 回收站与元数据覆盖）。
-- `db/migrations/`：编号递增的 SQL 迁移，当前 `0001_workspace.sql`、`0002_materials.sql`、`0003_import_pending.sql`、`0004_material_overrides.sql`、`0005_material_trash.sql`。
+- `fs.rs`：托管文件布局 `LibraryPaths`（暂存/书库/封面/恢复快照目录）、流式复制、SHA-256 完整内容指纹与同目录原子写入；恢复快照路径拒绝绝对路径及目录分隔符，保证读写不会越出私有目录。
+- `commands/`：typed Tauri 命令层；`workspace.rs`（工作区状态）、`import.rs`（导入/读取/列表/恢复/正式 Markdown 保存/元数据覆盖/回收站）、`markdown_recovery.rs`（恢复快照写入/列出/丢弃）。命令层只通过 `DatabaseHandle::with_connection` 访问数据库。
+- `db/`：`open_database` 顺序应用迁移、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`；`import.rs` 实现 `ImportRepository`；`markdown_recovery.rs` 管理版本化快照文件并按正式文档版本返回 available/conflict/corrupt 状态。
+- `db/migrations/`：编号递增的 SQL 迁移，当前 `0001_workspace.sql` 至 `0007_material_document_version.sql`；恢复快照按 ADR-0006 保存在文件系统，不新增数据库表。
 
 ## 依赖其它文件夹（树）
 
@@ -21,7 +21,7 @@ Rust 平台核心：独占 SQLite、迁移、托管文件与导入状态机，�
 ```
 src-tauri/src/
 └── 前端 apps/reader/src/
-    ├── domain/library/tauriImportRepository.ts  经 invoke 调用导入命令
+    ├── domain/library/tauriImportRepository.ts  经 invoke 调用导入与 Markdown 恢复命令
     └── domain/workspace/…                       经 invoke 调用工作区命令
 ```
 

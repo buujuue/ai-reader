@@ -287,6 +287,10 @@ impl<'a> ImportRepository<'a> {
         if cover_path.is_file() {
             std::fs::remove_file(&cover_path).map_err(classify_io_error)?;
         }
+        let recovery_path = paths.recovery_path(id)?;
+        if recovery_path.is_file() {
+            std::fs::remove_file(&recovery_path).map_err(classify_io_error)?;
+        }
         Ok(())
     }
 
@@ -1329,6 +1333,7 @@ mod tests {
         repository.set_cover(&material.id, &external_cover, &paths).unwrap();
         repository.trash(&material.id).unwrap();
         assert!(paths.managed_path(&material.id).is_file());
+        std::fs::write(paths.recovery_path(&material.id).unwrap(), b"snapshot").unwrap();
 
         repository.purge(&material.id, &paths).unwrap();
 
@@ -1336,6 +1341,7 @@ mod tests {
         assert!(repository.list_trashed().unwrap().is_empty());
         assert!(!paths.managed_path(&material.id).exists());
         assert!(!paths.cover_path(&material.id).exists());
+        assert!(!paths.recovery_path(&material.id).unwrap().exists());
         let rows: i64 = connection
             .query_row("SELECT COUNT(*) FROM materials WHERE id=?1", params![material.id], |row| row.get(0))
             .unwrap();

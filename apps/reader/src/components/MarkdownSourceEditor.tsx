@@ -17,6 +17,7 @@ export function MarkdownSourceEditor({ viewId }: { viewId: string }) {
   const { commands } = useAppServices();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const applyingSessionTextRef = useRef(false);
   const [loadError, setLoadError] = useState(false);
 
   const materialId = useWorkspaceStore((state) => {
@@ -59,10 +60,14 @@ export function MarkdownSourceEditor({ viewId }: { viewId: string }) {
               },
             ]),
             EditorView.updateListener.of((update) => {
-              if (!update.docChanged) return;
-              useMarkdownSessionStore
-                .getState()
-                .updateText(materialId, update.state.doc.toString());
+              if (!update.docChanged || applyingSessionTextRef.current) return;
+              void commands
+                .execute(
+                  COMMAND_IDS.markdownUpdateBuffer,
+                  viewId,
+                  update.state.doc.toString(),
+                )
+                .catch(console.error);
             }),
           ],
           parent: container,
@@ -80,6 +85,19 @@ export function MarkdownSourceEditor({ viewId }: { viewId: string }) {
       viewRef.current = null;
     };
   }, [materialId, viewId, commands]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !session || view.state.doc.toString() === session.text) return;
+    applyingSessionTextRef.current = true;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: session.text },
+      });
+    } finally {
+      applyingSessionTextRef.current = false;
+    }
+  }, [session]);
 
   if (loadError) {
     return (

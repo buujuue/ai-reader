@@ -4,6 +4,7 @@ import { ActivityBar } from '../components/ActivityBar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { MarkdownDirtyCloseDialog } from '../components/MarkdownDirtyCloseDialog';
+import { MarkdownRecoveryDialog } from '../components/MarkdownRecoveryDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { NoteEditorDialog } from '../components/NoteEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
@@ -18,7 +19,7 @@ import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useAppServices } from './AppServicesContext';
 
 export function App() {
-  const { commands, workspaceRepository, importRepository } = useAppServices();
+  const { commands, workspaceRepository, importRepository, windowLifecycle } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const tocVisible = useShellUiStore((state) => state.tocVisible);
 
@@ -26,29 +27,72 @@ export function App() {
     let cancelled = false;
     workspaceRepository
       .loadState()
-      .then((state) => {
+      .then(async (state) => {
         if (!cancelled) {
           useWorkspaceStore.getState().hydrate(state);
-          void restoreViews(state);
+          await commands.execute(COMMAND_IDS.libraryRefresh);
+          await restoreViews(state);
+          if (!cancelled) {
+            await commands.execute(COMMAND_IDS.markdownCheckRecoveries);
+          }
         }
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         console.error('恢复工作区状态失败', error);
         useShellUiStore.getState().setStatusMessage('恢复工作区状态失败');
+        if (!cancelled) {
+          await commands.execute(COMMAND_IDS.libraryRefresh).catch(() => undefined);
+          await commands.execute(COMMAND_IDS.markdownCheckRecoveries).catch(() => undefined);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [workspaceRepository]);
+  }, [commands, workspaceRepository]);
 
-  // 应用关闭/卸载时把全部阅读位置 flush 并关闭渲染器。
+  // 桌面端先阻止窗口关闭,等待恢复快照与阅读位置落盘后再销毁窗口。
   useEffect(() => {
-    return () => {
-      void import('../workbench/readerCommands')
-        .then(({ flushAndCloseAllReaderViews }) => flushAndCloseAllReaderViews())
-        .catch(() => undefined);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const flushRuntime = async () => {
+      await commands.execute(COMMAND_IDS.markdownFlushRecoveries);
+      const { flushAndCloseAllReaderViews } = await import('../workbench/readerCommands');
+      await flushAndCloseAllReaderViews();
     };
-  }, []);
+    if (windowLifecycle) {
+      void windowLifecycle
+        .onCloseRequested(async (event) => {
+          event.preventDefault();
+          try {
+            await flushRuntime();
+          } finally {
+            await windowLifecycle.destroy();
+          }
+        })
+        .then((dispose) => {
+          if (disposed) dispose();
+          else unlisten = dispose;
+        })
+        .catch(console.error);
+    }
+
+    const flushBestEffort = () => {
+      void flushRuntime().catch(() => undefined);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushBestEffort();
+    };
+    window.addEventListener('pagehide', flushBestEffort);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+      window.removeEventListener('pagehide', flushBestEffort);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      flushBestEffort();
+    };
+  }, [commands, windowLifecycle]);
 
   // Ctrl+F(Windows/Linux)或 Cmd+F(macOS)在当前激活阅读视图内打开搜索。
   useEffect(() => {
@@ -80,10 +124,6 @@ export function App() {
     }
   }
 
-  useEffect(() => {
-    void commands.execute(COMMAND_IDS.libraryRefresh).catch(() => undefined);
-  }, [commands]);
-
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
       <div className="flex min-h-0 flex-1">
@@ -95,6 +135,7 @@ export function App() {
       <StatusBar />
       <MetadataEditorDialog />
       <MarkdownDirtyCloseDialog />
+      <MarkdownRecoveryDialog />
       <PurgeConfirmDialog />
       <ExternalLinkDialog />
       <ReaderSettingsDialog />

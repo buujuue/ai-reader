@@ -8,6 +8,8 @@ pub enum AppError {
     WorkspaceStateParse(#[from] serde_json::Error),
     #[error("工作区状态数据无法写入:{0}")]
     WorkspaceStateSerialize(serde_json::Error),
+    #[error("Markdown 恢复快照无法写入:{0}")]
+    MarkdownRecoverySerialize(serde_json::Error),
     #[error("应用数据目录初始化失败:{0}")]
     AppDir(String),
     #[error("数据库连接被占用且无法恢复")]
@@ -24,6 +26,8 @@ pub enum AppError {
     ManagedFileMissing(String),
     #[error("阅读材料不存在:{0}")]
     MaterialNotFound(String),
+    #[error("阅读材料标识不合法:{0}")]
+    InvalidMaterialId(String),
 }
 
 impl serde::Serialize for AppError {

@@ -1,4 +1,4 @@
-import type { ImportRepository } from './importRepository';
+import type { ImportRepository, MarkdownRecoverySnapshot } from './importRepository';
 import type {
   MaterialOverride,
   ReadingMaterial,
@@ -35,6 +35,10 @@ export function createInMemoryImportRepository(
   const trashed = new Set<string>();
   /** pending 记录:id → 暂存句柄。stage 时写入,commit/discard/recover 时移除。 */
   const pending = new Map<string, { originalFileName: string; fingerprint: string }>();
+  const markdownRecoveries = new Map<
+    string,
+    Omit<MarkdownRecoverySnapshot, 'status'>
+  >();
 
   function toMaterial(internal: InternalMaterial): ReadingMaterial {
     const override = overrides.get(internal.id) ?? emptyMaterialOverride();
@@ -151,6 +155,7 @@ export function createInMemoryImportRepository(
       managedBytes.delete(materialId);
       covers.delete(materialId);
       overrides.delete(materialId);
+      markdownRecoveries.delete(materialId);
       trashed.delete(materialId);
     },
 
@@ -220,6 +225,32 @@ export function createInMemoryImportRepository(
       internal.documentVersion += 1;
       byFingerprint.set(fingerprint, internal);
       return toMaterial(internal);
+    },
+
+    async writeMarkdownRecovery(materialId, content, baseDocumentVersion): Promise<void> {
+      if (!materials.has(materialId)) {
+        throw new Error(`阅读材料不存在:${materialId}`);
+      }
+      markdownRecoveries.set(materialId, {
+        materialId,
+        content,
+        baseDocumentVersion,
+        updatedAt: Date.now(),
+      });
+    },
+
+    async listMarkdownRecoveries(): Promise<MarkdownRecoverySnapshot[]> {
+      return [...markdownRecoveries.values()].map((snapshot) => ({
+        ...snapshot,
+        status:
+          materials.get(snapshot.materialId)?.documentVersion === snapshot.baseDocumentVersion
+            ? 'available'
+            : 'conflict',
+      }));
+    },
+
+    async discardMarkdownRecovery(materialId): Promise<void> {
+      markdownRecoveries.delete(materialId);
     },
   };
 }

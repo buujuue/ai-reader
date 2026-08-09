@@ -32,10 +32,16 @@ export interface MarkdownSessionStoreState {
   ) => void;
   /** 更新缓冲区文本并标记为脏。 */
   updateText: (materialId: string, text: string) => void;
-  /** 正式保存成功后更新已保存版本并清除脏标记。 */
-  markSaved: (materialId: string, savedVersion: number) => void;
+  /** 记录正式保存结果；仅当缓冲区仍等于本次保存文本时清除脏标记。 */
+  recordFormalSave: (
+    materialId: string,
+    savedText: string,
+    savedVersion: number,
+  ) => boolean;
   /** 放弃未保存修改:让缓冲区回到最后一次正式保存的文本。 */
   discard: (materialId: string, savedText: string) => void;
+  /** 用户确认恢复快照后,把快照载入共享脏缓冲区。 */
+  restoreRecovery: (materialId: string, text: string, savedVersion: number) => void;
   /** 读取一个会话;不存在时返回 null。 */
   getSession: (materialId: string) => MarkdownDocumentSession | null;
   resetToDefault: () => void;
@@ -72,19 +78,22 @@ export const useMarkdownSessionStore = create<MarkdownSessionStoreState>()(
         };
       }),
 
-    markSaved: (materialId, savedVersion) =>
-      set((state) => {
-        const session = state.sessions[materialId];
-        if (!session) {
-          return state;
-        }
-        return {
-          sessions: {
-            ...state.sessions,
-            [materialId]: { ...session, savedVersion, dirty: false },
+    recordFormalSave: (materialId, savedText, savedVersion) => {
+      const session = get().sessions[materialId];
+      if (!session) return false;
+      const unchanged = session.text === savedText;
+      set((state) => ({
+        sessions: {
+          ...state.sessions,
+          [materialId]: {
+            ...state.sessions[materialId]!,
+            savedVersion,
+            dirty: !unchanged,
           },
-        };
-      }),
+        },
+      }));
+      return unchanged;
+    },
 
     discard: (materialId, savedText) =>
       set((state) => {
@@ -99,6 +108,14 @@ export const useMarkdownSessionStore = create<MarkdownSessionStoreState>()(
           },
         };
       }),
+
+    restoreRecovery: (materialId, text, savedVersion) =>
+      set((state) => ({
+        sessions: {
+          ...state.sessions,
+          [materialId]: { materialId, text, dirty: true, savedVersion },
+        },
+      })),
 
     getSession: (materialId) => get().sessions[materialId] ?? null,
 

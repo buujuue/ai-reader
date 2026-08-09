@@ -40,6 +40,10 @@ export const COMMAND_IDS = {
   markdownSave: 'markdown.save',
   markdownDiscard: 'markdown.discard',
   markdownCloseDirty: 'markdown.closeDirty',
+  markdownUpdateBuffer: 'markdown.updateBuffer',
+  markdownCheckRecoveries: 'markdown.recovery.check',
+  markdownResolveRecovery: 'markdown.recovery.resolve',
+  markdownFlushRecoveries: 'markdown.recovery.flush',
 } as const;
 
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];

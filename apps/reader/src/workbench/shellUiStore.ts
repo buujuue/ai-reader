@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { MarkdownRecoverySnapshot } from '../domain/library/importRepository';
 
 /** 外壳运行时反馈(状态栏文案等),不参与持久化。 */
 export interface ShellUiStoreState {
@@ -19,6 +20,8 @@ export interface ShellUiStoreState {
   markdownDirtyCloseViewId: string | null;
   /** 脏文档对话框确认后要执行的动作:关闭视图或退出源码模式。 */
   markdownDirtyCloseAction: 'close' | 'exitSource' | null;
+  /** 启动时待用户处理的 Markdown 恢复快照队列。 */
+  markdownRecoverySnapshots: MarkdownRecoverySnapshot[];
   setStatusMessage: (message: string) => void;
   clearStatusMessage: () => void;
   openMetadataEditor: (materialId: string) => void;
@@ -33,6 +36,8 @@ export interface ShellUiStoreState {
   closeNoteEditor: () => void;
   openMarkdownDirtyClose: (viewId: string, action: 'close' | 'exitSource') => void;
   closeMarkdownDirtyClose: () => void;
+  setMarkdownRecoverySnapshots: (snapshots: MarkdownRecoverySnapshot[]) => void;
+  removeMarkdownRecoverySnapshot: (materialId: string) => void;
   setTocVisible: (visible: boolean) => void;
   toggleToc: () => void;
 }
@@ -47,6 +52,7 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   noteEditorTarget: null,
   markdownDirtyCloseViewId: null,
   markdownDirtyCloseAction: null,
+  markdownRecoverySnapshots: [],
   setStatusMessage: (message) => set({ statusMessage: message }),
   clearStatusMessage: () => set({ statusMessage: '' }),
   openMetadataEditor: (materialId) => set({ metadataEditorMaterialId: materialId }),
@@ -63,6 +69,13 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   openMarkdownDirtyClose: (viewId, action) =>
     set({ markdownDirtyCloseViewId: viewId, markdownDirtyCloseAction: action }),
   closeMarkdownDirtyClose: () => set({ markdownDirtyCloseViewId: null, markdownDirtyCloseAction: null }),
+  setMarkdownRecoverySnapshots: (markdownRecoverySnapshots) => set({ markdownRecoverySnapshots }),
+  removeMarkdownRecoverySnapshot: (materialId) =>
+    set((state) => ({
+      markdownRecoverySnapshots: state.markdownRecoverySnapshots.filter(
+        (snapshot) => snapshot.materialId !== materialId,
+      ),
+    })),
   setTocVisible: (visible) => set({ tocVisible: visible }),
   toggleToc: () => set((state) => ({ tocVisible: !state.tocVisible })),
 }));

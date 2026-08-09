@@ -173,6 +173,64 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
 
     await expect(repository.saveMarkdown('no-such-id', '内容')).rejects.toThrow();
   });
+
+  it('恢复快照保存脏缓冲区但不改变正式内容、版本或指纹', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.md', encodeUtf8('正式内容'));
+    const material = await repository.commitImport(staged, {
+      title: '笔记',
+      author: null,
+      language: null,
+    });
+
+    await repository.writeMarkdownRecovery(material.id, '未保存内容', material.documentVersion);
+
+    const [snapshot] = await repository.listMarkdownRecoveries();
+    expect(snapshot).toMatchObject({
+      materialId: material.id,
+      content: '未保存内容',
+      baseDocumentVersion: 0,
+      status: 'available',
+    });
+    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe('正式内容');
+    expect((await repository.listMaterials())[0]).toMatchObject({
+      documentVersion: 0,
+      fingerprint: material.fingerprint,
+    });
+  });
+
+  it('基础文档版本变化后把恢复快照标记为冲突而不覆盖正式内容', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.md', encodeUtf8('v0'));
+    const material = await repository.commitImport(staged, {
+      title: '笔记',
+      author: null,
+      language: null,
+    });
+    await repository.writeMarkdownRecovery(material.id, '未保存的 v0 修改', 0);
+
+    await repository.saveMarkdown(material.id, '正式 v1');
+
+    const [snapshot] = await repository.listMarkdownRecoveries();
+    expect(snapshot?.status).toBe('conflict');
+    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe('正式 v1');
+  });
+
+  it('显式丢弃恢复快照是幂等的', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.md', encodeUtf8('正式内容'));
+    const material = await repository.commitImport(staged, {
+      title: '笔记',
+      author: null,
+      language: null,
+    });
+    await repository.writeMarkdownRecovery(material.id, '未保存内容', 0);
+
+    await repository.discardMarkdownRecovery(material.id);
+    await expect(repository.discardMarkdownRecovery(material.id)).resolves.toBeUndefined();
+
+    expect(await repository.listMarkdownRecoveries()).toEqual([]);
+  });
 }
 
 function encodeUtf8(text: string): Uint8Array {

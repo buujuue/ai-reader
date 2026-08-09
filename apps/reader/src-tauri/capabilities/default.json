@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "第一版底座只启用核心权限与导入所需的系统文件选择器;其他能力随后续切片按需最小化开放",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy",
+    "dialog:default",
+    "opener:default"
+  ]
 }

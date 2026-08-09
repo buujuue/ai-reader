@@ -17,12 +17,18 @@ import {
   makeFakeRasterizer,
 } from '../domain/reader/pdf/pdfTestFakes';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
-import { createAppServices, type AppServices } from './bootstrap';
+import {
+  createAppServices,
+  type AppServices,
+  type WindowCloseRequestedEvent,
+  type WindowLifecycle,
+} from './bootstrap';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
+import { COMMAND_IDS } from '../commands/commandRegistry';
 
 function renderApp(services: AppServices) {
   return render(
@@ -153,6 +159,48 @@ describe('阅读工作台外壳', () => {
       ).not.toBeInTheDocument();
     });
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
+  });
+
+  it('启动恢复工作区后检查 Markdown 恢复快照', async () => {
+    const execute = vi.spyOn(services.commands, 'execute');
+
+    renderApp(services);
+
+    await waitFor(() => {
+      expect(execute).toHaveBeenCalledWith(COMMAND_IDS.markdownCheckRecoveries);
+    });
+  });
+
+  it('桌面关闭请求会等待 Markdown 恢复快照落盘后再销毁窗口', async () => {
+    let closeHandler: ((event: WindowCloseRequestedEvent) => void | Promise<void>) | null = null;
+    let releaseFlush: (() => void) | null = null;
+    const flushFinished = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    const windowLifecycle: WindowLifecycle = {
+      onCloseRequested: vi.fn(async (handler) => {
+        closeHandler = handler;
+        return () => undefined;
+      }),
+      destroy: vi.fn(async () => undefined),
+    };
+    services = createAppServices({ workspaceRepository: repository, windowLifecycle });
+    const originalExecute = services.commands.execute.bind(services.commands);
+    vi.spyOn(services.commands, 'execute').mockImplementation(async (commandId, ...args) => {
+      if (commandId === COMMAND_IDS.markdownFlushRecoveries) await flushFinished;
+      return originalExecute(commandId, ...args);
+    });
+    renderApp(services);
+    await waitFor(() => expect(windowLifecycle.onCloseRequested).toHaveBeenCalledOnce());
+
+    const preventDefault = vi.fn();
+    const closing = closeHandler!({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(windowLifecycle.destroy).not.toHaveBeenCalled();
+    releaseFlush!();
+    await closing;
+    expect(windowLifecycle.destroy).toHaveBeenCalledOnce();
   });
 
   it('点击导入按钮后书库侧栏显示导入的阅读材料', async () => {

@@ -1,5 +1,16 @@
 import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
 
+export type MarkdownRecoveryStatus = 'available' | 'conflict' | 'corrupt';
+
+/** Markdown 未保存缓冲区的恢复快照。正式材料版本变化时只标记冲突，不自动覆盖。 */
+export interface MarkdownRecoverySnapshot {
+  materialId: string;
+  content: string | null;
+  baseDocumentVersion: number | null;
+  updatedAt: number | null;
+  status: MarkdownRecoveryStatus;
+}
+
 /** 导入的 typed Repository 边界。TS 只调用这些命令,不接触 SQL、数据库路径或任意文件系统能力。 */
 export interface ImportRepository {
   /** 把外部源文件全部字节流式复制到暂存区并计算完整内容指纹。 */
@@ -40,4 +51,14 @@ export interface ImportRepository {
   readCover(materialId: string): Promise<Uint8Array | null>;
   /** 正式保存 Markdown 内容:由 Rust 原子替换托管文件、递增文档版本并更新完整内容指纹,BookId 保持不变。 */
   saveMarkdown(materialId: string, content: string): Promise<ReadingMaterial>;
+  /** 原子写入 Markdown 恢复快照;不修改正式文件、指纹或文档版本。 */
+  writeMarkdownRecovery(
+    materialId: string,
+    content: string,
+    baseDocumentVersion: number,
+  ): Promise<void>;
+  /** 列出恢复快照,并相对当前正式文档版本标记 available/conflict/corrupt。 */
+  listMarkdownRecoveries(): Promise<MarkdownRecoverySnapshot[]>;
+  /** 显式丢弃恢复快照;不存在时幂等。 */
+  discardMarkdownRecovery(materialId: string): Promise<void>;
 }

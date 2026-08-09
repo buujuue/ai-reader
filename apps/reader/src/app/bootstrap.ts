@@ -25,6 +25,18 @@ import {
 } from './externalUrlOpener';
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+
+export interface WindowCloseRequestedEvent {
+  preventDefault: () => void;
+}
+
+export interface WindowLifecycle {
+  onCloseRequested: (
+    handler: (event: WindowCloseRequestedEvent) => void | Promise<void>,
+  ) => Promise<() => void>;
+  destroy: () => Promise<void>;
+}
 
 export interface AppServices {
   commands: CommandRegistry;
@@ -33,6 +45,7 @@ export interface AppServices {
   annotationRepository: AnnotationRepository;
   filePicker: FilePicker;
   externalUrlOpener: ExternalUrlOpener;
+  windowLifecycle: WindowLifecycle | null;
 }
 
 export interface AppServicesOptions {
@@ -46,11 +59,21 @@ export interface AppServicesOptions {
   pdfLib?: PdfJsLib;
   /** 可注入的页面光栅化函数(测试用)。 */
   pdfRasterize?: PdfPageRasterizer;
+  windowLifecycle?: WindowLifecycle | null;
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
 export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+function createWindowLifecycle(): WindowLifecycle | null {
+  if (!isTauriRuntime()) return null;
+  const appWindow = getCurrentWindow();
+  return {
+    onCloseRequested: (handler) => appWindow.onCloseRequested(handler),
+    destroy: () => appWindow.destroy(),
+  };
 }
 
 export function createWorkspaceRepository(): WorkspaceRepository {
@@ -96,6 +119,10 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       ? { importRepository: options.importRepository, filePicker: options.filePicker }
       : createImportServices();
   const externalUrlOpener = options.externalUrlOpener ?? createDefaultExternalUrlOpener();
+  const windowLifecycle =
+    options.windowLifecycle !== undefined
+      ? options.windowLifecycle
+      : createWindowLifecycle();
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository });
@@ -140,5 +167,6 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     annotationRepository,
     filePicker: importServices.filePicker,
     externalUrlOpener,
+    windowLifecycle,
   };
 }

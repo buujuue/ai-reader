@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { TauriInvoke } from '../tauriInvoke';
-import type { ImportRepository } from './importRepository';
+import type { ImportRepository, MarkdownRecoverySnapshot } from './importRepository';
 import type {
   MaterialOverride,
   ReadingMaterial,
@@ -27,6 +27,9 @@ export const IMPORT_COMMAND_NAMES = {
   restore: 'restore_source_metadata',
   readCover: 'read_material_cover',
   saveMarkdown: 'save_markdown',
+  writeMarkdownRecovery: 'write_markdown_recovery',
+  listMarkdownRecoveries: 'list_markdown_recoveries',
+  discardMarkdownRecovery: 'discard_markdown_recovery',
 } as const;
 
 function assertStagedShape(raw: unknown): StagedImport {
@@ -103,6 +106,22 @@ function assertMaterialList(raw: unknown): ReadingMaterial[] {
     throw new Error('materials payload is not an array');
   }
   return raw.map(assertMaterialShape);
+}
+
+function assertMarkdownRecovery(raw: unknown): MarkdownRecoverySnapshot {
+  const candidate = raw as Partial<MarkdownRecoverySnapshot> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.materialId !== 'string' ||
+    (candidate.content !== null && typeof candidate.content !== 'string') ||
+    (candidate.baseDocumentVersion !== null && typeof candidate.baseDocumentVersion !== 'number') ||
+    (candidate.updatedAt !== null && typeof candidate.updatedAt !== 'number') ||
+    !['available', 'conflict', 'corrupt'].includes(candidate.status ?? '')
+  ) {
+    throw new Error('markdown recovery payload is malformed');
+  }
+  return candidate as MarkdownRecoverySnapshot;
 }
 
 function base64ToBytes(base64: string): Uint8Array {
@@ -200,6 +219,23 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     async saveMarkdown(materialId: string, content: string): Promise<ReadingMaterial> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.saveMarkdown, { materialId, content });
       return assertMaterialShape(raw);
+    },
+    async writeMarkdownRecovery(materialId, content, baseDocumentVersion): Promise<void> {
+      await invokeFn(IMPORT_COMMAND_NAMES.writeMarkdownRecovery, {
+        materialId,
+        content,
+        baseDocumentVersion,
+      });
+    },
+    async listMarkdownRecoveries(): Promise<MarkdownRecoverySnapshot[]> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.listMarkdownRecoveries);
+      if (!Array.isArray(raw)) {
+        throw new Error('markdown recoveries payload is not an array');
+      }
+      return raw.map(assertMarkdownRecovery);
+    },
+    async discardMarkdownRecovery(materialId): Promise<void> {
+      await invokeFn(IMPORT_COMMAND_NAMES.discardMarkdownRecovery, { materialId });
     },
   };
 }
