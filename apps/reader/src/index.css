@@ -36,6 +36,26 @@ body {
   z-index: 2;
 }
 
+/* 扫描页区域选择预览由页面渲染器动态绘制。 */
+.pdf-area-selection-layer {
+  z-index: 3;
+}
+
+.pdf-scan-notice {
+  border: 1px solid rgb(82 82 91 / 0.9);
+  border-radius: 0.375rem;
+  background: rgb(24 24 27 / 0.82);
+  color: rgb(212 212 216);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1.25rem;
+}
+
+.pdf-area-selecting {
+  cursor: crosshair;
+  touch-action: none;
+}
+
 .pdf-renderer {
   -webkit-user-select: text;
   user-select: text;

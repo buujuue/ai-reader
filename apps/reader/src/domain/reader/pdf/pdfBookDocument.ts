@@ -1,4 +1,4 @@
-import type { BookDocument, BookDocumentMetadata } from '../bookDocument';
+import type { AreaSelection, BookDocument, BookDocumentMetadata } from '../bookDocument';
 import type { ReadingLocation } from '../readingLocation';
 import type { SearchEvent, SearchOptions } from '../search';
 import type { Toc, TocItem } from '../toc';
@@ -76,6 +76,8 @@ export class PdfBookDocument implements BookDocument {
   private searchHighlights = new Map<number, PdfHighlight[]>();
   /** 高亮覆盖层点击监听器。 */
   private showAnnotationListeners = new Set<(value: string) => void>();
+  /** 扫描页区域选择监听器,仅持有当前手势事件不进入持久化状态。 */
+  private areaSelectionListeners = new Set<(selection: AreaSelection) => void>();
 
   constructor(options: PdfBookDocumentOptions) {
     this.bytes = options.bytes;
@@ -123,6 +125,7 @@ export class PdfBookDocument implements BookDocument {
         onPageChange: (page) => this.handlePageChange(page),
         onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
         onPageRendered: (page) => this.redrawPage(page),
+        onAreaSelection: (selection) => this.notifyAreaSelection(selection),
       },
     );
     this.renderer = renderer;
@@ -288,13 +291,19 @@ export class PdfBookDocument implements BookDocument {
   }
 
   getCFI(_index: number, range: Range): string {
-    // 把选区 Range 换算成「页码 + 归一化矩形」的 PDF 文本锚点。
-    const pageNumber = this.currentPageNumber();
-    const rect = this.rangeToNormalizedRect(range);
-    if (!rect) {
+    // 把选区 Range 换算成「选区所属页码 + 归一化矩形」的 PDF 文本锚点。
+    const location = this.rangeToPdfLocation(range);
+    if (!location) {
       return '';
     }
-    return encodePdfTextAnchor({ page: pageNumber, rect });
+    return encodePdfTextAnchor(location);
+  }
+
+  getAreaAnchor(selection: AreaSelection): string {
+    if (!Number.isInteger(selection.page) || selection.page < 1) {
+      return '';
+    }
+    return encodePdfTextAnchor({ page: selection.page, rect: selection.rect });
   }
 
   getCurrentIndex(): number | null {
@@ -324,6 +333,11 @@ export class PdfBookDocument implements BookDocument {
   onShowAnnotation(listener: (value: string) => void): () => void {
     this.showAnnotationListeners.add(listener);
     return () => this.showAnnotationListeners.delete(listener);
+  }
+
+  onAreaSelection(listener: (selection: AreaSelection) => void): () => void {
+    this.areaSelectionListeners.add(listener);
+    return () => this.areaSelectionListeners.delete(listener);
   }
 
   onInternalLink(): () => void {
@@ -391,6 +405,7 @@ export class PdfBookDocument implements BookDocument {
     this.currentLocation = null;
     this.locationListeners.clear();
     this.showAnnotationListeners.clear();
+    this.areaSelectionListeners.clear();
     this.annotationHighlights.clear();
     this.searchHighlights.clear();
     this.toc = null;
@@ -398,16 +413,36 @@ export class PdfBookDocument implements BookDocument {
 
   // ---- 内部 ----
 
+  /** 找到 Range 所在页面,避免滚动模式下误用当前页码。 */
+  private pageRendererForRange(range: Range) {
+    const container = range.commonAncestorContainer;
+    const element =
+      container.nodeType === Node.ELEMENT_NODE
+        ? (container as Element)
+        : container.parentElement;
+    const pageElement = element?.closest('.pdf-page') as HTMLElement | null;
+    const pageNumber = Number(pageElement?.dataset.page ?? 0);
+    if (pageNumber > 0) {
+      return { pageNumber, renderer: this.renderer?.getPageRenderer(pageNumber) ?? null };
+    }
+    const currentPage = this.currentPageNumber();
+    return {
+      pageNumber: currentPage,
+      renderer: this.renderer?.getPageRenderer(currentPage) ?? null,
+    };
+  }
+
   /** 把选区 Range 的显示矩形换算成页面内归一化矩形(用于构建文本锚点)。 */
-  private rangeToNormalizedRect(range: Range): PdfNormalizedRect | null {
-    const renderer = this.renderer?.getPageRenderer(this.currentPageNumber());
+  private rangeToPdfLocation(range: Range): { page: number; rect: PdfNormalizedRect } | null {
+    const { pageNumber, renderer } = this.pageRendererForRange(range);
     const pageElement = renderer?.element;
     if (!pageElement) {
       return null;
     }
     const rangeRect = range.getBoundingClientRect();
     const pageRect = pageElement.getBoundingClientRect();
-    return normalizeRectFromRangeRect(rangeRect, pageRect);
+    const rect = normalizeRectFromRangeRect(rangeRect, pageRect);
+    return rect ? { page: pageNumber, rect } : null;
   }
 
   /** 当前页码(优先已记录位置,其次渲染器)。 */
@@ -454,11 +489,20 @@ export class PdfBookDocument implements BookDocument {
     this.container?.addEventListener('click', this.handleContainerClick);
   }
 
+  private notifyAreaSelection(selection: AreaSelection): void {
+    for (const listener of this.areaSelectionListeners) {
+      listener(selection);
+    }
+  }
+
   private handleContainerClick = (event: MouseEvent): void => {
     if (this.showAnnotationListeners.size === 0 || !this.container) {
       return;
     }
-    const pageNumber = this.currentPageNumber();
+    const target = event.target instanceof Element ? event.target : null;
+    const targetPage = target?.closest<HTMLElement>('.pdf-page');
+    const targetPageNumber = Number(targetPage?.dataset.page ?? 0);
+    const pageNumber = targetPageNumber > 0 ? targetPageNumber : this.currentPageNumber();
     const renderer = this.renderer?.getPageRenderer(pageNumber);
     const pageElement = renderer?.element;
     if (!pageElement) {

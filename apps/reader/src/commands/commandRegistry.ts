@@ -40,6 +40,7 @@ export const COMMAND_IDS = {
   readerSetPdfFlow: 'reader.pdf.flow',
   annotationLoadForMaterial: 'annotation.loadForMaterial',
   annotationCreateHighlight: 'annotation.createHighlight',
+  annotationCreatePdfArea: 'annotation.createPdfArea',
   annotationUpdateNote: 'annotation.updateNote',
   annotationDelete: 'annotation.delete',
   annotationGoTo: 'annotation.goTo',

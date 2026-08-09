@@ -96,6 +96,51 @@ describe('Annotation 命令', () => {
     document.body.removeChild(container);
   });
 
+  it('从扫描 PDF 区域创建页内批注并持久化归一化锚点', async () => {
+    const { registry, repository } = setup();
+    useWorkspaceStore.setState({
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [{ id: 'view-1', materialId: 'material-1', location: null, sourceMode: false, history: { positions: [], index: -1 } }],
+          activeViewId: 'view-1',
+        },
+      ],
+    });
+    const doc = createFakeDocument();
+    Object.assign(doc, {
+      format: 'pdf',
+      getAreaAnchor: vi.fn(() => 'pdf-text:2:0.20000:0.20000:0.50000:0.50000'),
+    });
+    useReaderRuntime.setState({ documents: new Map([['view-1', doc as never]]) });
+    useLibraryStore.setState({
+      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '扫描资料', author: null, language: 'zh', sourceFileName: 'scan.pdf', source: { title: '扫描资料', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 0 }],
+    });
+
+    await registry.execute('annotation.createPdfArea', 'view-1', {
+      page: 2,
+      rect: { x: 0.2, y: 0.2, width: 0.5, height: 0.5 },
+      clientRect: { left: 10, top: 20, width: 30, height: 40 },
+    });
+
+    const [saved] = await repository.listByMaterial('material-1');
+    expect(saved).toMatchObject({
+      materialId: 'material-1',
+      anchor: {
+        cfi: 'pdf-text:2:0.20000:0.20000:0.50000:0.50000',
+        quote: '',
+        before: '',
+        after: '',
+        documentVersion: 'fingerprint-1',
+        recoveryState: 'resolved',
+      },
+    });
+    expect(doc.addAnnotation).toHaveBeenCalledWith({
+      value: 'pdf-text:2:0.20000:0.20000:0.50000:0.50000',
+      color: '#ffd54f',
+    });
+  });
+
   it('编辑文字笔记后持久化并更新运行时', async () => {
     const { registry, repository } = setup();
     const annotation = makeAnnotation();

@@ -3,7 +3,12 @@ import { Highlighter, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import type { AreaSelection } from '../domain/reader/bookDocument';
 import { useReaderRuntime } from '../workbench/readerRuntime';
+
+type SelectionState =
+  | { kind: 'text'; range: Range; ownerDocument: Document; x: number; y: number }
+  | { kind: 'area'; area: AreaSelection; x: number; y: number };
 
 /**
  * 阅读视图内的选择工具栏:当用户在正文(content iframe)选中文本时,在选区上方
@@ -16,7 +21,7 @@ import { useReaderRuntime } from '../workbench/readerRuntime';
 export function SelectionToolbar({ viewId }: { viewId: string }) {
   const { commands } = useAppServices();
   const document_ = useReaderRuntime((state) => state.documents.get(viewId));
-  const [selection, setSelection] = useState<{ range: Range; x: number; y: number } | null>(null);
+  const [selection, setSelection] = useState<SelectionState | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
 
@@ -45,7 +50,7 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
       const frameRect = frame?.getBoundingClientRect() ?? { left: 0, top: 0 };
       const x = frameRect.left + rect.left + rect.width / 2;
       const y = frameRect.top + rect.top;
-      setSelection({ range, x, y });
+      setSelection({ kind: 'text', range, ownerDocument: doc, x, y });
       setPosition({ x, y });
     };
 
@@ -62,9 +67,16 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
       attachDoc(doc);
     }
     const offContentCreate = book.onContentCreate(attachDoc);
+    const offAreaSelection = book.onAreaSelection?.((area) => {
+      const x = area.clientRect.left + area.clientRect.width / 2;
+      const y = area.clientRect.top;
+      setSelection({ kind: 'area', area, x, y });
+      setPosition({ x, y });
+    });
 
     return () => {
       offContentCreate();
+      offAreaSelection?.();
       for (const detach of detachList) {
         detach();
       }
@@ -75,7 +87,7 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
   useEffect(() => {
     if (!selection || !toolbarRef.current) return;
     const rect = toolbarRef.current.getBoundingClientRect();
-    setPosition({ x: selection.x - rect.width / 2, y: selection.y - rect.height - 10 });
+    setPosition({ x: selection.x, y: selection.y - rect.height - 10 });
   }, [selection]);
 
   if (!selection || !position) {
@@ -83,18 +95,24 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
   }
 
   const handleHighlight = async () => {
-    await commands
-      .execute(COMMAND_IDS.annotationCreateHighlight, viewId, selection.range)
-      .catch((error: unknown) => console.error('创建高亮失败', error));
+    const command =
+      selection.kind === 'area'
+        ? commands.execute(COMMAND_IDS.annotationCreatePdfArea, viewId, selection.area)
+        : commands.execute(COMMAND_IDS.annotationCreateHighlight, viewId, selection.range);
+    await command.catch((error: unknown) => console.error('创建高亮失败', error));
     setSelection(null);
     setPosition(null);
-    document.getSelection?.()?.removeAllRanges();
+    if (selection.kind === 'text') {
+      selection.ownerDocument.getSelection?.()?.removeAllRanges();
+    }
   };
 
   const handleCancel = () => {
     setSelection(null);
     setPosition(null);
-    document.getSelection?.()?.removeAllRanges();
+    if (selection?.kind === 'text') {
+      selection.ownerDocument.getSelection?.()?.removeAllRanges();
+    }
   };
 
   return (
@@ -103,15 +121,16 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
       className="pointer-events-auto fixed z-50 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800 px-1.5 py-1 shadow-lg"
       style={{ left: position.x, top: position.y, transform: 'translateX(-50%)' }}
       role="toolbar"
-      aria-label="文本选择工具栏"
+      aria-label="选区工具栏"
     >
       <button
         type="button"
         onClick={handleHighlight}
+        aria-label={selection.kind === 'area' ? '高亮选中区域' : '高亮选中文本'}
         className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-zinc-700"
       >
         <Highlighter size={14} aria-hidden />
-        高亮
+        {selection.kind === 'area' ? '高亮区域' : '高亮'}
       </button>
       <button
         type="button"

@@ -11,6 +11,26 @@ export interface BookDocumentMetadata {
 }
 
 /**
+ * PDF 扫描页或其它固定版式页面的临时区域选择。
+ * `clientRect` 只服务于当前工具栏定位,真正持久化时只保存 `page` 与 `rect`。
+ */
+export interface AreaSelection {
+  page: number;
+  rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  clientRect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+}
+
+/**
  * BookDocument:TS 阅读领域对 EPUB、PDF、Markdown 的统一文档 Interface。
  * 它向 Reader 提供元数据、目录、导航、位置解析与阅读能力;
  * Reader 外部不得直接依赖 Foliate View 等具体渲染器对象。
@@ -72,6 +92,12 @@ export interface BookDocument {
 
   /** 在不改变当前阅读位置的前提下尝试解析一个批注 CFI。 */
   canResolveAnnotation?(value: string): Promise<boolean>;
+
+  /** 把固定版式区域选择转换为持久化锚点;仅 PDF 实现提供。 */
+  getAreaAnchor?(selection: AreaSelection): string;
+
+  /** 订阅固定版式区域选择;仅 PDF 实现提供。 */
+  onAreaSelection?(listener: (selection: AreaSelection) => void): () => void;
 
   /** 读取当前内容文档所在章节序号(index);未就绪时返回 null。 */
   getCurrentIndex(): number | null;

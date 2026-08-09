@@ -8,7 +8,7 @@ import {
 } from '../domain/annotation/textAnchor';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { ReadingMaterial } from '../domain/library/material';
-import type { BookDocument } from '../domain/reader/bookDocument';
+import type { AreaSelection, BookDocument } from '../domain/reader/bookDocument';
 import { isPdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { useAnnotationStore } from './annotationStore';
 import { useLibraryStore } from './libraryStore';
@@ -243,6 +243,42 @@ export function registerAnnotationCommands(
       note: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      deletedAt: null,
+    };
+    const saved = await dependencies.annotationRepository.saveAnnotation(annotation);
+    useAnnotationStore.getState().upsertAnnotation(saved);
+    redrawAnnotationsForMaterial(materialId);
+  });
+
+  // 从扫描 PDF 的拖选区域创建一条没有文本引文的页内批注。
+  registry.register(COMMAND_IDS.annotationCreatePdfArea, async (...args: unknown[]) => {
+    const viewId = args[0] as string | undefined;
+    const selection = args[1] as AreaSelection | undefined;
+    if (!viewId || !selection) return;
+    const materialId = findViewMaterialId(viewId);
+    if (!materialId) return;
+    const document = useReaderRuntime.getState().getDocument(viewId);
+    if (!document || document.format !== 'pdf' || !document.getAreaAnchor) return;
+    const cfi = document.getAreaAnchor(selection);
+    if (!cfi) return;
+
+    const now = Date.now();
+    const annotation: Annotation = {
+      id: nextAnnotationId(),
+      materialId,
+      anchor: {
+        cfi,
+        quote: '',
+        before: '',
+        after: '',
+        documentVersion: materialFingerprint(materialId),
+        recoveryState: 'resolved',
+      },
+      style: 'highlight',
+      color: DEFAULT_HIGHLIGHT_COLOR,
+      note: '',
+      createdAt: now,
+      updatedAt: now,
       deletedAt: null,
     };
     const saved = await dependencies.annotationRepository.saveAnnotation(annotation);

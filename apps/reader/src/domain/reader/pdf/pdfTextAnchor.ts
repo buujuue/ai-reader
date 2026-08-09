@@ -32,6 +32,12 @@ export interface PdfTextAnchorLocation {
   rect: PdfNormalizedRect;
 }
 
+/** 页面内指针点,使用视口坐标。 */
+export interface PdfPointerPoint {
+  x: number;
+  y: number;
+}
+
 /** 锚点编码前缀(PDF 文本锚点与 EPUB CFI 区分)。 */
 const PDF_ANCHOR_PREFIX = 'pdf-text:';
 
@@ -100,4 +106,31 @@ export function normalizeRectFromRangeRect(
   const width = rangeRect.width / pageRect.width;
   const height = rangeRect.height / pageRect.height;
   return { x, y, width, height };
+}
+
+/**
+ * 把页面上的两次指针位置归一化为区域矩形。
+ * 端点会先限制在页面边界内,因此支持任意方向拖拽且不会产生越界锚点。
+ */
+export function normalizeRectFromPoints(
+  start: PdfPointerPoint,
+  end: PdfPointerPoint,
+  pageRect: { left: number; top: number; width: number; height: number },
+): PdfNormalizedRect | null {
+  if (pageRect.width <= 0 || pageRect.height <= 0) {
+    return null;
+  }
+  const clamp = (value: number) => Math.min(1, Math.max(0, value));
+  const startX = clamp((start.x - pageRect.left) / pageRect.width);
+  const startY = clamp((start.y - pageRect.top) / pageRect.height);
+  const endX = clamp((end.x - pageRect.left) / pageRect.width);
+  const endY = clamp((end.y - pageRect.top) / pageRect.height);
+  const x = Math.min(startX, endX);
+  const y = Math.min(startY, endY);
+  return {
+    x,
+    y,
+    width: Math.max(startX, endX) - x,
+    height: Math.max(startY, endY) - y,
+  };
 }

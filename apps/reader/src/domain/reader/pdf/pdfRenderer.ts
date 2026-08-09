@@ -1,4 +1,5 @@
 import type { PdfFitMode } from '../readingLocation';
+import type { AreaSelection } from '../bookDocument';
 import type { PdfDocumentProxy, PdfJsLib, PdfPage } from './pdfLibrary';
 import { PdfPageRenderer, type PdfPageRasterizer } from './pdfPageRenderer';
 import type { PdfHighlight } from './pdfTextAnchor';
@@ -17,6 +18,8 @@ export interface PdfRendererCallbacks {
   onScroll: (scrollTop: number, page: number) => void;
   /** 某一页已渲染完成(分页或滚动窗口内),供上层重绘该页高亮。 */
   onPageRendered?: (page: number) => void;
+  /** 扫描页区域拖选完成,供 PdfBookDocument 转发到工具栏。 */
+  onAreaSelection?: (selection: AreaSelection) => void;
 }
 
 export interface PdfRendererOptions {
@@ -307,7 +310,9 @@ export class PdfRenderer {
     if (existing) {
       return existing;
     }
-    const renderer = new PdfPageRenderer(pageNumber, this.rasterize);
+    const renderer = new PdfPageRenderer(pageNumber, this.rasterize, {
+      onAreaSelection: this.callbacks.onAreaSelection,
+    });
     this.pageRenderers.set(pageNumber, renderer);
     return renderer;
   }

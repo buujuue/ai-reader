@@ -163,6 +163,54 @@ describe('PdfBookDocument', () => {
     span.remove();
   });
 
+  it('文本选区所在页面不是当前页时,锚点仍记录选区所属页码', async () => {
+    const { book } = createDocument({ pageCount: 3 });
+    await book.open(makeContainer());
+    await book.goToLocation({ kind: 'pdf', page: 1, scrollTop: 0, zoom: 100, fit: 'width' });
+
+    const otherPage = book['renderer']?.getPageRenderer(2);
+    // 滚动模式下两个页面会同时挂载,模拟选区归属于第二页。
+    book.applyTypography({ ...book['typography'], flow: 'scrolled' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    book['renderer']?.setScrollTop(1200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const secondPage = book['renderer']?.getPageRenderer(2)?.element ?? otherPage?.element;
+    expect(secondPage).toBeTruthy();
+    const span = document.createElement('span');
+    span.textContent = '第二页文字';
+    secondPage?.appendChild(span);
+    vi.spyOn(secondPage!, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      top: 50,
+      width: 400,
+      height: 600,
+      right: 500,
+      bottom: 650,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        left: 180,
+        top: 140,
+        width: 80,
+        height: 20,
+        right: 260,
+        bottom: 160,
+        x: 180,
+        y: 140,
+        toJSON: () => ({}),
+      } as DOMRect),
+    });
+
+    expect(decodePdfTextAnchor(book.getCFI(1, range))?.page).toBe(2);
+    span.remove();
+  });
+
   it('addAnnotation/removeAnnotation 绘制并清除高亮覆盖层,onShowAnnotation 收到点击', async () => {
     const { book } = createDocument();
     await book.open(makeContainer());
@@ -191,6 +239,39 @@ describe('PdfBookDocument', () => {
 
     book.removeAnnotation(value);
     expect(pageRenderer?.element.querySelector('.pdf-highlight')).toBeNull();
+  });
+
+  it('滚动模式下按点击事件所属页面解析批注,不误用当前页', async () => {
+    const { book } = createDocument();
+    await book.open(makeContainer());
+    book.applyTypography({ ...book['typography'], flow: 'scrolled' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await book.goToLocation({ kind: 'pdf', page: 2, scrollTop: 0, zoom: 100, fit: 'width' });
+    book['renderer']?.setScrollTop(1200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const value = 'pdf-text:2:0.1:0.2:0.5:0.1';
+    book.addAnnotation({ value, color: '#ffd54f' });
+    const pageRenderer = book['renderer']?.getPageRenderer(2);
+    expect(pageRenderer).toBeTruthy();
+
+    vi.spyOn(book as unknown as { currentPageNumber: () => number }, 'currentPageNumber')
+      .mockReturnValue(1);
+    vi.spyOn(pageRenderer!.element, 'getBoundingClientRect').mockReturnValue({
+      left: 100, top: 50, width: 400, height: 600,
+      right: 500, bottom: 650, x: 100, y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const listener = vi.fn();
+    book.onShowAnnotation(listener);
+
+    book['handleContainerClick']?.({
+      target: pageRenderer!.element,
+      clientX: 100 + 0.15 * 400,
+      clientY: 50 + 0.25 * 600,
+    } as unknown as MouseEvent);
+
+    expect(listener).toHaveBeenCalledWith(value);
   });
 
   it('getContentDocs 返回容器所属文档,onContentCreate 立即补发', async () => {

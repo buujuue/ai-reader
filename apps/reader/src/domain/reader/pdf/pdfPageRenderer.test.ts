@@ -96,4 +96,57 @@ describe('PdfPageRenderer 画布内存预算', () => {
     // 文本层读取失败不阻塞页面图像渲染。
     expect(renderer.getBitmapArea()).toBeGreaterThan(0);
   });
+
+  it('扫描页拖选区域时回调页码和归一化矩形', async () => {
+    const page = makeFakePage({ width: 200, height: 300 });
+    const onAreaSelection = vi.fn();
+    const renderer = new PdfPageRenderer(2, () => makeFakeRenderTask(), { onAreaSelection });
+    vi.spyOn(renderer.element, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      top: 50,
+      width: 200,
+      height: 300,
+      right: 300,
+      bottom: 350,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    void renderer.render(page, page.getViewport({ scale: 1 }), 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    renderer.element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 140, clientY: 110 }));
+    renderer.element.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 240, clientY: 260 }));
+    renderer.element.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: 240, clientY: 260 }));
+
+    expect(onAreaSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 2,
+        rect: expect.objectContaining({ x: 0.2, y: 0.2 }),
+      }),
+    );
+    expect(onAreaSelection.mock.calls[0]?.[0].rect.width).toBeCloseTo(0.5, 6);
+    expect(onAreaSelection.mock.calls[0]?.[0].rect.height).toBeCloseTo(0.5, 6);
+  });
+
+  it('有文字层时拖拽不抢占文本选择手势', async () => {
+    const page = makeFakePage({ width: 200, height: 300 }, [
+      { str: '可选择文字', transform: [1, 0, 0, 1, 0, 0], width: 80, height: 12 },
+    ]);
+    const onAreaSelection = vi.fn();
+    const renderer = new PdfPageRenderer(1, () => makeFakeRenderTask(), { onAreaSelection });
+    vi.spyOn(renderer.element, 'getBoundingClientRect').mockReturnValue({
+      left: 100, top: 50, width: 200, height: 300,
+      right: 300, bottom: 350, x: 100, y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    void renderer.render(page, page.getViewport({ scale: 1 }), 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    renderer.element.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 140, clientY: 110 }));
+    renderer.element.dispatchEvent(new PointerEvent('pointerup', { button: 0, clientX: 240, clientY: 260 }));
+
+    expect(onAreaSelection).not.toHaveBeenCalled();
+  });
 });

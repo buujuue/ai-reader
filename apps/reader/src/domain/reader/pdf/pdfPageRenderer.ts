@@ -1,6 +1,11 @@
 import type { PdfPage, PdfRenderTask, PdfViewport } from './pdfLibrary';
 import { buildPdfTextLayer, type PositionedTextSpan } from './pdfTextLayer';
-import type { PdfHighlight } from './pdfTextAnchor';
+import {
+  normalizeRectFromPoints,
+  type PdfHighlight,
+  type PdfPointerPoint,
+} from './pdfTextAnchor';
+import type { AreaSelection } from '../bookDocument';
 
 /** 页面光栅化函数:把某一页以给定缩放绘制到 canvas。生产用 PDF.js page.render,
  *  测试注入伪实现以在无真实 canvas 2d 环境下验证协调逻辑。返回渲染任务(可取消)。 */
@@ -9,6 +14,10 @@ export type PdfPageRasterizer = (
   canvas: HTMLCanvasElement,
   scale: number,
 ) => PdfRenderTask;
+
+export interface PdfPageRendererCallbacks {
+  onAreaSelection?: ((selection: AreaSelection) => void) | undefined;
+}
 
 /** 设备像素比上限:过度采样会按 DPR 平方放大内存,这里夹到 2 以控制画布预算
  *  (参考 Readest `pdf.js` 的 MAX_RENDER_DPR)。 */
@@ -40,6 +49,8 @@ export class PdfPageRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly textLayer: HTMLElement;
   private readonly highlightLayer: HTMLElement;
+  private readonly areaSelectionLayer: HTMLElement;
+  private readonly scanNotice: HTMLElement;
 
   private page: PdfPage | null = null;
   private displayScale = 1;
@@ -47,12 +58,15 @@ export class PdfPageRenderer {
   private renderTask: PdfRenderTask | null = null;
   private generation = 0;
   private disposed = false;
+  private areaStart: PdfPointerPoint | null = null;
+  private areaPointerId: number | null = null;
   /** 本页待绘制的高亮矩形(归一化)。重渲染后据此重绘覆盖层。 */
   private pendingHighlights: PdfHighlight[] = [];
 
   constructor(
     pageNumber: number,
     private readonly rasterize: PdfPageRasterizer,
+    private readonly callbacks: PdfPageRendererCallbacks = {},
   ) {
     this.element = document.createElement('div');
     this.element.className = 'pdf-page';
@@ -79,6 +93,34 @@ export class PdfPageRenderer {
     this.highlightLayer.style.height = '100%';
     this.highlightLayer.style.pointerEvents = 'none';
     this.element.appendChild(this.highlightLayer);
+
+    this.areaSelectionLayer = document.createElement('div');
+    this.areaSelectionLayer.className = 'pdf-area-selection-layer';
+    this.areaSelectionLayer.style.position = 'absolute';
+    this.areaSelectionLayer.style.top = '0';
+    this.areaSelectionLayer.style.left = '0';
+    this.areaSelectionLayer.style.width = '100%';
+    this.areaSelectionLayer.style.height = '100%';
+    this.areaSelectionLayer.style.pointerEvents = 'none';
+    this.areaSelectionLayer.style.zIndex = '3';
+    this.element.appendChild(this.areaSelectionLayer);
+
+    this.scanNotice = document.createElement('div');
+    this.scanNotice.className = 'pdf-scan-notice';
+    this.scanNotice.setAttribute('role', 'status');
+    this.scanNotice.textContent = '此页没有可选择文本，可拖动框选区域创建批注';
+    this.scanNotice.style.position = 'absolute';
+    this.scanNotice.style.top = '8px';
+    this.scanNotice.style.right = '8px';
+    this.scanNotice.style.pointerEvents = 'none';
+    this.scanNotice.style.zIndex = '4';
+    this.element.dataset.textSelectable = 'pending';
+    this.element.appendChild(this.scanNotice);
+
+    this.element.addEventListener('pointerdown', this.handlePointerDown);
+    this.element.addEventListener('pointermove', this.handlePointerMove);
+    this.element.addEventListener('pointerup', this.handlePointerUp);
+    this.element.addEventListener('pointercancel', this.handlePointerCancel);
   }
 
   /**
@@ -156,6 +198,7 @@ export class PdfPageRenderer {
     this.textLayer.style.left = '0';
     this.textLayer.style.width = `${viewport.width}px`;
     this.textLayer.style.height = `${viewport.height}px`;
+    let hasTextLayer = false;
     try {
       const textContent = await page.streamTextContent();
       const items = textContent.items
@@ -170,6 +213,7 @@ export class PdfPageRenderer {
           if (item.hasEOL !== undefined) geometry.hasEOL = item.hasEOL;
           return geometry;
         });
+      hasTextLayer = items.length > 0;
       buildPdfTextLayer({
         pageElement: this.textLayer,
         items,
@@ -178,6 +222,17 @@ export class PdfPageRenderer {
       });
     } catch {
       // 文本层失败不影响页面图像显示。
+    }
+
+    if (this.disposed || this.generation !== generation) {
+      return;
+    }
+
+    this.element.dataset.textSelectable = String(hasTextLayer);
+    if (hasTextLayer) {
+      this.scanNotice.remove();
+    } else if (!this.scanNotice.isConnected) {
+      this.element.appendChild(this.scanNotice);
     }
 
     // 重渲染后按归一化矩形重绘批注/搜索高亮,保证缩放或适配变化后仍对齐正文。
@@ -189,6 +244,90 @@ export class PdfPageRenderer {
     this.pendingHighlights = highlights;
     this.redrawHighlights();
   }
+
+  private getPageRect(): DOMRect | { left: number; top: number; width: number; height: number } {
+    const rect = this.element.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width || parseFloat(this.element.style.width) || 0,
+      height: rect.height || parseFloat(this.element.style.height) || 0,
+    };
+  }
+
+  private clearAreaSelection(): void {
+    this.areaStart = null;
+    this.areaPointerId = null;
+    this.areaSelectionLayer.replaceChildren();
+    this.element.classList.remove('pdf-area-selecting');
+  }
+
+  private drawAreaPreview(start: PdfPointerPoint, end: PdfPointerPoint): void {
+    const pageRect = this.getPageRect();
+    const rect = normalizeRectFromPoints(start, end, pageRect);
+    if (!rect) return;
+    const preview = document.createElement('div');
+    preview.className = 'pdf-area-selection';
+    preview.style.position = 'absolute';
+    preview.style.left = `${(rect.x * pageRect.width).toFixed(2)}px`;
+    preview.style.top = `${(rect.y * pageRect.height).toFixed(2)}px`;
+    preview.style.width = `${(rect.width * pageRect.width).toFixed(2)}px`;
+    preview.style.height = `${(rect.height * pageRect.height).toFixed(2)}px`;
+    preview.style.backgroundColor = 'rgba(56, 189, 248, 0.22)';
+    preview.style.border = '1px solid rgba(125, 211, 252, 0.95)';
+    this.areaSelectionLayer.replaceChildren(preview);
+  }
+
+  private handlePointerDown = (event: PointerEvent): void => {
+    if (this.disposed || event.button !== 0 || this.element.dataset.textSelectable !== 'false') {
+      return;
+    }
+    const point = { x: event.clientX, y: event.clientY };
+    this.areaStart = point;
+    this.areaPointerId = event.pointerId;
+    this.element.classList.add('pdf-area-selecting');
+    try {
+      this.element.setPointerCapture(event.pointerId);
+    } catch {
+      // jsdom and older WebViews may not expose pointer capture.
+    }
+    event.preventDefault();
+    this.drawAreaPreview(point, point);
+  };
+
+  private handlePointerMove = (event: PointerEvent): void => {
+    if (!this.areaStart || this.areaPointerId !== event.pointerId) return;
+    event.preventDefault();
+    this.drawAreaPreview(this.areaStart, { x: event.clientX, y: event.clientY });
+  };
+
+  private handlePointerUp = (event: PointerEvent): void => {
+    if (!this.areaStart || this.areaPointerId !== event.pointerId) return;
+    const start = this.areaStart;
+    const end = { x: event.clientX, y: event.clientY };
+    const pageRect = this.getPageRect();
+    const rect = normalizeRectFromPoints(start, end, pageRect);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    this.clearAreaSelection();
+    if (!rect || width < 4 || height < 4) return;
+    this.callbacks.onAreaSelection?.({
+      page: Number(this.element.dataset.page ?? 0),
+      rect,
+      clientRect: {
+        left: pageRect.left + rect.x * pageRect.width,
+        top: pageRect.top + rect.y * pageRect.height,
+        width: rect.width * pageRect.width,
+        height: rect.height * pageRect.height,
+      },
+    });
+  };
+
+  private handlePointerCancel = (event: PointerEvent): void => {
+    if (this.areaPointerId === event.pointerId) {
+      this.clearAreaSelection();
+    }
+  };
 
   /** 读取本页当前的显示尺寸(供上层换算归一化矩形)。 */
   getDisplayDims(): { displayWidth: number; displayHeight: number } {
@@ -234,6 +373,11 @@ export class PdfPageRenderer {
   /** 释放本页:取消在途渲染、回收位图与文本层。 */
   release(): void {
     this.disposed = true;
+    this.clearAreaSelection();
+    this.element.removeEventListener('pointerdown', this.handlePointerDown);
+    this.element.removeEventListener('pointermove', this.handlePointerMove);
+    this.element.removeEventListener('pointerup', this.handlePointerUp);
+    this.element.removeEventListener('pointercancel', this.handlePointerCancel);
     if (this.renderTask) {
       this.renderTask.cancel();
       this.renderTask = null;

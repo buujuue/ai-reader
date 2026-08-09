@@ -5,6 +5,7 @@ import {
   encodePdfTextAnchor,
   isPdfTextAnchor,
   normalizeRectFromRangeRect,
+  normalizeRectFromPoints,
 } from './pdfTextAnchor';
 
 describe('encodePdfTextAnchor / decodePdfTextAnchor', () => {
@@ -38,6 +39,28 @@ describe('encodePdfTextAnchor / decodePdfTextAnchor', () => {
   it('isPdfTextAnchor 识别 PDF 文本锚点', () => {
     expect(isPdfTextAnchor(encodePdfTextAnchor({ page: 1, rect: { x: 0, y: 0, width: 0, height: 0 } }))).toBe(true);
     expect(isPdfTextAnchor('epubcfi(/6/1)')).toBe(false);
+  });
+});
+
+describe('normalizeRectFromPoints', () => {
+  it('支持反向拖拽并把区域限制在页面边界内', () => {
+    const rect = normalizeRectFromPoints(
+      { x: 180, y: 160 },
+      { x: 40, y: 20 },
+      { left: 100, top: 100, width: 200, height: 100 },
+    );
+
+    expect(rect).toEqual({ x: 0, y: 0, width: 0.4, height: 0.6 });
+  });
+
+  it('页面没有尺寸时返回 null', () => {
+    expect(
+      normalizeRectFromPoints(
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+        { left: 0, top: 0, width: 0, height: 100 },
+      ),
+    ).toBeNull();
   });
 });
 
