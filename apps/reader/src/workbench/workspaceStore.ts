@@ -187,11 +187,18 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   },
 
   setActiveView: (groupId, viewId) => {
-    set((state) => ({
-      editorGroups: state.editorGroups.map((group) =>
-        group.id === groupId ? { ...group, activeViewId: viewId } : group,
-      ),
-    }));
+    set((state) => {
+      const group = state.editorGroups.find((candidate) => candidate.id === groupId);
+      if (!group || !group.views.some((view) => view.id === viewId)) {
+        return state;
+      }
+      return {
+        activeEditorGroupId: groupId,
+        editorGroups: state.editorGroups.map((currentGroup) =>
+          currentGroup.id === groupId ? { ...currentGroup, activeViewId: viewId } : currentGroup,
+        ),
+      };
+    });
   },
 
   setViewSourceMode: (viewId, sourceMode) => {

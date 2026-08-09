@@ -23,7 +23,7 @@ export function EditorArea() {
 
   const handleActivateView = (viewId: string) => {
     if (group?.activeViewId === viewId) return;
-    useWorkspaceStore.getState().setActiveView(activeEditorGroupId, viewId);
+    void commands.execute(COMMAND_IDS.readerActivateView, viewId).catch(() => undefined);
   };
 
   const handleBack = () => {
@@ -36,7 +36,6 @@ export function EditorArea() {
 
   const handleOpenTypography = () => {
     if (!group?.activeViewId) return;
-    useWorkspaceStore.getState().setActiveView(activeEditorGroupId, group.activeViewId);
     useShellUiStore.getState().openTypographyEditor(group.activeViewId);
   };
 

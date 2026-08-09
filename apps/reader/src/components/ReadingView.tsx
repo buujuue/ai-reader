@@ -40,18 +40,13 @@ export function ReadingView({ viewId }: { viewId: string }) {
       g.views.some((view) => view.id === viewId),
     );
     const view = group?.views.find((view) => view.id === viewId);
-    const persister = mountViewDocument(
+    mountViewDocument(
       existing,
       viewId,
       container,
       view?.location ?? null,
       { importRepository, workspaceRepository, annotationRepository },
     );
-    return () => {
-      // 卸载时 flush 位置并释放渲染器,但保留文档对象,便于切回标签时重新挂载。
-      void persister.dispose();
-      existing.close();
-    };
   }, [importRepository, workspaceRepository, viewId, document]);
 
   // 统一阅读输入:键盘 + 内容文档(iframe 内)的滚轮/点击/触摸都收敛到同一组翻页命令。

@@ -3,7 +3,7 @@
 ## 功能
 
 - `commandRegistry.ts`：核心命令机制。
-  - `COMMAND_IDS`：稳定 Command ID 的单一来源（如 `workbench.togglePrimarySidebar`、`workbench.saveState`、`library.importOne`、`library.refresh`、`library.openBook`、`reader.nextPage`、`reader.prevPage`、`reader.closeView`、`reader.restoreView`、`reader.typography.apply`、`reader.typography.reset`、`reader.typography.setGlobal`）。
+  - `COMMAND_IDS`：稳定 Command ID 的单一来源（如 `workbench.togglePrimarySidebar`、`workbench.saveState`、`library.importOne`、`library.refresh`、`library.openBook`、`reader.activateView`、`reader.nextPage`、`reader.prevPage`、`reader.closeView`、`reader.restoreView`、`reader.typography.apply`、`reader.typography.reset`、`reader.typography.setGlobal`）。
   - `CommandRegistry`：注册/执行命令，支持 `register`、`has`、`execute`；重复注册抛 `DuplicateCommandError`，未注册执行抛 `UnknownCommandError`。
   - 所有按钮、菜单、键盘、触摸 Adapter 都通过稳定 Command ID 执行用户意图，避免同一意图多套逻辑。
 - `commandRegistry.test.ts`：Registry 行为测试。
@@ -24,3 +24,6 @@ commands/
 ## 依赖方向
 
 `commands/` 不依赖任何其它 `src/` 文件夹，是各聚合物（app、workbench）与 UI 组件共同依赖的底层基础。
+## 多标签运行时边界
+
+`reader.activateView` 是标签切换的唯一命令入口，负责让 Workspace Store 保留标签状态，并让 Reader Runtime 只保留活动标签的活对象。

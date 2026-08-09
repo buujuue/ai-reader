@@ -25,7 +25,7 @@ import type { ReadingMaterial } from '../domain/library/material';
 import { formatFromSourceFileName, type MaterialFormat } from '../domain/library/materialFormat';
 import type { ReadingLocation } from '../domain/reader/readingLocation';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
-import { cancelAllSearches, cancelSearch, clearSearch, runSearch } from './searchRunner';
+import { cancelAllSearches, clearSearch, runSearch } from './searchRunner';
 import { useSearchStore } from './searchStore';
 import { ThrottledPositionPersister } from './positionPersister';
 import { loadAnnotationsForView } from './annotationCommands';
@@ -56,6 +56,21 @@ const persisters = new Map<string, ThrottledPositionPersister>();
 
 /** 同一阅读视图尚在打开时,复用进行中的文档创建任务,避免快速重复点击触发并发读取。 */
 const pendingDocumentCreations = new Map<string, Promise<BookDocument | null>>();
+
+/** 用于让应用关闭时，尚未完成的惰性恢复不会重新把文档放回 Runtime。 */
+let runtimeGeneration = 0;
+
+/** 串行化标签激活/关闭/打开，避免异步 flush 与文档创建互相覆盖最新用户意图。 */
+let runtimeTransitionQueue: Promise<void> = Promise.resolve();
+
+function enqueueRuntimeTransition<T>(operation: () => Promise<T>): Promise<T> {
+  const next = runtimeTransitionQueue.then(operation);
+  runtimeTransitionQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
 
 /**
  * 每个阅读视图的"本次导航意图"。普通翻页/滚动用 `replace`;显式跳转用 `push`。
@@ -161,6 +176,107 @@ async function createDocumentForMaterial(
   }
 }
 
+function getViewGroupId(viewId: string): string | undefined {
+  return useWorkspaceStore
+    .getState()
+    .editorGroups.find((group) => group.views.some((view) => view.id === viewId))?.id;
+}
+
+function getOrCreatePendingDocument(
+  dependencies: ReaderCommandDependencies,
+  viewId: string,
+  material: ReadingMaterial,
+): Promise<BookDocument | null> {
+  const pending = pendingDocumentCreations.get(viewId);
+  if (pending) return pending;
+
+  const creation = createDocumentForMaterial(dependencies, material);
+  pendingDocumentCreations.set(viewId, creation);
+  void creation.then(
+    () => {
+      if (pendingDocumentCreations.get(viewId) === creation) {
+        pendingDocumentCreations.delete(viewId);
+      }
+    },
+    () => {
+      if (pendingDocumentCreations.get(viewId) === creation) {
+        pendingDocumentCreations.delete(viewId);
+      }
+    },
+  );
+  return creation;
+}
+
+/** 释放失活标签的活对象，但保留 Workspace Store 中的标签、位置和历史。 */
+async function disposeViewRuntime(viewId: string): Promise<void> {
+  const persister = persisters.get(viewId);
+  if (persister) {
+    await persister.dispose();
+    persisters.delete(viewId);
+  }
+  navigationIntents.delete(viewId);
+  clearSearch(viewId);
+  useSearchStore.getState().close(viewId);
+  useReaderRuntime.getState().removeDocument(viewId);
+}
+
+async function ensureActiveViewDocument(
+  dependencies: ReaderCommandDependencies,
+  viewId: string,
+  material?: ReadingMaterial,
+): Promise<BookDocument | null> {
+  const existing = useReaderRuntime.getState().getDocument(viewId);
+  if (existing) return existing;
+
+  const view = findView(viewId);
+  if (!view || getActiveViewId() !== viewId) return null;
+
+  const targetMaterial =
+    material ??
+    (await dependencies.importRepository.listMaterials()).find(
+      (candidate) => candidate.id === view.materialId,
+    );
+  if (!targetMaterial) return null;
+
+  const generation = runtimeGeneration;
+  const document = await getOrCreatePendingDocument(dependencies, viewId, targetMaterial);
+  if (!document) return null;
+
+  // A tab may have been switched away while the file was being inspected.
+  // Do not leave a renderer behind for an inactive or closed view.
+  if (generation !== runtimeGeneration || getActiveViewId() !== viewId || !findView(viewId)) {
+    document.close();
+    return null;
+  }
+
+  const current = useReaderRuntime.getState().getDocument(viewId);
+  if (current) {
+    if (current !== document) document.close();
+    return current;
+  }
+  useReaderRuntime.getState().setDocument(viewId, document);
+  return document;
+}
+
+async function activateViewRuntime(
+  dependencies: ReaderCommandDependencies,
+  viewId: string,
+  material?: ReadingMaterial,
+  previousViewIdOverride?: string | null,
+): Promise<BookDocument | null> {
+  const view = findView(viewId);
+  const groupId = getViewGroupId(viewId);
+  if (!view || !groupId) return null;
+
+  const previousViewId =
+    previousViewIdOverride === undefined ? getActiveViewId() : previousViewIdOverride;
+  if (previousViewId && previousViewId !== viewId) {
+    await disposeViewRuntime(previousViewId);
+  }
+  useWorkspaceStore.getState().setActiveView(groupId, viewId);
+  return ensureActiveViewDocument(dependencies, viewId, material);
+}
+
 /** 材料格式的展示用途(供 PDF 视口命令判断当前材料是否支持 PDF 视口)。 */
 function materialFormatOf(material: ReadingMaterial): MaterialFormat {
   return formatFromSourceFileName(material.sourceFileName);
@@ -168,7 +284,7 @@ function materialFormatOf(material: ReadingMaterial): MaterialFormat {
 
 /**
  * 交给 ReadingView 组件在自身容器内挂载 BookDocument,并接线位置持久化与导航历史。
- * 返回持久化器,组件卸载时应 dispose。
+ * 返回持久化器；其生命周期由 reader.activateView、reader.closeView 与应用关闭流程统一管理。
  */
 export function mountViewDocument(
   document: BookDocument,
@@ -251,62 +367,59 @@ export function registerReaderCommands(
   registry: CommandRegistry,
   dependencies: ReaderCommandDependencies,
 ): void {
-  registry.register(COMMAND_IDS.libraryOpenBook, async (...args: unknown[]) => {
+  registry.register(COMMAND_IDS.libraryOpenBook, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const material = args[0] as ReadingMaterial | undefined;
     const location = (args[1] as ReadingLocation | null | undefined) ?? null;
     if (!material) {
       throw new Error('打开书籍命令缺少阅读材料参数');
     }
     const existingView = findViewByMaterialId(material.id);
+    const previousViewId = getActiveViewId();
     const viewId = useWorkspaceStore.getState().openView(material.id);
 
-    // 书库点击已有材料只负责跳转到既有标签,不重复读取文件或构造文档。
-    const existingDocument = useReaderRuntime.getState().getDocument(viewId);
-    if (existingDocument) {
-      if (location) {
-        useWorkspaceStore.getState().setViewLocation(viewId, location);
-      }
-      await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-      return;
-    }
-
     try {
-      let documentPromise = pendingDocumentCreations.get(viewId);
-      if (!documentPromise) {
-        documentPromise = createDocumentForMaterial(dependencies, material);
-        pendingDocumentCreations.set(viewId, documentPromise);
-        documentPromise.then(
-          () => {
-            if (pendingDocumentCreations.get(viewId) === documentPromise) {
-              pendingDocumentCreations.delete(viewId);
-            }
-          },
-          () => {
-            if (pendingDocumentCreations.get(viewId) === documentPromise) {
-              pendingDocumentCreations.delete(viewId);
-            }
-          },
-        );
-      }
-      const document = await documentPromise;
+      const document = await activateViewRuntime(dependencies, viewId, material, previousViewId);
       if (!document) {
+        if (getActiveViewId() !== viewId) {
+          await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+          return;
+        }
         if (!existingView) {
           useWorkspaceStore.getState().closeView(viewId);
+          const nextViewId = getActiveViewId();
+          if (nextViewId) {
+            await ensureActiveViewDocument(dependencies, nextViewId);
+          }
         }
         throw new Error(`无法打开阅读材料:${material.title}`);
       }
-      useReaderRuntime.getState().setDocument(viewId, document);
       if (location) {
         useWorkspaceStore.getState().setViewLocation(viewId, location);
       }
       await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
     } catch (error) {
+      if (getActiveViewId() !== viewId) {
+        return;
+      }
       if (!existingView) {
         useWorkspaceStore.getState().closeView(viewId);
+        const nextViewId = getActiveViewId();
+        if (nextViewId) {
+          await ensureActiveViewDocument(dependencies, nextViewId);
+        }
       }
       throw error;
     }
-  });
+  }));
+
+  registry.register(COMMAND_IDS.readerActivateView, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
+    const viewId = args[0] as string | undefined;
+    const material = args[1] as ReadingMaterial | undefined;
+    if (!viewId) return;
+
+    await activateViewRuntime(dependencies, viewId, material);
+    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+  }));
 
   registry.register(COMMAND_IDS.readerNextPage, async (...args: unknown[]) => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
@@ -430,7 +543,7 @@ export function registerReaderCommands(
     await jumpToCfi(viewId, dependencies, cfi);
   });
 
-  registry.register(COMMAND_IDS.readerCloseView, async (...args: unknown[]) => {
+  registry.register(COMMAND_IDS.readerCloseView, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewIdParam = args[0] as string | undefined;
     const targetId = viewIdParam ?? getActiveViewId();
     if (!targetId) return;
@@ -446,19 +559,14 @@ export function registerReaderCommands(
       }
     }
 
-    const persister = persisters.get(targetId);
-    if (persister) {
-      await persister.dispose();
-      persisters.delete(targetId);
-    }
-    navigationIntents.delete(targetId);
-    // 销毁视图时取消并清理其搜索任务与高亮,避免异步任务写回已销毁视图。
-    clearSearch(targetId);
-    useSearchStore.getState().close(targetId);
-    useReaderRuntime.getState().removeDocument(targetId);
+    await disposeViewRuntime(targetId);
     useWorkspaceStore.getState().closeView(targetId);
+    const nextViewId = getActiveViewId();
+    if (nextViewId) {
+      await ensureActiveViewDocument(dependencies, nextViewId);
+    }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-  });
+  }));
 
   registry.register(COMMAND_IDS.readerApplyTypography, async (...args: unknown[]) => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
@@ -552,12 +660,11 @@ export function registerReaderCommands(
     const location = (args[2] as ReadingLocation | null | undefined) ?? null;
     if (!viewId || !material) return;
 
-    const document = await createDocumentForMaterial(dependencies, material);
-    if (!document) return;
-    useReaderRuntime.getState().setDocument(viewId, document);
+    if (getActiveViewId() !== viewId) return;
     if (location) {
       useWorkspaceStore.getState().setViewLocation(viewId, location);
     }
+    await ensureActiveViewDocument(dependencies, viewId, material);
   });
 }
 
@@ -638,6 +745,8 @@ function clampTypographyPatch(
 
 /** 应用关闭时把当前视图位置 flush、取消搜索并关闭渲染器。 */
 export async function flushAndCloseAllReaderViews(): Promise<void> {
+  runtimeGeneration += 1;
+  pendingDocumentCreations.clear();
   for (const persister of persisters.values()) {
     await persister.dispose();
   }

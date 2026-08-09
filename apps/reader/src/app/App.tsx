@@ -111,16 +111,25 @@ export function App() {
   // 重启恢复:为持久化的标签重建 BookDocument 并恢复其阅读位置。
   async function restoreViews() {
     const materials = await importRepository.listMaterials();
-    const views = useWorkspaceStore.getState().editorGroups.flatMap((group) => group.views);
-    for (const view of views) {
-      const material = materials.find((material) => material.id === view.materialId) ?? null;
-      if (!material) continue;
-      await commands
-        .execute(COMMAND_IDS.readerRestoreView, view.id, material, view.location)
-        .catch((error: unknown) => {
-          console.error('恢复阅读视图失败', error);
-        });
-    }
+    const state = useWorkspaceStore.getState();
+    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
+    if (!group) return;
+
+    const activeView = group.views.find((view) => view.id === group.activeViewId);
+    const fallbackView =
+      (activeView && materials.some((material) => material.id === activeView.materialId)
+        ? activeView
+        : null) ??
+      group.views.find((view) => materials.some((material) => material.id === view.materialId));
+    if (!fallbackView) return;
+
+    const material = materials.find((candidate) => candidate.id === fallbackView.materialId);
+    if (!material) return;
+    await commands
+      .execute(COMMAND_IDS.readerActivateView, fallbackView.id, material)
+      .catch((error: unknown) => {
+        console.error('恢复阅读视图失败', error);
+      });
   }
 
   return (

@@ -4,6 +4,7 @@ import { COMMAND_IDS, CommandRegistry, type CommandId } from '../commands/comman
 import { createInMemoryImportRepository, addInMemorySource } from '../domain/library/inMemoryImportRepository';
 import { buildEpub } from '../domain/library/epub/zipWriter';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
+import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
@@ -78,6 +79,25 @@ describe('Reader 命令', () => {
     return importRepository.commitImport(staged, metadata);
   }
 
+  async function setupWithEpubMaterials() {
+    const sources = new Map<string, Uint8Array>();
+    const names = ['demo-a.epub', 'demo-b.epub'];
+    for (const [index, name] of names.entries()) {
+      addInMemorySource(sources, name, buildEpub({ title: `Demo Book ${index + 1}` }));
+    }
+    importRepository = createInMemoryImportRepository(sources);
+    const materials = [];
+    for (const name of names) {
+      const staged = await importRepository.stageImport(name);
+      const bytes = await importRepository.readStagedFile(staged);
+      const { metadata } = await import('../domain/library/epub/epubInspector').then(({ inspectEpub }) =>
+        inspectEpub(bytes),
+      );
+      materials.push(await importRepository.commitImport(staged, metadata));
+    }
+    return materials;
+  }
+
   beforeEach(() => {
     registry = new CommandRegistry();
     workspaceRepository = createInMemoryWorkspaceRepository();
@@ -124,6 +144,133 @@ describe('Reader 命令', () => {
     expect(group.activeViewId).toBe(firstViewId);
     expect(useReaderRuntime.getState().getDocument(firstViewId)).toBe(firstDocument);
     expect(readManagedFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches tabs with one active runtime and restores the saved location', async () => {
+    const [firstMaterial, secondMaterial] = await setupWithEpubMaterials();
+    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = {
+          ...createFakeViewHost(),
+          close: vi.fn(),
+          goToLocation: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        };
+        hosts.push(host);
+        return host;
+      },
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const savedLocation = { kind: 'epub' as const, cfi: 'epubcfi(/6/4)' };
+    mountViewDocument(
+      useReaderRuntime.getState().getDocument(firstViewId)!,
+      firstViewId,
+      document.createElement('div'),
+      null,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect(hosts).toHaveLength(1));
+    useWorkspaceStore.getState().setViewLocation(firstViewId, savedLocation);
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    mountViewDocument(
+      useReaderRuntime.getState().getDocument(secondViewId)!,
+      secondViewId,
+      document.createElement('div'),
+      null,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect(hosts).toHaveLength(2));
+    expect(useWorkspaceStore.getState().editorGroups[0]!.activeViewId).toBe(secondViewId);
+    expect(useReaderRuntime.getState().documents.size).toBe(1);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(false);
+    expect(hosts[0]!.close).toHaveBeenCalledOnce();
+
+    await registry.execute(COMMAND_IDS.readerActivateView, firstViewId);
+
+    expect(useWorkspaceStore.getState().editorGroups[0]!.activeViewId).toBe(firstViewId);
+    expect(useReaderRuntime.getState().documents.size).toBe(1);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(savedLocation);
+    expect(hosts[1]!.close).toHaveBeenCalledOnce();
+
+    const activeDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(activeDocument, firstViewId, document.createElement('div'), savedLocation, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(hosts[2]!.goToLocation).toHaveBeenCalledWith(savedLocation.cfi));
+  });
+
+  it('closes the active tab and rebuilds the next tab runtime', async () => {
+    const [firstMaterial, secondMaterial] = await setupWithEpubMaterials();
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+
+    await registry.execute(COMMAND_IDS.readerCloseView, secondViewId);
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(group.views.map((view) => view.id)).toEqual([firstViewId]);
+    expect(group.activeViewId).toBe(firstViewId);
+    expect(useReaderRuntime.getState().documents.size).toBe(1);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
+  });
+
+  it('restores only the active tab runtime', async () => {
+    const materials = await setupWithEpubMaterials();
+    const firstMaterial = materials[0]!;
+    const secondMaterial = materials[1]!;
+    const firstViewId = crypto.randomUUID();
+    const secondViewId = crypto.randomUUID();
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: firstViewId,
+              materialId: firstMaterial.id,
+              location: { kind: 'epub', cfi: 'epubcfi(/6/1)' },
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+            {
+              id: secondViewId,
+              materialId: secondMaterial.id,
+              location: { kind: 'epub', cfi: 'epubcfi(/6/2)' },
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: secondViewId,
+        },
+      ],
+    });
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await registry.execute(COMMAND_IDS.readerRestoreView, secondViewId, secondMaterial);
+
+    expect(useReaderRuntime.getState().documents.size).toBe(1);
+    expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(true);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(false);
   });
 
   it('翻页命令作用于活动视图的 BookDocument', async () => {

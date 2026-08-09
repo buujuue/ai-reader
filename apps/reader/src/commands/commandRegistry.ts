@@ -14,6 +14,7 @@ export const COMMAND_IDS = {
   libraryPurge: 'library.purge',
   readerNextPage: 'reader.nextPage',
   readerPrevPage: 'reader.prevPage',
+  readerActivateView: 'reader.activateView',
   readerCloseView: 'reader.closeView',
   readerRestoreView: 'reader.restoreView',
   readerGoToHref: 'reader.goToHref',

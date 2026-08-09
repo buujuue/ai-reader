@@ -10,6 +10,7 @@ import {
 } from '../domain/workspace/workspaceState';
 import { addInMemorySource } from '../domain/library/inMemoryImportRepository';
 import { createInMemoryImportRepository } from '../domain/library/inMemoryImportRepository';
+import { buildEpub } from '../domain/library/epub/zipWriter';
 import { createInMemoryFilePicker } from './filePicker';
 import {
   makeFakeDocument,
@@ -439,6 +440,76 @@ describe('打开 EPUB 并重启续读', () => {
       const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
       expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/2)' });
     });
+  });
+
+  it('重启多标签时只恢复活动标签的渲染器', async () => {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, 'first.epub', buildEpub({ title: '第一本书' }));
+    addInMemorySource(sources, 'second.epub', buildEpub({ title: '第二本书' }));
+    const importRepository = createInMemoryImportRepository(sources);
+    const materials = [];
+    for (const name of ['first.epub', 'second.epub']) {
+      const staged = await importRepository.stageImport(name);
+      const bytes = await importRepository.readStagedFile(staged);
+      const { metadata } = await import('../domain/library/epub/epubInspector').then(({ inspectEpub }) =>
+        inspectEpub(bytes),
+      );
+      materials.push(await importRepository.commitImport(staged, metadata));
+    }
+
+    const firstMaterial = materials[0]!;
+    const secondMaterial = materials[1]!;
+    const firstViewId = crypto.randomUUID();
+    const secondViewId = crypto.randomUUID();
+    const missingViewId = crypto.randomUUID();
+    await repository.saveState({
+      ...DEFAULT_WORKSPACE_STATE,
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: firstViewId,
+              materialId: firstMaterial.id,
+              location: { kind: 'epub', cfi: 'epubcfi(/6/1)' },
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+            {
+              id: secondViewId,
+              materialId: secondMaterial.id,
+              location: { kind: 'epub', cfi: 'epubcfi(/6/2)' },
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+            {
+              id: missingViewId,
+              materialId: 'missing-material',
+              location: { kind: 'epub', cfi: 'epubcfi(/6/3)' },
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: missingViewId,
+        },
+      ],
+    });
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository,
+      filePicker: createInMemoryFilePicker([]),
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    renderApp(services);
+
+    await waitFor(() => {
+      expect(useReaderRuntime.getState().documents.size).toBe(1);
+      expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
+    });
+    expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(false);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.activeViewId).toBe(firstViewId);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(3);
   });
 
   it('重启后导航历史随工作区状态恢复', async () => {
