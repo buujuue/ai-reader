@@ -103,6 +103,10 @@ export class EpubBookDocument implements BookDocument {
     return this.host?.getCFI(index, range) ?? '';
   }
 
+  async canResolveAnnotation(value: string): Promise<boolean> {
+    return (await this.host?.canResolveAnnotation?.(value)) ?? false;
+  }
+
   getCurrentIndex(): number | null {
     return this.host?.getCurrentIndex() ?? null;
   }

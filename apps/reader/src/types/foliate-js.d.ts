@@ -11,6 +11,10 @@ declare module 'foliate-js/view.js' {
     next(): Promise<void>;
     prev(): Promise<void>;
     goTo(target: unknown): Promise<unknown>;
+    resolveNavigation?(target: unknown): {
+      index?: number;
+      anchor?: (doc: Document) => unknown;
+    } | undefined;
     search(opts: unknown): AsyncGenerator<unknown, void, unknown>;
     clearSearch(): void;
     close(): void;

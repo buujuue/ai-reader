@@ -4,6 +4,7 @@ import { CommandRegistry } from '../commands/commandRegistry';
 import type { Annotation } from '../domain/annotation/annotation';
 import { createInMemoryAnnotationRepository } from '../domain/annotation/inMemoryAnnotationRepository';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
+import type { SearchEvent } from '../domain/reader/search';
 import {
   registerAnnotationCommands,
   loadAnnotationsForView,
@@ -41,6 +42,9 @@ function createFakeDocument() {
     getCurrentIndex: vi.fn(() => 0),
     addAnnotation: vi.fn(),
     removeAnnotation: vi.fn(),
+    canResolveAnnotation: vi.fn().mockResolvedValue(false),
+    search: vi.fn(() => (async function* (): AsyncGenerator<SearchEvent, void, void> {})()),
+    clearSearch: vi.fn(),
     onShowAnnotation: vi.fn(() => () => undefined),
   };
 }
@@ -143,5 +147,127 @@ describe('Annotation 命令', () => {
       value: 'epubcfi(/6/4)!/4/2/2/1:0',
       color: '#ffd54f',
     });
+  });
+
+  it('材料版本变化后唯一命中会迁移锚点并绘制新 CFI', async () => {
+    const { repository } = setup();
+    const annotation = makeAnnotation({
+      anchor: {
+        ...makeAnnotation().anchor,
+        documentVersion: 'old-fingerprint',
+      },
+    });
+    await repository.saveAnnotation(annotation);
+    useWorkspaceStore.setState({
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [{ id: 'view-1', materialId: 'material-1', location: null, sourceMode: false, history: { positions: [], index: -1 } }],
+          activeViewId: 'view-1',
+        },
+      ],
+    });
+    useLibraryStore.setState({
+      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
+    });
+    const document = createFakeDocument();
+    document.search.mockReturnValue(
+      (async function* () {
+        yield { kind: 'match', match: { cfi: 'epubcfi(/6/2)!/4/4:0', excerpt: { pre: '新的前文', match: '被选中的文字', post: '后文内容' } } } as const;
+      })(),
+    );
+    useReaderRuntime.setState({ documents: new Map([['view-1', document as never]]) });
+
+    await loadAnnotationsForView({ annotationRepository: repository }, 'view-1');
+
+    const [saved] = await repository.listByMaterial('material-1');
+    expect(saved?.anchor).toEqual({
+      ...annotation.anchor,
+      cfi: 'epubcfi(/6/2)!/4/4:0',
+      documentVersion: 'new-fingerprint',
+      recoveryState: 'resolved',
+    });
+    expect(document.clearSearch).toHaveBeenCalledOnce();
+    expect(document.addAnnotation).toHaveBeenCalledWith({
+      value: 'epubcfi(/6/2)!/4/4:0',
+      color: '#ffd54f',
+    });
+  });
+
+  it('材料版本变化但原 CFI 仍可解析时只更新版本而不启动搜索', async () => {
+    const { repository } = setup();
+    const annotation = makeAnnotation({
+      anchor: {
+        ...makeAnnotation().anchor,
+        documentVersion: 'old-fingerprint',
+      },
+    });
+    await repository.saveAnnotation(annotation);
+    useWorkspaceStore.setState({
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [{ id: 'view-1', materialId: 'material-1', location: null, sourceMode: false, history: { positions: [], index: -1 } }],
+          activeViewId: 'view-1',
+        },
+      ],
+    });
+    useLibraryStore.setState({
+      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
+    });
+    const document = createFakeDocument();
+    document.canResolveAnnotation.mockResolvedValue(true);
+    useReaderRuntime.setState({ documents: new Map([['view-1', document as never]]) });
+
+    await loadAnnotationsForView({ annotationRepository: repository }, 'view-1');
+
+    const [saved] = await repository.listByMaterial('material-1');
+    expect(saved?.anchor).toEqual({
+      ...annotation.anchor,
+      documentVersion: 'new-fingerprint',
+      recoveryState: 'resolved',
+    });
+    expect(document.search).not.toHaveBeenCalled();
+    expect(document.addAnnotation).toHaveBeenCalledWith({
+      value: annotation.anchor.cfi,
+      color: '#ffd54f',
+    });
+  });
+
+  it('材料版本变化后命中不唯一会保留失联批注且不绘制旧 CFI', async () => {
+    const { repository } = setup();
+    const annotation = makeAnnotation({
+      anchor: {
+        ...makeAnnotation().anchor,
+        documentVersion: 'old-fingerprint',
+      },
+    });
+    await repository.saveAnnotation(annotation);
+    useWorkspaceStore.setState({
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [{ id: 'view-1', materialId: 'material-1', location: null, sourceMode: false, history: { positions: [], index: -1 } }],
+          activeViewId: 'view-1',
+        },
+      ],
+    });
+    useLibraryStore.setState({
+      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
+    });
+    const document = createFakeDocument();
+    document.search.mockReturnValue(
+      (async function* () {
+        yield { kind: 'match', match: { cfi: 'epubcfi(/6/2)!/4/2:0', excerpt: { pre: '', match: '被选中的文字', post: '' } } } as const;
+        yield { kind: 'match', match: { cfi: 'epubcfi(/6/3)!/4/2:0', excerpt: { pre: '', match: '被选中的文字', post: '' } } } as const;
+      })(),
+    );
+    useReaderRuntime.setState({ documents: new Map([['view-1', document as never]]) });
+
+    await loadAnnotationsForView({ annotationRepository: repository }, 'view-1');
+
+    const [saved] = await repository.listByMaterial('material-1');
+    expect(saved?.anchor).toEqual({ ...annotation.anchor, recoveryState: 'orphaned' });
+    expect(document.addAnnotation).not.toHaveBeenCalled();
   });
 });

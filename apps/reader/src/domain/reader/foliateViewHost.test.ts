@@ -12,6 +12,7 @@ interface FakeViewElement {
   clearSearch: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   getCFI: ReturnType<typeof vi.fn>;
+  resolveNavigation?: ReturnType<typeof vi.fn>;
   addAnnotation: ReturnType<typeof vi.fn>;
   lastLocation?: { cfi?: string };
   book?: { transformTarget?: EventTarget; toc?: Array<{ label?: string; href?: string; subitems?: unknown }> };
@@ -217,6 +218,19 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
 
     expect(element.getCFI).toHaveBeenCalledWith(0, expect.any(Range));
     expect(result).toBe('epubcfi(/6/1)!/4/2/2/1:0');
+  });
+
+  it('原 CFI 在当前已加载章节可解析时返回 true,不改变阅读位置', async () => {
+    const element = createFakeElement();
+    const anchor = vi.fn().mockReturnValue({});
+    element.resolveNavigation = vi.fn().mockReturnValue({ index: 2, anchor });
+    element.renderer = { getContents: vi.fn().mockReturnValue([{ index: 2, doc: {} }]) };
+    const host = createHost(element);
+    await host.open({});
+
+    await expect(host.canResolveAnnotation('epubcfi(/6/2)!/4/2:0')).resolves.toBe(true);
+    expect(element.goTo).not.toHaveBeenCalled();
+    expect(anchor).toHaveBeenCalledWith({});
   });
 
   it('getCurrentIndex 从渲染器读取当前章节序号', async () => {

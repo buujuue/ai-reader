@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildTextAnchor, extractContext, findUniqueQuoteMatch } from './textAnchor';
+import {
+  buildTextAnchor,
+  extractContext,
+  findUniqueQuoteMatch,
+  recoverTextAnchor,
+} from './textAnchor';
 
 function makeRange(container: HTMLElement, quote: string): Range {
   // 在文本节点中定位引文,构造一个恰好框住引文的 Range。
@@ -78,5 +83,65 @@ describe('文本锚点构建', () => {
     const text = '甲前文 引文 甲后文，乙前文 引文 乙后文';
     // 引文出现两次,上下文不同。
     expect(findUniqueQuoteMatch(text, { quote: '引文', before: '甲前文', after: '甲后文' })).toBe(false);
+  });
+
+  it('唯一搜索命中且上下文吻合时迁移到新文档版本', () => {
+    const anchor = {
+      cfi: 'epubcfi(/6/1)!/4/2:0',
+      quote: '引文',
+      before: '前文',
+      after: '后文',
+      documentVersion: 'old-version',
+      recoveryState: 'resolved' as const,
+    };
+
+    expect(
+      recoverTextAnchor(anchor, 'new-version', [
+        {
+          cfi: 'epubcfi(/6/2)!/4/4:0',
+          excerpt: { pre: '新的前文', match: '引文', post: '后文内容' },
+        },
+      ]),
+    ).toEqual({
+      ...anchor,
+      cfi: 'epubcfi(/6/2)!/4/4:0',
+      documentVersion: 'new-version',
+      recoveryState: 'resolved',
+    });
+  });
+
+  it('搜索命中不唯一时保留旧锚点并标记为失联', () => {
+    const anchor = {
+      cfi: 'epubcfi(/6/1)!/4/2:0',
+      quote: '重复引文',
+      before: '',
+      after: '',
+      documentVersion: 'old-version',
+      recoveryState: 'resolved' as const,
+    };
+
+    expect(
+      recoverTextAnchor(anchor, 'new-version', [
+        { cfi: 'epubcfi(/6/2)!/4/2:0', excerpt: { pre: '', match: '重复引文', post: '' } },
+        { cfi: 'epubcfi(/6/3)!/4/2:0', excerpt: { pre: '', match: '重复引文', post: '' } },
+      ]),
+    ).toEqual({ ...anchor, recoveryState: 'orphaned' });
+  });
+
+  it('搜索结果缺少锚点上下文时标记为失联', () => {
+    const anchor = {
+      cfi: 'epubcfi(/6/1)!/4/2:0',
+      quote: '引文',
+      before: '前文',
+      after: '后文',
+      documentVersion: 'old-version',
+      recoveryState: 'resolved' as const,
+    };
+
+    expect(
+      recoverTextAnchor(anchor, 'new-version', [
+        { cfi: 'epubcfi(/6/2)!/4/4:0', excerpt: { pre: '', match: '引文', post: '' } },
+      ]),
+    ).toEqual({ ...anchor, recoveryState: 'orphaned' });
   });
 });

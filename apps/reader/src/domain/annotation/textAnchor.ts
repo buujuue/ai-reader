@@ -105,3 +105,72 @@ export function findUniqueQuoteMatch(
   }
   return true;
 }
+
+/** 阅读文档搜索命中中与文本锚点恢复相关的最小数据。 */
+export interface TextAnchorSearchMatch {
+  cfi: string;
+  excerpt: {
+    pre: string;
+    match: string;
+    post: string;
+  };
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ');
+}
+
+function contextMatches(anchor: Pick<TextAnchor, 'before' | 'after'>, match: TextAnchorSearchMatch): boolean {
+  const expectedBefore = normalizeWhitespace(anchor.before).trim();
+  const actualBefore = normalizeWhitespace(match.excerpt.pre.replace(/^…/, '')).trim();
+  if (expectedBefore && !actualBefore) {
+    return false;
+  }
+  if (expectedBefore && actualBefore) {
+    const comparableLength = Math.min(expectedBefore.length, actualBefore.length);
+    if (!actualBefore.endsWith(expectedBefore.slice(-comparableLength))) {
+      return false;
+    }
+  }
+
+  const expectedAfter = normalizeWhitespace(anchor.after).trim();
+  const actualAfter = normalizeWhitespace(match.excerpt.post.replace(/…$/, '')).trim();
+  if (expectedAfter && !actualAfter) {
+    return false;
+  }
+  if (expectedAfter && actualAfter) {
+    const comparableLength = Math.min(expectedAfter.length, actualAfter.length);
+    if (!actualAfter.startsWith(expectedAfter.slice(0, comparableLength))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 根据阅读文档搜索结果迁移文本锚点。
+ *
+ * 只有引文恰好对应一个搜索命中且前后文吻合时才更新 CFI 与文档版本;
+ * 否则保留旧 CFI/版本并标记为失联,让上层继续保留批注而不冒险错配。
+ */
+export function recoverTextAnchor(
+  anchor: TextAnchor,
+  documentVersion: string,
+  matches: readonly TextAnchorSearchMatch[],
+): TextAnchor {
+  const normalizedQuote = normalizeWhitespace(anchor.quote).trim();
+  const quoteMatches = matches.filter(
+    (match) => normalizeWhitespace(match.excerpt.match).trim() === normalizedQuote,
+  );
+
+  if (quoteMatches.length !== 1 || !contextMatches(anchor, quoteMatches[0]!)) {
+    return { ...anchor, recoveryState: 'orphaned' };
+  }
+
+  return {
+    ...anchor,
+    cfi: quoteMatches[0]!.cfi,
+    documentVersion,
+    recoveryState: 'resolved',
+  };
+}

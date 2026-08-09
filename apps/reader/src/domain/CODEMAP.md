@@ -2,12 +2,13 @@
 
 ## 功能
 
-领域层定义可序列化的领域模型与 typed Repository 接口，是前端与 Rust 平台核心之间的契约边界。当前含 `workspace/`（工作区）、`library/`（书库与导入）与 `reader/`（阅读文档）三个子域。
+领域层定义可序列化的领域模型与 typed Repository 接口，是前端与 Rust 平台核心之间的契约边界。当前含 `workspace/`（工作区）、`library/`（书库与导入）、`annotation/`（批注）与 `reader/`（阅读文档）四个子域。
 
 ## 子目录
 
 - `workspace/`：工作区状态模型（Editor Group、阅读视图、阅读位置）、Repository 接口及内存/Tauri 两个 Adapter。详见 `workspace/CODEMAP.md`。
 - `library/`：阅读材料领域模型、导入 Repository 接口、内建最小 `EpubInspector`（BookDocument 雏形）及内存/Tauri 两个 Adapter。详见 `library/CODEMAP.md`。
+- `annotation/`：材料级批注、版本化文本锚点与 Annotation Repository；负责锚点恢复规则，不依赖具体阅读渲染器。详见 `annotation/CODEMAP.md`。
 - `reader/`：`BookDocument` 统一文档接口、`ReadingLocation`、`EpubBookDocument` 与 `PdfBookDocument` 实现、Foliate 视图宿主窄缝、EPUB 内容清洗器与 `pdf/` PDF 阅读子模块。详见 `reader/CODEMAP.md`。
 - `tauriInvoke.ts`：`TauriInvoke` 窄接口类型，供各 Tauri Adapter 复用。
 
@@ -28,6 +29,7 @@ domain/
     ├── workbenchCommands.ts  经 WorkspaceRepository 持久化状态
     ├── libraryCommands.ts    经 ImportRepository 执行导入命令
     ├── readerCommands.ts     经 ImportRepository + BookDocument 执行打开/翻页/关闭命令
+    ├── annotationCommands.ts 经 AnnotationRepository + BookDocument 执行批注读写与锚点恢复
     ├── readerRuntime.ts      持有活 BookDocument 对象
     ├── importBook.ts         编排 stage → inspect → commit
     ├── workspaceStore.ts     引用 WorkspaceState 与默认状态

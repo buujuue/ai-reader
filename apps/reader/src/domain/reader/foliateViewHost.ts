@@ -38,6 +38,10 @@ interface ExtendedFoliateView extends HTMLElement {
   next(): Promise<void>;
   prev(): Promise<void>;
   goTo(target: unknown): Promise<unknown>;
+  resolveNavigation?(target: unknown): {
+    index?: number;
+    anchor?: (doc: Document) => unknown;
+  } | undefined;
   search(opts: SearchOptions): AsyncGenerator<unknown, void, unknown>;
   clearSearch(): void;
   close(): void;
@@ -253,6 +257,24 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
 
   getCFI(index: number, range: Range): string {
     return this.element.getCFI(index, range);
+  }
+
+  async canResolveAnnotation(value: string): Promise<boolean> {
+    try {
+      const resolved = this.element.resolveNavigation?.(value);
+      if (!resolved || typeof resolved.index !== 'number' || !resolved.anchor) {
+        return false;
+      }
+      const content = this.element.renderer?.getContents?.().find(
+        (candidate) => candidate.index === resolved.index && candidate.doc,
+      );
+      if (!content?.doc) {
+        return false;
+      }
+      return resolved.anchor(content.doc) != null;
+    } catch {
+      return false;
+    }
   }
 
   getCurrentIndex(): number | null {

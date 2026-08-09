@@ -1,12 +1,18 @@
 import type { CommandRegistry } from '../commands/commandRegistry';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { Annotation } from '../domain/annotation/annotation';
-import { buildTextAnchor } from '../domain/annotation/textAnchor';
+import {
+  buildTextAnchor,
+  recoverTextAnchor,
+  type TextAnchorSearchMatch,
+} from '../domain/annotation/textAnchor';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { ReadingMaterial } from '../domain/library/material';
+import type { BookDocument } from '../domain/reader/bookDocument';
 import { useAnnotationStore } from './annotationStore';
 import { useLibraryStore } from './libraryStore';
 import { useReaderRuntime } from './readerRuntime';
+import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { findViewMaterialId } from './viewUtils';
 
@@ -39,12 +45,18 @@ function redrawAnnotationsForMaterial(materialId: string): void {
     .map((viewId) => documents.get(viewId))
     .filter((document): document is NonNullable<typeof document> => !!document);
   for (const document of targets) {
-    for (const annotation of annotations) {
-      document.removeAnnotation(annotation.anchor.cfi);
-    }
-    for (const annotation of annotations) {
-      document.addAnnotation({ value: annotation.anchor.cfi, color: annotation.color });
-    }
+    drawAnnotations(document, annotations);
+  }
+}
+
+/** 幂等地替换一个文档上的批注覆盖层,失联锚点只移除旧覆盖层不重新绘制。 */
+function drawAnnotations(document: BookDocument, annotations: Annotation[]): void {
+  for (const annotation of annotations) {
+    document.removeAnnotation(annotation.anchor.cfi);
+  }
+  for (const annotation of annotations) {
+    if (annotation.anchor.recoveryState === 'orphaned') continue;
+    document.addAnnotation({ value: annotation.anchor.cfi, color: annotation.color });
   }
 }
 
@@ -70,22 +82,118 @@ export async function loadAnnotationsForView(
 ): Promise<void> {
   const materialId = findViewMaterialId(viewId);
   if (!materialId) return;
-  const annotations = await dependencies.annotationRepository.listByMaterial(materialId);
-  useAnnotationStore.getState().setMaterialAnnotations(materialId, annotations);
-  redrawAnnotationsForView(materialId, viewId);
-}
-
-/** 把某材料的批注绘制到指定开放阅读文档的覆盖层(幂等重绘)。 */
-function redrawAnnotationsForView(materialId: string, viewId: string): void {
-  const annotations = useAnnotationStore.getState().getMaterialAnnotations(materialId);
   const document = useReaderRuntime.getState().getDocument(viewId);
   if (!document) return;
+  await loadAnnotationsForMaterial(dependencies, materialId, document);
+  redrawAnnotationsForMaterial(materialId);
+}
+
+async function loadAnnotationsForMaterial(
+  dependencies: { annotationRepository: AnnotationRepository },
+  materialId: string,
+  preferredDocument?: BookDocument,
+): Promise<void> {
+  const annotations = await dependencies.annotationRepository.listByMaterial(materialId);
+  const document = preferredDocument ?? findMaterialDocument(materialId);
+  const material = useLibraryStore
+    .getState()
+    .materials.find((item: ReadingMaterial) => item.id === materialId);
+  const currentVersion = material?.fingerprint ?? '';
+  const loadedAnnotations =
+    document && currentVersion
+      ? await recoverAnnotationsForDocument(
+          document,
+          annotations,
+          currentVersion,
+          dependencies.annotationRepository,
+        )
+      : annotations;
+  useAnnotationStore.getState().setMaterialAnnotations(materialId, loadedAnnotations);
+}
+
+function findMaterialDocument(materialId: string): BookDocument | undefined {
+  return activeViewsForMaterial(materialId)
+    .map((viewId) => useReaderRuntime.getState().getDocument(viewId))
+    .find((document): document is BookDocument => !!document);
+}
+
+/**
+ * 在材料版本变化后逐条寻找批注引文。搜索任务按材料串行执行,避免 Foliate
+ * 的临时搜索高亮互相覆盖;恢复结束后清理临时结果,只留下正式批注覆盖层。
+ */
+async function recoverAnnotationsForDocument(
+  document: BookDocument,
+  annotations: Annotation[],
+  currentVersion: string,
+  repository: AnnotationRepository,
+): Promise<Annotation[]> {
+  const recovered: Annotation[] = [];
+  let orphanedCount = 0;
+
   for (const annotation of annotations) {
-    document.removeAnnotation(annotation.anchor.cfi);
+    if (annotation.anchor.documentVersion === currentVersion) {
+      recovered.push(annotation);
+      if (annotation.anchor.recoveryState === 'orphaned') orphanedCount += 1;
+      continue;
+    }
+
+    let originalCfiResolved = false;
+    try {
+      originalCfiResolved = (await document.canResolveAnnotation?.(annotation.anchor.cfi)) ?? false;
+    } catch {
+      originalCfiResolved = false;
+    }
+    if (originalCfiResolved) {
+      const nextAnchor = {
+        ...annotation.anchor,
+        documentVersion: currentVersion,
+        recoveryState: 'resolved' as const,
+      };
+      recovered.push(
+        await repository.saveAnnotation({ ...annotation, anchor: nextAnchor }),
+      );
+      continue;
+    }
+
+    const matches: TextAnchorSearchMatch[] = [];
+    try {
+      const generator = document.search({ query: annotation.anchor.quote, matchCase: true });
+      for await (const event of generator) {
+        if (event.kind === 'match') matches.push(event.match);
+      }
+    } catch {
+      // 搜索引擎异常时也不能把旧 CFI 当作安全位置,先保留为失联并等待重试。
+      const next = await repository.saveAnnotation({
+        ...annotation,
+        anchor: { ...annotation.anchor, recoveryState: 'orphaned' },
+      });
+      recovered.push(next);
+      orphanedCount += 1;
+      continue;
+    } finally {
+      try {
+        document.clearSearch();
+      } catch {
+        /* 清理临时搜索结果失败不影响失联状态的持久化。 */
+      }
+    }
+
+    const nextAnchor = recoverTextAnchor(annotation.anchor, currentVersion, matches);
+    const changed =
+      nextAnchor.cfi !== annotation.anchor.cfi ||
+      nextAnchor.documentVersion !== annotation.anchor.documentVersion ||
+      nextAnchor.recoveryState !== annotation.anchor.recoveryState;
+    const next = changed ? { ...annotation, anchor: nextAnchor } : annotation;
+    if (next.anchor.recoveryState === 'orphaned') orphanedCount += 1;
+    recovered.push(changed ? await repository.saveAnnotation(next) : next);
   }
-  for (const annotation of annotations) {
-    document.addAnnotation({ value: annotation.anchor.cfi, color: annotation.color });
+
+  if (orphanedCount > 0) {
+    useShellUiStore
+      .getState()
+      .setStatusMessage(`${orphanedCount} 条批注无法安全恢复,已保留为失联批注`);
   }
+  return recovered;
 }
 
 export function registerAnnotationCommands(
@@ -96,8 +204,7 @@ export function registerAnnotationCommands(
   registry.register(COMMAND_IDS.annotationLoadForMaterial, async (...args: unknown[]) => {
     const materialId = args[0] as string | undefined;
     if (!materialId) return;
-    const annotations = await dependencies.annotationRepository.listByMaterial(materialId);
-    useAnnotationStore.getState().setMaterialAnnotations(materialId, annotations);
+    await loadAnnotationsForMaterial(dependencies, materialId);
     redrawAnnotationsForMaterial(materialId);
   });
 

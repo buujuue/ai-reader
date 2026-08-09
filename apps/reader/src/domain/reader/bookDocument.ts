@@ -67,8 +67,11 @@ export interface BookDocument {
   /**
    * 生成给定内容文档中某 Range 的规范化 CFI(index 为内容文档所在章节序号)。
    * 用于把用户选中文本转成可持久化的文本锚点。
-   */
+  */
   getCFI(index: number, range: Range): string;
+
+  /** 在不改变当前阅读位置的前提下尝试解析一个批注 CFI。 */
+  canResolveAnnotation?(value: string): Promise<boolean>;
 
   /** 读取当前内容文档所在章节序号(index);未就绪时返回 null。 */
   getCurrentIndex(): number | null;
