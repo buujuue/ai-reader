@@ -40,3 +40,6 @@ backupRepository ──► workbench/backupCommands.ts 经 typed 命令编排备
 ## 依赖方向
 
 该子域是导入与备份契约的家：内存 Adapter 与 Tauri Adapter 必须分别运行同一份 `importRepository.contract.ts` 与 `backupRepository.contract.ts` 契约测试；接口变化时同步更新契约与两个 Adapter。Rust 侧 `ImportRepository` 在真实 SQLite 与托管文件系统上运行镜像契约。
+## 完整书库备份恢复
+
+`backupRepository.ts` 定义完整备份导出与恢复的窄接口；`tauriBackupRepository.ts` 将恢复请求映射到 typed Tauri command，`inMemoryBackupRepository.ts` 为浏览器降级运行时提供契约测试适配。恢复由 Rust 校验、暂存、快照和原子切换，前端只负责选择备份文件、确认整库替换并刷新工作台。

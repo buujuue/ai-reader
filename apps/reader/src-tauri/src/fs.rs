@@ -10,6 +10,7 @@ use crate::error::{classify_io_error, AppError};
 /// 外部原文件永不被修改或删除。
 #[derive(Debug, Clone)]
 pub struct LibraryPaths {
+    pub app_data_dir: PathBuf,
     pub stash_dir: PathBuf,
     pub managed_dir: PathBuf,
     pub covers_dir: PathBuf,
@@ -28,11 +29,16 @@ impl LibraryPaths {
         std::fs::create_dir_all(&covers_dir)?;
         std::fs::create_dir_all(&recovery_dir)?;
         Ok(Self {
+            app_data_dir: app_data_dir.to_path_buf(),
             stash_dir,
             managed_dir,
             covers_dir,
             recovery_dir,
         })
+    }
+
+    pub fn database_path(&self) -> PathBuf {
+        self.app_data_dir.join("ai-reader.db")
     }
 
     pub fn stash_path(&self, id: &str) -> PathBuf {

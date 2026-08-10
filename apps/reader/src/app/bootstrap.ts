@@ -36,6 +36,11 @@ import {
   createTauriBackupDestinationPicker,
   type BackupDestinationPicker,
 } from './backupDestinationPicker';
+import {
+  createInMemoryBackupSourcePicker,
+  createTauriBackupSourcePicker,
+  type BackupSourcePicker,
+} from './backupSourcePicker';
 
 export interface WindowCloseRequestedEvent {
   preventDefault: () => void;
@@ -55,6 +60,7 @@ export interface AppServices {
   annotationRepository: AnnotationRepository;
   backupRepository: BackupRepository;
   backupDestinationPicker: BackupDestinationPicker;
+  backupSourcePicker: BackupSourcePicker;
   filePicker: FilePicker;
   externalUrlOpener: ExternalUrlOpener;
   windowLifecycle: WindowLifecycle | null;
@@ -66,6 +72,7 @@ export interface AppServicesOptions {
   annotationRepository?: AnnotationRepository;
   backupRepository?: BackupRepository;
   backupDestinationPicker?: BackupDestinationPicker;
+  backupSourcePicker?: BackupSourcePicker;
   filePicker?: FilePicker;
   viewHostFactory?: ReaderCommandDependencies['viewHostFactory'];
   externalUrlOpener?: ExternalUrlOpener;
@@ -141,6 +148,9 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     (isTauriRuntime()
       ? createTauriBackupDestinationPicker()
       : createInMemoryBackupDestinationPicker());
+  const backupSourcePicker =
+    options.backupSourcePicker ??
+    (isTauriRuntime() ? createTauriBackupSourcePicker() : createInMemoryBackupSourcePicker());
   const windowLifecycle =
     options.windowLifecycle !== undefined
       ? options.windowLifecycle
@@ -151,7 +161,9 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
   registerBackupCommands(commands, {
     backupRepository,
     destinationPicker: backupDestinationPicker,
+    sourcePicker: backupSourcePicker,
     flushReaderPositions,
+    reloadApplication: isTauriRuntime() ? () => window.location.reload() : undefined,
   });
   registerLibraryCommands(commands, {
     ...importServices,
@@ -194,6 +206,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     annotationRepository,
     backupRepository,
     backupDestinationPicker,
+    backupSourcePicker,
     filePicker: importServices.filePicker,
     externalUrlOpener,
     windowLifecycle,

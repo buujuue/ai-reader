@@ -22,8 +22,10 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir)
                 .map_err(|source| AppError::AppDir(source.to_string()))?;
 
-            let connection = open_database(&app_dir.join(DATABASE_FILE_NAME))?;
             let paths = LibraryPaths::new(&app_dir)?;
+            // 恢复切换可能在上一次进程异常终止时停在数据库文件替换中，必须在打开 SQLite 前处理。
+            db::backup::recover_library_restore(&paths)?;
+            let connection = open_database(&app_dir.join(DATABASE_FILE_NAME))?;
             app.manage(DatabaseHandle::new(connection));
             app.manage(paths.clone());
 
@@ -37,6 +39,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::backup::export_library_backup,
+            commands::backup::restore_library_backup,
             commands::workspace::load_workspace_state,
             commands::workspace::save_workspace_state,
             commands::annotations::list_annotations,

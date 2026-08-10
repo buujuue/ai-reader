@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tauri::State;
 
-use crate::db::backup::{BackupExportResult, BackupRepository};
+use crate::db::backup::{BackupExportResult, BackupRepository, BackupRestoreResult};
 use crate::db::DatabaseHandle;
 use crate::error::AppError;
 use crate::fs::LibraryPaths;
@@ -18,4 +18,13 @@ pub fn export_library_backup(
     database.with_connection(|connection| {
         BackupRepository::new(connection).export(&paths, Path::new(&destination_path))
     })
+}
+
+#[tauri::command]
+pub fn restore_library_backup(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    source_path: String,
+) -> Result<BackupRestoreResult, AppError> {
+    database.restore_backup(&paths, Path::new(&source_path))
 }

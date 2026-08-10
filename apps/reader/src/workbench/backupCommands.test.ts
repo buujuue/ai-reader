@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CommandRegistry } from '../commands/commandRegistry';
 import type { BackupDestinationPicker } from '../app/backupDestinationPicker';
+import type { BackupSourcePicker } from '../app/backupSourcePicker';
 import type { BackupRepository } from '../domain/library/backupRepository';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useShellUiStore } from './shellUiStore';
@@ -13,6 +14,8 @@ function createHarness(options: {
   destinationError?: Error;
   exportResult?: { destinationPath: string; entryCount: number; totalBytes: number };
   exportError?: Error;
+  source?: string | null;
+  restoreError?: Error;
 }) {
   const backupRepository: BackupRepository = {
     exportBackup: vi.fn(async () => {
@@ -23,6 +26,10 @@ function createHarness(options: {
         totalBytes: 100,
       };
     }),
+    restoreBackup: vi.fn(async () => {
+      if (options.restoreError) throw options.restoreError;
+      return { materialCount: 2, entryCount: 7, totalBytes: 2048 };
+    }),
   };
   const destinationPicker: BackupDestinationPicker = {
     pickBackupDestination: vi.fn(async () => {
@@ -30,16 +37,28 @@ function createHarness(options: {
       return options.destination ?? null;
     }),
   };
+  const sourcePicker: BackupSourcePicker = {
+    pickBackupSource: vi.fn(async () => options.source ?? null),
+  };
   const confirmUnencryptedBackup = vi.fn(() => options.confirmed ?? true);
   const flushReaderPositions = vi.fn(async () => undefined);
   const registry = new CommandRegistry();
   registerBackupCommands(registry, {
     backupRepository,
     destinationPicker,
+    sourcePicker,
     confirmUnencryptedBackup,
+    confirmRestore: vi.fn(() => true),
     flushReaderPositions,
   });
-  return { registry, backupRepository, destinationPicker, confirmUnencryptedBackup, flushReaderPositions };
+  return {
+    registry,
+    backupRepository,
+    destinationPicker,
+    sourcePicker,
+    confirmUnencryptedBackup,
+    flushReaderPositions,
+  };
 }
 
 describe('library.exportBackup command', () => {
@@ -101,5 +120,27 @@ describe('library.exportBackup command', () => {
     ).rejects.toBe(error);
 
     expect(useShellUiStore.getState().statusMessage).toBe('书库备份失败，未生成可用备份');
+  });
+
+  it('恢复时先刷新阅读位置再替换整套书库', async () => {
+    const harness = createHarness({ source: 'backup.airbackup' });
+
+    const result = await harness.registry.execute(COMMAND_IDS.libraryRestoreBackup);
+
+    expect(harness.sourcePicker.pickBackupSource).toHaveBeenCalledOnce();
+    expect(harness.flushReaderPositions).toHaveBeenCalledOnce();
+    expect(harness.backupRepository.restoreBackup).toHaveBeenCalledWith('backup.airbackup');
+    expect(result).toMatchObject({ materialCount: 2 });
+    expect(useShellUiStore.getState().statusMessage).toBe('书库恢复成功，共恢复 2 本书');
+  });
+
+  it('取消选择恢复来源时保持当前书库不变', async () => {
+    const harness = createHarness({ source: null });
+
+    const result = await harness.registry.execute(COMMAND_IDS.libraryRestoreBackup);
+
+    expect(result).toBeNull();
+    expect(harness.backupRepository.restoreBackup).not.toHaveBeenCalled();
+    expect(harness.flushReaderPositions).not.toHaveBeenCalled();
   });
 });

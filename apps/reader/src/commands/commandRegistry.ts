@@ -18,6 +18,7 @@ export const COMMAND_IDS = {
   libraryRestoreFromTrash: 'library.restoreFromTrash',
   libraryPurge: 'library.purge',
   libraryExportBackup: 'library.exportBackup',
+  libraryRestoreBackup: 'library.restoreBackup',
   readerNextPage: 'reader.nextPage',
   readerPrevPage: 'reader.prevPage',
   readerActivateView: 'reader.activateView',

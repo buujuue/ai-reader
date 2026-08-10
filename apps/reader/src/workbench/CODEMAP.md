@@ -51,3 +51,6 @@ workbench/
 ## 依赖方向
 
 `workbench/` 构建在 `commands/` 与 `domain/` 之上，向下游（`app/`、`components/`）提供 Store 与命令实现；它不反向依赖 UI 组件。可序列化状态（标签、阅读位置）在 Workspace Store，活对象（BookDocument）在 Reader Runtime，两者严格分离；备份只经 BackupRepository 调用 Rust，不读取本地文件或数据库。
+## 完整书库备份恢复
+
+`backupCommands.ts` 通过 `BackupSourcePicker` 选择 `.airbackup`，先 flush 阅读位置，再调用 `BackupRepository.restoreBackup`；Rust 完成整库校验和可恢复切换后，桌面端重载应用以加载新的工作区、位置和批注。

@@ -36,6 +36,12 @@ pub enum AppError {
     BackupSourceChanged(String),
     #[error("备份归档无法写入:{0}")]
     BackupArchive(String),
+    #[error("备份文件无法恢复:{0}")]
+    BackupRestore(String),
+    #[error("备份文件格式或内容校验失败:{0}")]
+    BackupValidation(String),
+    #[error("备份恢复状态无法读取:{0}")]
+    BackupRecoveryState(String),
 }
 
 impl serde::Serialize for AppError {

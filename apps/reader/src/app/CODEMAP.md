@@ -36,3 +36,4 @@ src/ main.tsx  ──►  app/
 ## 依赖方向
 
 `app/` 是组合根：它依赖 `commands/`、`domain/`、`workbench/`、`components/`，但上述目录不反向依赖 `app/`（`useAppServices` 例外，供组件消费服务）。
+<!-- 完整书库恢复入口：backupSourcePicker.ts 与 backupCommands.ts 通过 BackupRepository 调用 Rust 恢复事务。 -->

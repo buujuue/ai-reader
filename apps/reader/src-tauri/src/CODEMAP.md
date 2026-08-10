@@ -28,3 +28,7 @@ src-tauri/src/
 ## 依赖方向
 
 前端不接触 SQLite、SQL、数据库路径或文件细节；Rust 命令层只经 `DatabaseHandle::with_connection` 访问数据库，不向前端暴露连接。Rust 持久化契约（真实 SQLite）与 TS 侧契约测试保持语义一致。
+<!-- 完整书库恢复由 db/backup.rs 负责隔离校验、快照切换与启动回滚；lib.rs 在打开 SQLite 前执行恢复器。 -->
+## 完整书库恢复
+
+`commands/backup.rs` 的恢复命令只调用 `DatabaseHandle::restore_backup` 生命周期 API；该 API 是普通 `with_connection` 之外的唯一例外，用于安全释放 SQLite 句柄、执行文件切换并恢复连接。`db/backup.rs` 在 `stash` 中保存阶段状态，启动时由 `lib.rs` 在打开数据库前处理回滚。

@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArchiveRestore,
   LibraryBig,
   ListTree,
   PanelLeftClose,
@@ -36,6 +37,10 @@ export function ActivityBar() {
     void commands.execute(COMMAND_IDS.libraryExportBackup).catch(() => undefined);
   };
 
+  const handleRestoreBackup = () => {
+    void commands.execute(COMMAND_IDS.libraryRestoreBackup).catch(() => undefined);
+  };
+
   const handleToggleAnnotations = () => {
     void commands.execute(COMMAND_IDS.workbenchToggleAnnotationSidebar).catch(() => undefined);
   };
@@ -63,6 +68,15 @@ export function ActivityBar() {
         className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
       >
         <Archive size={18} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="从完整书库备份恢复"
+        title="从完整书库备份恢复并替换当前书库"
+        onClick={handleRestoreBackup}
+        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+      >
+        <ArchiveRestore size={18} aria-hidden />
       </button>
       <button
         type="button"

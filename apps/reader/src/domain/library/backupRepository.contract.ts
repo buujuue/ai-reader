@@ -14,5 +14,10 @@ export function backupRepositoryContract(makeRepository: BackupRepositoryFactory
       entryCount: 4,
       totalBytes: 1024,
     });
+    await expect(repository.restoreBackup('library.airbackup')).resolves.toEqual({
+      materialCount: 1,
+      entryCount: 4,
+      totalBytes: 1024,
+    });
   });
 }

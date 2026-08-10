@@ -17,7 +17,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (4, include_str!("migrations/0004_material_overrides.sql")),
     (5, include_str!("migrations/0005_material_trash.sql")),
     (6, include_str!("migrations/0006_annotations.sql")),
-    (7, include_str!("migrations/0007_material_document_version.sql")),
+    (
+        7,
+        include_str!("migrations/0007_material_document_version.sql"),
+    ),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -63,13 +66,13 @@ fn run_migrations(connection: &mut Connection, migrations: &[(i64, &str)]) -> Re
 /// Tauri 托管状态:把 SQLite 连接包成窄接口。
 /// 命令层只能通过 with_connection 访问数据库,不暴露连接本身。
 pub struct DatabaseHandle {
-    connection: std::sync::Mutex<Connection>,
+    connection: std::sync::Mutex<Option<Connection>>,
 }
 
 impl DatabaseHandle {
     pub fn new(connection: Connection) -> Self {
         Self {
-            connection: std::sync::Mutex::new(connection),
+            connection: std::sync::Mutex::new(Some(connection)),
         }
     }
 
@@ -77,11 +80,76 @@ impl DatabaseHandle {
         &self,
         action: impl FnOnce(&Connection) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
-        let connection = self
+        let guard = self
             .connection
             .lock()
             .map_err(|_| AppError::DatabaseLocked)?;
-        action(&connection)
+        let connection = guard.as_ref().ok_or(AppError::DatabaseLocked)?;
+        action(connection)
+    }
+
+    pub fn restore_backup(
+        &self,
+        paths: &crate::fs::LibraryPaths,
+        source: &Path,
+    ) -> Result<backup::BackupRestoreResult, AppError> {
+        let mut guard = self
+            .connection
+            .lock()
+            .map_err(|_| AppError::DatabaseLocked)?;
+        let connection = guard.as_ref().ok_or(AppError::DatabaseLocked)?;
+        backup::BackupRepository::prepare_restore(connection, paths, source)?;
+
+        // 丢弃旧连接后再切换数据库文件，避免 Windows 上 SQLite 文件句柄阻止原子替换。
+        guard.take();
+        match backup::complete_restore(paths) {
+            Ok(result) => match open_database(&paths.database_path()) {
+                Ok(connection) => {
+                    *guard = Some(connection);
+                    match backup::finish_restore(paths) {
+                        Ok(()) => Ok(result),
+                        Err(error) => {
+                            guard.take();
+                            recover_failed_restore(&mut guard, paths, error, "完成恢复状态写入失败")
+                        }
+                    }
+                }
+                Err(error) => recover_failed_restore(&mut guard, paths, error, "新数据库无法打开"),
+            },
+            Err(error) => recover_failed_restore(&mut guard, paths, error, "切换失败"),
+        }
+    }
+}
+
+fn recover_failed_restore(
+    guard: &mut std::sync::MutexGuard<'_, Option<Connection>>,
+    paths: &crate::fs::LibraryPaths,
+    error: AppError,
+    context: &str,
+) -> Result<backup::BackupRestoreResult, AppError> {
+    let rollback = backup::rollback_restore(paths);
+    let reopened = open_database(&paths.database_path());
+    match (rollback, reopened) {
+        (Ok(()), Ok(connection)) => {
+            **guard = Some(connection);
+            Err(error)
+        }
+        (rollback, reopened) => {
+            let details = match (rollback, reopened) {
+                (Err(rollback_error), Err(reopen_error)) => {
+                    format!("{context}:{error}; 回滚失败:{rollback_error}; 原书库无法打开:{reopen_error}")
+                }
+                (Err(rollback_error), Ok(connection)) => {
+                    **guard = Some(connection);
+                    format!("{context}:{error}; 回滚失败:{rollback_error}")
+                }
+                (Ok(()), Err(reopen_error)) => {
+                    format!("{context}:{error}; 原书库无法打开:{reopen_error}")
+                }
+                (Ok(()), Ok(_)) => unreachable!(),
+            };
+            Err(AppError::BackupRestore(details))
+        }
     }
 }
 

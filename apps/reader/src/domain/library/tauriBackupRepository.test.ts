@@ -4,11 +4,11 @@ import { backupRepositoryContract } from './backupRepository.contract';
 import { BACKUP_COMMAND_NAMES, createTauriBackupRepository } from './tauriBackupRepository';
 
 backupRepositoryContract(() =>
-  createTauriBackupRepository(async () => ({
-    destinationPath: 'library.airbackup',
-    entryCount: 4,
-    totalBytes: 1024,
-  })),
+  createTauriBackupRepository(async (command) =>
+    command === BACKUP_COMMAND_NAMES.restore
+      ? { materialCount: 1, entryCount: 4, totalBytes: 1024 }
+      : { destinationPath: 'library.airbackup', entryCount: 4, totalBytes: 1024 },
+  ),
 );
 
 describe('Tauri backup repository', () => {
