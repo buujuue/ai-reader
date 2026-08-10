@@ -8,11 +8,14 @@
 - `tauriAnnotationRepository.ts`：Tauri Adapter,经 `invoke` 调用 `list_annotations` / `save_annotation` / `delete_annotation` 命令,附 `assertAnnotationShape` 载荷校验。
 - `inMemoryAnnotationRepository.ts`：内存 Adapter,浏览器降级开发用;按 materialId 归属并逻辑删除。
 - `annotationRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的批注契约测试。
+- `annotationMarkdown.ts`：把单本材料级批注格式化为 UTF-8 Markdown，包含材料元数据、文本引文、笔记、EPUB CFI/PDF 页码区域位置与失联状态；同时生成安全默认文件名。
+- `annotationExportWriter.ts` / `tauriAnnotationExportWriter.ts` / `inMemoryAnnotationExportWriter.ts`：批注 Markdown 的 typed 文件写入边界及 Tauri/内存 Adapter。
+- `annotationExportWriter.contract.ts`：批注导出写入器的共享契约测试。
 - 对应 `*.test.ts`：Adapter 契约与文本锚点构建/恢复逻辑测试。
 
 ## 依赖其它文件夹（树）
 
-无（`domain/annotation/` 不依赖其它 `src/` 文件夹）。
+`annotationMarkdown.ts` 复用 `domain/reader/pdf/pdfTextAnchor.ts` 解码扫描 PDF 区域锚点；其余批注持久化类型与 Adapter 不依赖 UI 或工作台。
 
 ## 被谁依赖（树）
 

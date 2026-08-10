@@ -129,6 +129,48 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     }
 }
 
+/// 把用户选择的导出内容先完整写入临时文件,再替换目标文件。
+/// 目标已存在时先移到同目录备份,从而兼容 Windows 的 rename 语义并避免留下半份导出。
+pub fn atomic_write_export_file(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "export.md".to_string());
+    let temp_path = parent.join(format!(".{file_name}.tmp-{}", uuid::Uuid::new_v4()));
+    let backup_path = parent.join(format!(".{file_name}.bak-{}", uuid::Uuid::new_v4()));
+
+    if let Err(error) = std::fs::write(&temp_path, bytes) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(classify_io_error(error));
+    }
+
+    let had_existing = path.exists();
+    if had_existing {
+        if let Err(error) = std::fs::rename(path, &backup_path) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(classify_io_error(error));
+        }
+    }
+
+    match std::fs::rename(&temp_path, path) {
+        Ok(()) => {
+            if had_existing {
+                let _ = std::fs::remove_file(&backup_path);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(path);
+            if had_existing {
+                let _ = std::fs::rename(&backup_path, path);
+            }
+            let _ = std::fs::remove_file(&temp_path);
+            Err(classify_io_error(error))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +253,15 @@ mod tests {
         let error = stream_copy_with_fingerprint(&dir.join("missing.bin"), &dir.join("out.bin"))
             .unwrap_err();
         assert!(matches!(error, AppError::Io(_)));
+    }
+
+    #[test]
+    fn atomic_write_export_file_overwrites_selected_export_with_unicode_content() {
+        let dir = temp_dir();
+        let path = dir.join("notes.md");
+        atomic_write_export_file(&path, "旧内容".as_bytes()).unwrap();
+        atomic_write_export_file(&path, "# 新内容\n\n中文批注".as_bytes()).unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "# 新内容\n\n中文批注");
     }
 }

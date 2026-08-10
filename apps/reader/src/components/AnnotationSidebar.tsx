@@ -1,4 +1,4 @@
-import { FileWarning, Search, StickyNote } from 'lucide-react';
+import { Download, FileWarning, Search, StickyNote } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
@@ -48,6 +48,7 @@ export function AnnotationSidebar() {
     primaryMaterialId ? state.byMaterial[primaryMaterialId] ?? EMPTY_ANNOTATIONS : EMPTY_ANNOTATIONS,
   );
   const [query, setQuery] = useState('');
+  const [exporting, setExporting] = useState(false);
   const material = materials.find((candidate) => candidate.id === primaryMaterialId);
   const filtered = useMemo(
     () => annotations.filter((annotation) => matchesQuery(annotation, query)),
@@ -65,6 +66,15 @@ export function AnnotationSidebar() {
     useShellUiStore.getState().openNoteEditor(annotation.materialId, annotation.id);
   };
 
+  const handleExport = () => {
+    if (!primaryMaterialId || !material || exporting) return;
+    setExporting(true);
+    void commands
+      .execute(COMMAND_IDS.annotationExportMarkdown, primaryMaterialId)
+      .catch(() => undefined)
+      .finally(() => setExporting(false));
+  };
+
   return (
     <aside
       aria-label="批注侧栏"
@@ -78,12 +88,25 @@ export function AnnotationSidebar() {
             {annotations.length}
           </span>
         ) : null}
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={!material || exporting}
+          aria-label="导出主要材料批注"
+          title="导出主要材料批注为人类可读 Markdown"
+          className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Download size={14} aria-hidden />
+        </button>
       </div>
 
       {material ? (
         <div className="border-b border-zinc-800 px-3 py-2">
           <p className="truncate text-xs font-medium text-sky-300">{material.title}</p>
           <p className="truncate text-[10px] text-zinc-500">主要阅读材料</p>
+          <p className="mt-1 text-[10px] leading-4 text-zinc-600">
+            Markdown 是人类可读的数据出口，不用于完整书库恢复。
+          </p>
         </div>
       ) : null}
 

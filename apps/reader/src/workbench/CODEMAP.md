@@ -13,6 +13,7 @@
 - `markdownSessionStore.ts`：Markdown 文档会话 Store（ADR-0009）。同一 BookId 只有一个会话，跨组 ReadingView 共享未保存缓冲区；持有源文本、脏标记与已保存文档版本。`recordFormalSave` 只在缓冲区仍等于本次保存文本时清除脏标记，保存期间若继续输入则升级基础版本但保留为脏；`restoreRecovery` 把用户确认的快照载入为脏缓冲区。正式内容与快照都不存入本 Store。
 - `markdownCommands.ts`：Markdown 源码编辑 Command 唯一实现入口。除源码模式、正式保存、放弃与脏关闭流程外，注册 `markdown.updateBuffer`（1 秒节制写 Recovery Snapshot，同一材料的异步写严格串行）、`markdown.recovery.check` / `resolve` / `flush`（启动检查、恢复或丢弃、终止前 flush）。正式保存先稳定当前写入，再原子保存正式材料；只有缓冲区未在保存期间变化才清理快照，否则保留脏会话并立即按新基础版本补写快照。清理失败保留为下次启动的安全冲突。
 - `annotationStore.ts` / `annotationCommands.ts`：按材料维护批注运行时集合，编排文本/扫描 PDF 区域高亮创建、笔记编辑、删除、加载与版本变化后的文本锚点恢复；恢复仅接受唯一引文与前后文匹配，失联批注保留但不绘制。
+- `annotationExportCommands.ts`：批注 Markdown 导出 Command 唯一入口；按材料读取批注、调用系统目标选择器与 typed 写入器，取消/失败均通过状态栏反馈且不改写阅读状态。
 - `shellUiStore.ts`：外壳运行时反馈状态（状态栏、各类对话框、`markdownRecoverySnapshots` 启动处理队列），不参与持久化。
 - `libraryStore.ts`：书库可序列化状态（`materials`、`trashedMaterials`）与 `importing` 瞬时反馈。
 - `workbenchCommands.ts`：工作台 Command 的唯一实现入口。`registerWorkbenchCommands` 注册 `workbench.togglePrimarySidebar`、`workbench.focusEditorGroup` 与 `workbench.saveState`，先经 Repository 持久化成功后更新 Store；状态序列化包含拆分方向。
@@ -50,7 +51,7 @@ workbench/
 
 ## 依赖方向
 
-`workbench/` 构建在 `commands/` 与 `domain/` 之上，向下游（`app/`、`components/`）提供 Store 与命令实现；它不反向依赖 UI 组件。可序列化状态（标签、阅读位置）在 Workspace Store，活对象（BookDocument）在 Reader Runtime，两者严格分离；备份只经 BackupRepository 调用 Rust，不读取本地文件或数据库。
+`workbench/` 构建在 `commands/` 与 `domain/` 之上，向下游（`app/`、`components/`）提供 Store 与命令实现；它不反向依赖 UI 组件。可序列化状态（标签、阅读位置）在 Workspace Store，活对象（BookDocument）在 Reader Runtime，两者严格分离；批注导出只读取材料级 AnnotationRepository 并经 AnnotationExportWriter 调用 Rust，不读取本地文件或数据库。
 ## 完整书库备份恢复
 
 `backupCommands.ts` 通过 `BackupSourcePicker` 选择 `.airbackup`，先 flush 阅读位置，再调用 `BackupRepository.restoreBackup`；Rust 完成整库校验和可恢复切换后，桌面端重载应用以加载新的工作区、位置和批注。

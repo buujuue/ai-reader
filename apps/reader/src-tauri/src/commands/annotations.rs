@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use tauri::State;
 
 use crate::db::annotations::{Annotation, AnnotationRepository};
@@ -31,4 +33,14 @@ pub fn delete_annotation(
     annotation_id: String,
 ) -> Result<(), AppError> {
     database.with_connection(|connection| AnnotationRepository::new(connection).delete(&annotation_id))
+}
+
+/// 把前端按批注领域语义生成的 Markdown 写入用户选择的目标文件。
+/// 目标路径来自系统保存位置选择器,不修改阅读材料、批注或工作区状态。
+#[tauri::command]
+pub fn write_annotation_markdown(
+    destination_path: String,
+    content: String,
+) -> Result<(), AppError> {
+    crate::fs::atomic_write_export_file(Path::new(&destination_path), content.as_bytes())
 }

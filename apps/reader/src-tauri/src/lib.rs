@@ -45,6 +45,7 @@ pub fn run() {
             commands::annotations::list_annotations,
             commands::annotations::save_annotation,
             commands::annotations::delete_annotation,
+            commands::annotations::write_annotation_markdown,
             commands::import::stage_import,
             commands::import::read_staged_file,
             commands::import::discard_import,

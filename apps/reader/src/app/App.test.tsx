@@ -243,10 +243,18 @@ describe('阅读工作台外壳', () => {
 
   it('主要材料的批注侧栏按批注文本筛选并保持材料级集合', async () => {
     const annotationRepository = createInMemoryAnnotationRepository();
+    const exportDestinationPicker = {
+      pickAnnotationExportDestination: vi.fn(async () => 'notes.md'),
+    };
+    const exportWriter = {
+      writeMarkdown: vi.fn(async () => undefined),
+    };
     const hosts: FoliateViewHost[] = [];
     services = createAppServices({
       workspaceRepository: repository,
       annotationRepository,
+      annotationExportDestinationPicker: exportDestinationPicker,
+      annotationExportWriter: exportWriter,
       viewHostFactory: () => {
         const host = createFakeViewHost();
         hosts.push(host);
@@ -324,6 +332,18 @@ describe('阅读工作台外壳', () => {
     expect(sidebar).toHaveTextContent('第一段重要原文');
     expect(sidebar).toHaveTextContent('第二段原文');
     expect(sidebar).toHaveTextContent('失联');
+    expect(sidebar).toHaveTextContent('人类可读的数据出口，不用于完整书库恢复');
+    expect(screen.getByRole('button', { name: '导出主要材料批注' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '导出主要材料批注' }));
+    await waitFor(() => expect(exportWriter.writeMarkdown).toHaveBeenCalledOnce());
+    expect(exportDestinationPicker.pickAnnotationExportDestination).toHaveBeenCalledWith(
+      '示例书-批注.md',
+    );
+    expect(exportWriter.writeMarkdown).toHaveBeenCalledWith(
+      'notes.md',
+      expect.stringContaining('第一段重要原文'),
+    );
 
     const search = screen.getByRole('searchbox', { name: '筛选批注' });
     await user.type(search, '需要回看');

@@ -6,10 +6,14 @@ import { buildEpub } from '../domain/library/epub/zipWriter';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import { createLocalStorageAnnotationRepository } from '../domain/annotation/localStorageAnnotationRepository';
 import { createDefaultTauriAnnotationRepository } from '../domain/annotation/tauriAnnotationRepository';
+import type { AnnotationExportWriter } from '../domain/annotation/annotationExportWriter';
+import { createInMemoryAnnotationExportWriter } from '../domain/annotation/inMemoryAnnotationExportWriter';
+import { createDefaultTauriAnnotationExportWriter } from '../domain/annotation/tauriAnnotationExportWriter';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
 import { createDefaultTauriWorkspaceRepository } from '../domain/workspace/tauriWorkspaceRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import { registerAnnotationCommands } from '../workbench/annotationCommands';
+import { registerAnnotationExportCommands } from '../workbench/annotationExportCommands';
 import { registerLibraryCommands } from '../workbench/libraryCommands';
 import { registerMarkdownCommands } from '../workbench/markdownCommands';
 import {
@@ -41,6 +45,11 @@ import {
   createTauriBackupSourcePicker,
   type BackupSourcePicker,
 } from './backupSourcePicker';
+import {
+  createInMemoryAnnotationExportDestinationPicker,
+  createTauriAnnotationExportDestinationPicker,
+  type AnnotationExportDestinationPicker,
+} from './annotationExportDestinationPicker';
 
 export interface WindowCloseRequestedEvent {
   preventDefault: () => void;
@@ -58,6 +67,8 @@ export interface AppServices {
   workspaceRepository: WorkspaceRepository;
   importRepository: ImportRepository;
   annotationRepository: AnnotationRepository;
+  annotationExportDestinationPicker: AnnotationExportDestinationPicker;
+  annotationExportWriter: AnnotationExportWriter;
   backupRepository: BackupRepository;
   backupDestinationPicker: BackupDestinationPicker;
   backupSourcePicker: BackupSourcePicker;
@@ -70,6 +81,8 @@ export interface AppServicesOptions {
   workspaceRepository?: WorkspaceRepository;
   importRepository?: ImportRepository;
   annotationRepository?: AnnotationRepository;
+  annotationExportDestinationPicker?: AnnotationExportDestinationPicker;
+  annotationExportWriter?: AnnotationExportWriter;
   backupRepository?: BackupRepository;
   backupDestinationPicker?: BackupDestinationPicker;
   backupSourcePicker?: BackupSourcePicker;
@@ -135,6 +148,16 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     (isTauriRuntime()
       ? createDefaultTauriAnnotationRepository()
       : createLocalStorageAnnotationRepository());
+  const annotationExportDestinationPicker =
+    options.annotationExportDestinationPicker ??
+    (isTauriRuntime()
+      ? createTauriAnnotationExportDestinationPicker()
+      : createInMemoryAnnotationExportDestinationPicker());
+  const annotationExportWriter =
+    options.annotationExportWriter ??
+    (isTauriRuntime()
+      ? createDefaultTauriAnnotationExportWriter()
+      : createInMemoryAnnotationExportWriter());
   const importServices =
     options.importRepository && options.filePicker
       ? { importRepository: options.importRepository, filePicker: options.filePicker }
@@ -170,6 +193,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     pdfLib: options.pdfLib,
   });
   registerAnnotationCommands(commands, { annotationRepository });
+  registerAnnotationExportCommands(commands, {
+    annotationRepository,
+    destinationPicker: annotationExportDestinationPicker,
+    writer: annotationExportWriter,
+  });
   registerMarkdownCommands(commands, {
     importRepository: importServices.importRepository,
     workspaceRepository,
@@ -204,6 +232,8 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     workspaceRepository,
     importRepository: importServices.importRepository,
     annotationRepository,
+    annotationExportDestinationPicker,
+    annotationExportWriter,
     backupRepository,
     backupDestinationPicker,
     backupSourcePicker,

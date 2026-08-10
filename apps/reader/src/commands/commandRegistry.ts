@@ -46,6 +46,7 @@ export const COMMAND_IDS = {
   annotationUpdateNote: 'annotation.updateNote',
   annotationDelete: 'annotation.delete',
   annotationGoTo: 'annotation.goTo',
+  annotationExportMarkdown: 'annotation.exportMarkdown',
   markdownToggleSourceMode: 'markdown.toggleSourceMode',
   markdownSave: 'markdown.save',
   markdownDiscard: 'markdown.discard',
