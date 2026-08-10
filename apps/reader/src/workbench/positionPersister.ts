@@ -16,7 +16,7 @@ export class ThrottledPositionPersister {
   private readonly throttledMs: number;
   private latest: ReadingLocation | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private flushing = false;
+  private flushPromise: Promise<void> | null = null;
 
   constructor(options: PositionPersisterOptions) {
     this.save = options.save;
@@ -26,12 +26,12 @@ export class ThrottledPositionPersister {
   /** 记录一次位置变化(节流合并)。 */
   update(location: ReadingLocation): void {
     this.latest = location;
-    if (this.timer) {
+    if (this.timer || this.flushPromise) {
       return;
     }
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.flush();
+      void this.flush().catch(() => undefined);
     }, this.throttledMs);
   }
 
@@ -41,16 +41,28 @@ export class ThrottledPositionPersister {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    if (this.flushing || !this.latest) {
-      return;
-    }
-    this.flushing = true;
-    const location = this.latest;
-    this.latest = null;
+    const current = this.flushPromise ?? (this.flushPromise = this.drain());
     try {
-      await this.save(location);
+      await current;
     } finally {
-      this.flushing = false;
+      if (this.flushPromise === current) {
+        this.flushPromise = null;
+      }
+    }
+  }
+
+  private async drain(): Promise<void> {
+    while (this.latest) {
+      const location = this.latest;
+      this.latest = null;
+      try {
+        await this.save(location);
+      } catch (error) {
+        if (!this.latest) {
+          this.latest = location;
+        }
+        throw error;
+      }
     }
   }
 

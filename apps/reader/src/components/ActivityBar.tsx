@@ -1,4 +1,11 @@
-import { LibraryBig, ListTree, PanelLeftClose, PanelLeftOpen, StickyNote } from 'lucide-react';
+import {
+  Archive,
+  LibraryBig,
+  ListTree,
+  PanelLeftClose,
+  PanelLeftOpen,
+  StickyNote,
+} from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -25,6 +32,10 @@ export function ActivityBar() {
     void commands.execute(COMMAND_IDS.libraryImport).catch(() => undefined);
   };
 
+  const handleBackup = () => {
+    void commands.execute(COMMAND_IDS.libraryExportBackup).catch(() => undefined);
+  };
+
   const handleToggleAnnotations = () => {
     void commands.execute(COMMAND_IDS.workbenchToggleAnnotationSidebar).catch(() => undefined);
   };
@@ -43,6 +54,15 @@ export function ActivityBar() {
         className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 disabled:opacity-50"
       >
         <LibraryBig size={18} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="导出完整书库备份"
+        title="导出未加密的完整书库备份"
+        onClick={handleBackup}
+        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+      >
+        <Archive size={18} aria-hidden />
       </button>
       <button
         type="button"

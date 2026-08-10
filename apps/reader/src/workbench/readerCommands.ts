@@ -347,6 +347,7 @@ export function mountViewDocument(
         await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
       } catch (error) {
         console.error('保存阅读位置失败', error);
+        throw error;
       }
     },
   });
@@ -863,6 +864,13 @@ function clampTypographyPatch(
     next.gap = Math.min(30, Math.max(0, Math.round(next.gap)));
   }
   return next;
+}
+
+/** 导出前强制落库当前打开视图的最新阅读位置。 */
+export async function flushReaderPositions(): Promise<void> {
+  for (const persister of persisters.values()) {
+    await persister.flush();
+  }
 }
 
 /** 应用关闭时把当前视图位置 flush、取消搜索并关闭渲染器。 */

@@ -10,10 +10,10 @@ Cargo workspace 成员（见根 `Cargo.toml`）。Rust 拥有持久化、文件�
 | `src/main.rs` | 二进制入口 |
 | `src/error.rs` | 统一错误类型 `AppError` |
 | `src/fs.rs` | 托管文件布局 `LibraryPaths`（暂存/书库/封面/恢复快照目录）、恢复路径越界校验、原子写入、流式复制 + SHA-256 指纹 |
-| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供 `load_workspace_state` / `save_workspace_state`；`import.rs` 提供导入、书库、回收站、元数据与 `save_markdown` 命令；`markdown_recovery.rs` 提供 `write_markdown_recovery` / `list_markdown_recoveries` / `discard_markdown_recovery` |
-| `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现 `WorkspaceRepository`；`import.rs` 实现导入、书库、回收站与正式 Markdown 保存；`markdown_recovery.rs` 在应用私有文件系统原子保存版本化恢复快照，并用 SQLite 正式文档版本标记冲突 |
+| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供工作区命令；`import.rs` 提供导入、书库、回收站、元数据与 `save_markdown` 命令；`annotations.rs` 提供批注命令；`markdown_recovery.rs` 提供恢复快照命令；`backup.rs` 提供 `export_library_backup` 流式完整备份命令 |
+| `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现工作区；`import.rs` 实现导入、书库、回收站与正式 Markdown 保存；`annotations.rs` 实现批注；`markdown_recovery.rs` 管理恢复快照；`backup.rs` 创建一致 SQLite 快照并按流式归档写出 manifest、材料与封面 |
 | `src/db/migrations/` | 编号递增的 SQL 迁移文件，当前 `0001_workspace.sql`、`0002_materials.sql`、`0003_import_pending.sql`、`0004_material_overrides.sql`、`0005_material_trash.sql`、`0006_annotations.sql`、`0007_material_document_version.sql` |
-| `capabilities/default.json` | 最小权限 Capability（含关闭前等待 flush 所需的 `core:window:allow-destroy`、导入所需的 `dialog:default` 与外部链接 `opener:default`） |
+| `capabilities/default.json` | 最小权限 Capability（含关闭前等待 flush 所需的 `core:window:allow-destroy`、导入/备份所需的 `dialog:default` 与外部链接 `opener:default`） |
 | `tauri.conf.json` | 窗口、产品标识与打包配置 |
 | `icons/` | 应用图标，由 `scripts/generate-icons.mjs` 生成 |
 | `build.rs` / `Cargo.toml` | 构建配置与 Rust 依赖（tauri、tauri-plugin-dialog、tauri-plugin-opener、rusqlite、sha2、uuid、base64、serde） |

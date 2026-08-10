@@ -28,6 +28,14 @@ pub enum AppError {
     MaterialNotFound(String),
     #[error("阅读材料标识不合法:{0}")]
     InvalidMaterialId(String),
+    #[error("备份 manifest 无法写入:{0}")]
+    BackupManifestSerialize(serde_json::Error),
+    #[error("备份目标已存在:{0}")]
+    BackupDestinationExists(String),
+    #[error("备份源文件在导出期间发生变化:{0}")]
+    BackupSourceChanged(String),
+    #[error("备份归档无法写入:{0}")]
+    BackupArchive(String),
 }
 
 impl serde::Serialize for AppError {

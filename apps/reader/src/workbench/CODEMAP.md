@@ -18,6 +18,7 @@
 - `workbenchCommands.ts`：工作台 Command 的唯一实现入口。`registerWorkbenchCommands` 注册 `workbench.togglePrimarySidebar`、`workbench.focusEditorGroup` 与 `workbench.saveState`，先经 Repository 持久化成功后更新 Store；状态序列化包含拆分方向。
 - `importBook.ts`：批量导入编排 `importBooks`（一次多选、顺序 stage → inspect → commit、逐文件结果与失败分类），`classifyImportError` 把失败归类为 empty/unsupported/corrupt/permission/space/other。
 - `libraryCommands.ts`：书库 Command 唯一实现入口（`library.import`、`library.refresh`、元数据覆盖 `library.updateMetadata`/`library.setCover`/`library.removeCover`/`library.restoreMetadata`，回收站 `library.trash`/`library.restoreFromTrash`/`library.purge`）。
+- `backupCommands.ts`：完整书库备份 Command 唯一入口（`library.exportBackup`）；先提示未加密备份风险，再打开目标选择器并 flush 当前阅读位置，只有 Rust 导出成功后才报告完成，取消或失败均不调用成功状态。
 - `viewUtils.ts`：工作区视图查找共享工具（`findView`/`getActiveViewId`/`findViewGroupId`/`findViewInGroupByMaterialId`/`isViewActive`/`findViewMaterialId`），供各命令模块复用。
 - 对应 `*.test.ts`：Store、命令、位置持久化与阅读编排行为测试。
 
@@ -31,7 +32,7 @@ workbench/
 │   └── externalUrlOpener ExternalUrlOpener 窄接口(Tauri/浏览器打开外部链接)
 └── domain/
     ├── workspace/       WorkspaceRepository、WorkspaceState
-    ├── library/         ImportRepository、ReadingMaterial、EpubInspector
+    ├── library/         ImportRepository、BackupRepository、ReadingMaterial、EpubInspector
     ├── annotation/      AnnotationRepository、TextAnchor
     └── reader/          BookDocument、EpubBookDocument、viewHost、sanitizer、navigationHistory、search
 ```
@@ -49,4 +50,4 @@ workbench/
 
 ## 依赖方向
 
-`workbench/` 构建在 `commands/` 与 `domain/` 之上，向下游（`app/`、`components/`）提供 Store 与命令实现；它不反向依赖 UI 组件。可序列化状态（标签、阅读位置）在 Workspace Store，活对象（BookDocument）在 Reader Runtime，两者严格分离。
+`workbench/` 构建在 `commands/` 与 `domain/` 之上，向下游（`app/`、`components/`）提供 Store 与命令实现；它不反向依赖 UI 组件。可序列化状态（标签、阅读位置）在 Workspace Store，活对象（BookDocument）在 Reader Runtime，两者严格分离；备份只经 BackupRepository 调用 Rust，不读取本地文件或数据库。

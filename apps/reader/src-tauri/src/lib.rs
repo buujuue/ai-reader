@@ -36,6 +36,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::backup::export_library_backup,
             commands::workspace::load_workspace_state,
             commands::workspace::save_workspace_state,
             commands::annotations::list_annotations,

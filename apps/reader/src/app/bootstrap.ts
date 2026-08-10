@@ -14,9 +14,14 @@ import { registerLibraryCommands } from '../workbench/libraryCommands';
 import { registerMarkdownCommands } from '../workbench/markdownCommands';
 import {
   registerReaderCommands,
+  flushReaderPositions,
   type ReaderCommandDependencies,
 } from '../workbench/readerCommands';
 import { registerWorkbenchCommands } from '../workbench/workbenchCommands';
+import { registerBackupCommands } from '../workbench/backupCommands';
+import type { BackupRepository } from '../domain/library/backupRepository';
+import { createDefaultTauriBackupRepository } from '../domain/library/tauriBackupRepository';
+import { createUnsupportedBackupRepository } from '../domain/library/backupRepository';
 import { useAnnotationStore } from '../workbench/annotationStore';
 import { createInMemoryFilePicker, createTauriFilePicker, type FilePicker } from './filePicker';
 import {
@@ -26,6 +31,11 @@ import {
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import {
+  createInMemoryBackupDestinationPicker,
+  createTauriBackupDestinationPicker,
+  type BackupDestinationPicker,
+} from './backupDestinationPicker';
 
 export interface WindowCloseRequestedEvent {
   preventDefault: () => void;
@@ -43,6 +53,8 @@ export interface AppServices {
   workspaceRepository: WorkspaceRepository;
   importRepository: ImportRepository;
   annotationRepository: AnnotationRepository;
+  backupRepository: BackupRepository;
+  backupDestinationPicker: BackupDestinationPicker;
   filePicker: FilePicker;
   externalUrlOpener: ExternalUrlOpener;
   windowLifecycle: WindowLifecycle | null;
@@ -52,6 +64,8 @@ export interface AppServicesOptions {
   workspaceRepository?: WorkspaceRepository;
   importRepository?: ImportRepository;
   annotationRepository?: AnnotationRepository;
+  backupRepository?: BackupRepository;
+  backupDestinationPicker?: BackupDestinationPicker;
   filePicker?: FilePicker;
   viewHostFactory?: ReaderCommandDependencies['viewHostFactory'];
   externalUrlOpener?: ExternalUrlOpener;
@@ -119,6 +133,14 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       ? { importRepository: options.importRepository, filePicker: options.filePicker }
       : createImportServices();
   const externalUrlOpener = options.externalUrlOpener ?? createDefaultExternalUrlOpener();
+  const backupRepository =
+    options.backupRepository ??
+    (isTauriRuntime() ? createDefaultTauriBackupRepository() : createUnsupportedBackupRepository());
+  const backupDestinationPicker =
+    options.backupDestinationPicker ??
+    (isTauriRuntime()
+      ? createTauriBackupDestinationPicker()
+      : createInMemoryBackupDestinationPicker());
   const windowLifecycle =
     options.windowLifecycle !== undefined
       ? options.windowLifecycle
@@ -126,6 +148,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
+  registerBackupCommands(commands, {
+    backupRepository,
+    destinationPicker: backupDestinationPicker,
+    flushReaderPositions,
+  });
   registerLibraryCommands(commands, {
     ...importServices,
     pdfLib: options.pdfLib,
@@ -165,6 +192,8 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     workspaceRepository,
     importRepository: importServices.importRepository,
     annotationRepository,
+    backupRepository,
+    backupDestinationPicker,
     filePicker: importServices.filePicker,
     externalUrlOpener,
     windowLifecycle,
