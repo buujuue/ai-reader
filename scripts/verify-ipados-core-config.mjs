@@ -36,9 +36,15 @@ assert(permissions.includes('dialog:allow-open'), 'The main window needs the sys
 assert(csp.includes("script-src 'self'"), 'Book content must not broaden executable script sources');
 assert(csp.includes("object-src 'none'"), 'Book content must not embed arbitrary objects');
 assert(workflow.includes('name: iPadOS'), 'The main cross-platform workflow must include iPadOS');
+assert(workflow.includes('runs-on: macos-15'), 'The iPadOS job must use the Xcode 16-compatible macOS runner');
+assert(workflow.includes("XCODE_VERSION: '16.4'"), 'The iPadOS job must pin the Xcode version');
+assert(workflow.includes('xcode-select -s "$xcode_path"'), 'The iPadOS job must select the pinned Xcode toolchain');
 assert(workflow.includes('pnpm tauri ios init'), 'The iPadOS job must generate the native Xcode project');
 assert(workflow.includes('pnpm tauri ios build'), 'The iPadOS job must build a native simulator app');
 assert(workflow.includes('xcrun simctl launch'), 'The iPadOS job must launch the native app');
 assert(workflow.includes('xcrun simctl io'), 'The iPadOS job must capture real WebView evidence');
+assert(workflow.includes('mkdir -p "$evidence_dir"'), 'The iPadOS job must initialize its evidence directory before building');
+assert(workflow.includes('actions/upload-artifact@v7'), 'The workflow must use the Node 24 artifact action');
+assert(workflow.includes('if-no-files-found: warn'), 'The iPadOS evidence upload must not mask the original build failure');
 
 console.log('iPadOS core configuration is valid');

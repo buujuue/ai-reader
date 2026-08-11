@@ -82,7 +82,7 @@ jobs:
 
       - name: 上传 Windows 安装包
         if: success() && matrix.native-build == 'windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-reader-windows-${{ github.sha }}
           if-no-files-found: error
@@ -90,7 +90,7 @@ jobs:
 
       - name: 上传 macOS 构建产物
         if: success() && matrix.native-build == 'macos'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-reader-macos-${{ github.sha }}
           if-no-files-found: error
@@ -100,11 +100,28 @@ jobs:
 
   ipados:
     name: iPadOS 原生验证
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
+    env:
+      XCODE_VERSION: '16.4'
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+
+      - name: 初始化 iPadOS 证据目录
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/ai-reader-ipados-evidence"
+          mkdir -p "$evidence_dir"
+          printf '%s\n' 'iPadOS evidence directory initialized' > "$evidence_dir/workflow-started.txt"
+
+      - name: 选择兼容的 Xcode
+        run: |
+          set -euo pipefail
+          xcode_path="/Applications/Xcode_${XCODE_VERSION}.app"
+          test -d "$xcode_path"
+          sudo xcode-select -s "$xcode_path"
+          xcodebuild -version | tee "$RUNNER_TEMP/ai-reader-ipados-evidence/xcode-version.txt"
 
       - name: 配置 pnpm
         uses: pnpm/action-setup@v4
@@ -161,16 +178,16 @@ jobs:
           app_path="$(find src-tauri/gen/apple -type d -name '*.app' -print -quit)"
           test -n "$app_path"
           xcrun simctl install "$device_id" "$app_path"
-          mkdir -p "$RUNNER_TEMP/ai-reader-ipados-evidence"
-          xcrun simctl launch --console "$device_id" com.buujuue.ai-reader > "$RUNNER_TEMP/ai-reader-ipados-evidence/launch.log" 2>&1
+          evidence_dir="$RUNNER_TEMP/ai-reader-ipados-evidence"
+          xcrun simctl launch --console "$device_id" com.buujuue.ai-reader > "$evidence_dir/launch.log" 2>&1
           sleep 5
-          xcrun simctl io "$device_id" screenshot "$RUNNER_TEMP/ai-reader-ipados-evidence/ipados-webview.png"
+          xcrun simctl io "$device_id" screenshot "$evidence_dir/ipados-webview.png"
           xcrun simctl shutdown "$device_id"
 
       - name: 上传 iPadOS 原生证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-reader-ipados-${{ github.sha }}
-          if-no-files-found: error
+          if-no-files-found: warn
           path: ${{ runner.temp }}/ai-reader-ipados-evidence
