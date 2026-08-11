@@ -9,7 +9,7 @@ repository.workspace = true
 
 [lib]
 name = "ai_reader_lib"
-crate-type = ["lib"]
+crate-type = ["staticlib", "cdylib", "lib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

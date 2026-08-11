@@ -6,6 +6,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath) => readFileSync(join(root, relativePath), 'utf8');
 const tauriConfig = JSON.parse(read('apps/reader/src-tauri/tauri.conf.json'));
 const capability = JSON.parse(read('apps/reader/src-tauri/capabilities/default.json'));
+const cargoManifest = read('apps/reader/src-tauri/Cargo.toml');
 const workflow = read('.github/workflows/cross-platform.yml');
 const viewport = read('apps/reader/index.html');
 const rustEntry = read('apps/reader/src-tauri/src/lib.rs');
@@ -20,6 +21,10 @@ const csp = tauriConfig.app?.security?.csp ?? '';
 
 assert(tauriConfig.bundle?.active === true, 'Tauri bundle must be active');
 assert(tauriConfig.bundle?.targets === 'all', 'Tauri bundle targets must include every host platform');
+assert(
+  cargoManifest.includes('crate-type = ["staticlib", "cdylib", "lib"]'),
+  'The Tauri library must expose staticlib, cdylib and lib crate types for mobile builds',
+);
 assert(
   rustEntry.includes('#[cfg_attr(mobile, tauri::mobile_entry_point)]'),
   'The Rust entry point must opt into Tauri mobile initialization',
