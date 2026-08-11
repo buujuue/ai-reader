@@ -33,8 +33,8 @@ pnpm tauri build
 
 预期生成：
 
-- `apps/reader/src-tauri/target/release/bundle/macos/AI Reader.app`
-- `apps/reader/src-tauri/target/release/bundle/dmg/AI Reader_0.1.0_aarch64.dmg`（Apple Silicon）或对应 Intel 文件名
+- `target/release/bundle/macos/AI Reader.app`
+- `target/release/bundle/dmg/AI Reader_0.1.0_aarch64.dmg`（Apple Silicon）或对应 Intel 文件名
 
 ## 冒烟步骤与证据
 

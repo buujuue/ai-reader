@@ -1,0 +1,99 @@
+name: 跨端验证
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 每一次 main 推送都必须保留自己的验证运行，避免快速连续推送时漏掉中间提交。
+concurrency:
+  group: cross-platform-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: ${{ matrix.name }} 验证
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+            native-build: windows
+          - name: macOS
+            os: macos-14
+            native-build: macos
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: 安装 JavaScript 依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 校验 macOS 核心配置
+        run: pnpm verify:macos
+
+      - name: TypeScript 类型检查
+        run: pnpm typecheck
+
+      - name: 前端测试
+        run: pnpm test
+
+      - name: Rust 测试
+        run: cargo test
+
+      - name: Rust Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: 前端构建
+        run: pnpm build
+
+      - name: Windows 原生打包
+        if: matrix.native-build == 'windows'
+        run: pnpm tauri build --bundles nsis
+
+      - name: macOS 原生打包
+        if: matrix.native-build == 'macos'
+        run: pnpm tauri build --bundles app,dmg
+
+      - name: 上传 Windows 安装包
+        if: success() && matrix.native-build == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-reader-windows-${{ github.sha }}
+          if-no-files-found: error
+          path: target/release/bundle/nsis/*.exe
+
+      - name: 上传 macOS 构建产物
+        if: success() && matrix.native-build == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-reader-macos-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            target/release/bundle/macos/*.app
+            target/release/bundle/dmg/*.dmg
