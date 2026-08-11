@@ -9,6 +9,7 @@ import {
   isInteractiveElement,
   ReadingInputController,
   WheelPageGate,
+  shouldSuppressNativeTouch,
 } from './readingInput';
 
 describe('interpretKeyboard', () => {
@@ -151,6 +152,62 @@ describe('interpretSwipe', () => {
     expect(
       interpretSwipe({ deltaX: -120, deltaY: 10, flow: 'paginated', hasSelection: true }),
     ).toEqual({ kind: 'ignore' });
+  });
+});
+
+describe('shouldSuppressNativeTouch', () => {
+  it('在文本选择过程中始终保留 WebView 原生触摸行为', () => {
+    expect(
+      shouldSuppressNativeTouch({
+        phase: 'move',
+        deltaX: 100,
+        deltaY: 4,
+        flow: 'paginated',
+        hasSelection: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('只在明确的横向翻页手势中拦截原生触摸', () => {
+    expect(
+      shouldSuppressNativeTouch({
+        phase: 'move',
+        deltaX: -24,
+        deltaY: 3,
+        flow: 'paginated',
+        hasSelection: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSuppressNativeTouch({
+        phase: 'move',
+        deltaX: 3,
+        deltaY: 24,
+        flow: 'paginated',
+        hasSelection: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('不会在滚动模式或触摸开始阶段拦截事件', () => {
+    expect(
+      shouldSuppressNativeTouch({
+        phase: 'start',
+        deltaX: 0,
+        deltaY: 0,
+        flow: 'paginated',
+        hasSelection: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSuppressNativeTouch({
+        phase: 'move',
+        deltaX: 100,
+        deltaY: 0,
+        flow: 'scrolled',
+        hasSelection: false,
+      }),
+    ).toBe(false);
   });
 });
 

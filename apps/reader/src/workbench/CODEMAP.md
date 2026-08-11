@@ -2,6 +2,8 @@
 
 ## 功能
 
+- `layoutPolicy.ts`：按 Workbench 实际容器宽度计算紧凑/中等/宽布局；紧凑布局只显示活动 Editor Group，并把侧栏降级为覆盖抽屉，不修改可序列化的工作区状态。对应 `layoutPolicy.test.ts`。
+
 - 主要材料与批注面板：`workspaceStore.ts` 持久化 `primaryMaterialId` 和 `annotationSidebarVisible`；`workbenchCommands.ts` 提供 `workbench.setPrimaryMaterial`/`workbench.toggleAnnotationSidebar`；`readerCommands.ts` 提供 `annotation.goTo`，集中处理批注跳转并拒绝失联批注的猜测定位。
 
 - `workspaceStore.ts`：zustand Store，持有可序列化的工作区状态（`primarySidebarVisible`、`splitDirection`、`activeEditorGroupId`、`editorGroups`、`globalReadingTypography` 全局阅读默认、`materialTypography` 材料级排版覆盖）及 `focusEditorGroup`/`splitEditorGroup`/`openView`/`closeView`/`setActiveView`/`setViewSourceMode`/`setViewLocation`/`pushViewLocation`/`setViewHistory`/`setGlobalReadingTypography`/`setMaterialTypography`/`resetMaterialTypography`/`getEffectiveTypography`/`hydrate`/`resetToDefault` 等动作；`openView` 只在当前组内按 BookId 复用已有标签，`splitEditorGroup` 最多创建第二组并复制当前活动视图；用 `navigationHistory` 维护每个视图的可序列化导航历史；渲染器、选区等活对象不进入本 Store。`ReadingView` 的 `sourceMode` 字段标记视图是否处于 Markdown 源码模式（可序列化）。

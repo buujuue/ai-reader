@@ -158,11 +158,14 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 14 切片**：PDF 文本批注与扫描页区域批注创建（文本选区按所属页生成 PDF 锚点、扫描页显示无文本提示并支持拖拽区域、区域锚点使用页码与归一化矩形、文本/区域创建统一经 Command 持久化）。对应工单 #24。
 - **第 15 切片**：完整书库备份导出与恢复（版本化 tar manifest、隔离解包与指纹/SQLite 校验、空间预检、当前库安全快照、可恢复文件切换、启动回滚及前端恢复入口）。对应工单 #25、#26。
 
-macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`：Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS 启动、导入、阅读与重启恢复仍需在 macOS 主机执行，浏览器降级和 Windows 原生运行不计入该证据。跨端验证约束记录在 `docs/architecture/cross-platform-validation.md`，统一由 `.github/workflows/cross-platform.yml` 承载，并要求每次推送 `main` 都运行 Windows 与 macOS 矩阵；新增端时扩展同一工作流。
+macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`；iPadOS 的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`。Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS/iPadOS 启动、导入、阅读与重启恢复不计入浏览器降级证据，统一由 `.github/workflows/cross-platform.yml` 承载对应平台的自动校验；未能在 CI 自动完成的移动系统交互按冒烟文档记录人工证据。
 
 ## 后续切片顺序
 
 1. Markdown 批注锚点迁移。
-2. 响应式布局。
-3. 完整备份、整库恢复和单本批注导出。
-4. macOS、iPadOS、Android 平板原生启动与核心阅读验收。
+2. 完整备份、整库恢复和单本批注导出。
+3. Android 平板原生启动与核心阅读验收（macOS、iPadOS 的配置与模拟器验证已落地，真机冒烟按对应文档执行）。
+
+## iPadOS 核心冒烟与验证
+
+iPadOS 原生入口、系统文件选择器、安全区元数据、紧凑容器布局和触摸选区优先级由前端与 Tauri 移动壳共同提供。`.github/workflows/cross-platform.yml` 的 iPadOS job 在 macOS runner 上生成并启动 iPad Simulator 原生应用，上传真实 WebView 启动日志与截图；完整人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`。

@@ -18,6 +18,7 @@
 ```powershell
 pnpm dev          # 仅前端(Vite),浏览器降级,内存 Repository
 pnpm build        # typecheck + Vite 构建
+pnpm verify:ipados # 校验 iPadOS 原生核心冒烟配置
 pnpm test         # Vitest
 pnpm typecheck    # TypeScript 严格模式类型检查
 pnpm tauri dev    # Vite + Tauri 完整桌面开发

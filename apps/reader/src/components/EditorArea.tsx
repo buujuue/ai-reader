@@ -7,13 +7,14 @@ import type { EditorGroupState } from '../domain/workspace/workspaceState';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import type { LayoutPolicy } from '../workbench/layoutPolicy';
 import { ReadingView } from './ReadingView';
 
-export function EditorArea() {
+export function EditorArea({ layoutPolicy }: { layoutPolicy: LayoutPolicy }) {
   const splitDirection = useWorkspaceStore((state) => state.splitDirection);
   const editorGroups = useWorkspaceStore((state) => state.editorGroups);
+  const activeEditorGroupId = useWorkspaceStore((state) => state.activeEditorGroupId);
   const hasSplit = editorGroups.length >= 2;
-
   if (editorGroups.length === 0 || (editorGroups.length === 1 && editorGroups[0]!.views.length === 0)) {
     return <EmptyEditorArea />;
   }
@@ -22,13 +23,55 @@ export function EditorArea() {
     <section
       aria-label="编辑器区"
       className={`flex min-h-0 min-w-0 flex-1 bg-zinc-950 ${
-        splitDirection === 'down' ? 'flex-col' : 'flex-row'
+        !layoutPolicy.showAllEditorGroups || splitDirection === 'down' ? 'flex-col' : 'flex-row'
       }`}
     >
+      {!layoutPolicy.showAllEditorGroups && editorGroups.length > 1 ? (
+        <CompactEditorGroupPicker groups={editorGroups} activeGroupId={activeEditorGroupId} />
+      ) : null}
       {editorGroups.map((group, index) => (
-        <EditorGroupPane key={group.id} group={group} index={index} hasSplit={hasSplit} />
+        <EditorGroupPane
+          key={group.id}
+          group={group}
+          index={index}
+          hasSplit={hasSplit}
+          visible={layoutPolicy.showAllEditorGroups || group.id === activeEditorGroupId}
+        />
       ))}
     </section>
+  );
+}
+
+function CompactEditorGroupPicker({
+  groups,
+  activeGroupId,
+}: {
+  groups: EditorGroupState[];
+  activeGroupId: string;
+}) {
+  const { commands } = useAppServices();
+
+  return (
+    <div
+      aria-label="紧凑布局编辑器组"
+      className="flex shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-900/60 px-2 py-1"
+    >
+      {groups.map((group, index) => (
+        <button
+          key={group.id}
+          type="button"
+          aria-pressed={group.id === activeGroupId}
+          onClick={() => {
+            void commands
+              .execute(COMMAND_IDS.workbenchFocusEditorGroup, group.id)
+              .catch(() => undefined);
+          }}
+          className="rounded px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 aria-pressed:bg-sky-600/30 aria-pressed:text-sky-200"
+        >
+          组 {index + 1}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -51,10 +94,12 @@ function EditorGroupPane({
   group,
   index,
   hasSplit,
+  visible,
 }: {
   group: EditorGroupState;
   index: number;
   hasSplit: boolean;
+  visible: boolean;
 }) {
   const { commands } = useAppServices();
   const materials = useLibraryStore((state) => state.materials);
@@ -109,6 +154,7 @@ function EditorGroupPane({
   return (
     <section
       aria-label={`编辑器组 ${index + 1}`}
+      hidden={!visible}
       onPointerDown={focusGroup}
       className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col bg-zinc-950 ${
         isActiveGroup ? 'ring-1 ring-inset ring-sky-900/70' : ''

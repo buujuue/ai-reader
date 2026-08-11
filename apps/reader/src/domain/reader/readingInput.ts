@@ -89,6 +89,34 @@ export interface SwipeInput {
   hasSelection: boolean;
 }
 
+export interface NativeTouchSuppressionInput {
+  phase: 'start' | 'move' | 'end';
+  deltaX: number;
+  deltaY: number;
+  flow: ReadingFlowInput;
+  hasSelection: boolean;
+}
+
+/**
+ * 判断是否应该阻止 Foliate/WebView 的原生触摸处理。
+ *
+ * touchstart 不能直接 preventDefault：iPadOS 需要它完成文字长按选择，选择状态也可能
+ * 只在后续 selectionchange 事件中出现。只有在尚未选择文本且已经确认是横向手势时，
+ * 才拦截原生事件，避免同一次手势既选中文字又触发翻页。
+ */
+export function shouldSuppressNativeTouch(input: NativeTouchSuppressionInput): boolean {
+  if (input.flow !== 'paginated' || input.hasSelection || input.phase === 'start') {
+    return false;
+  }
+  if (Math.abs(input.deltaX) <= Math.abs(input.deltaY)) {
+    return false;
+  }
+  if (input.phase === 'move') {
+    return Math.abs(input.deltaX) >= 8;
+  }
+  return Math.abs(input.deltaX) >= SWIPE_THRESHOLD;
+}
+
 /** 交互控件/链接选择器:点击这些区域不触发翻页。 */
 const INTERACTIVE_SELECTOR =
   'a[href], button, [contenteditable], input, textarea, select, [role="button"]';
@@ -319,15 +347,29 @@ export class ReadingInputController {
         target: event.target,
       });
     };
-    const suppressNativeTouch = (event: Event) => {
-      if (this.dispatch.getFlow() === 'paginated') {
+    const suppressNativeTouch = (
+      event: Event,
+      phase: Extract<ContentInteraction, { type: 'touch' }>['phase'],
+      x: number,
+      y: number,
+    ) => {
+      const start = this.touchStart;
+      if (
+        shouldSuppressNativeTouch({
+          phase,
+          deltaX: start ? x - start.x : 0,
+          deltaY: start ? y - start.y : 0,
+          flow: this.dispatch.getFlow(),
+          hasSelection: this.selecting,
+        })
+      ) {
         event.stopImmediatePropagation();
         event.preventDefault();
       }
     };
     const onTouchStart = (event: Event) => {
-      suppressNativeTouch(event);
       const touch = (event as TouchEvent).changedTouches[0];
+      suppressNativeTouch(event, 'start', touch?.clientX ?? 0, touch?.clientY ?? 0);
       this.handle({
         type: 'touch',
         phase: 'start',
@@ -339,8 +381,8 @@ export class ReadingInputController {
       });
     };
     const onTouchMove = (event: Event) => {
-      suppressNativeTouch(event);
       const touch = (event as TouchEvent).changedTouches[0];
+      suppressNativeTouch(event, 'move', touch?.clientX ?? 0, touch?.clientY ?? 0);
       this.handle({
         type: 'touch',
         phase: 'move',
@@ -351,8 +393,8 @@ export class ReadingInputController {
       });
     };
     const onTouchEnd = (event: Event) => {
-      suppressNativeTouch(event);
       const touch = (event as TouchEvent).changedTouches[0];
+      suppressNativeTouch(event, 'end', touch?.clientX ?? 0, touch?.clientY ?? 0);
       this.handle({
         type: 'touch',
         phase: 'end',

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { ActivityBar } from '../components/ActivityBar';
 import { AnnotationSidebar } from '../components/AnnotationSidebar';
@@ -16,13 +16,22 @@ import { TocSidebar } from '../components/TocSidebar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { getVisibleSidebars, useLayoutPolicy } from '../workbench/layoutPolicy';
 import { useAppServices } from './AppServicesContext';
 
 export function App() {
+  const workbenchRef = useRef<HTMLDivElement | null>(null);
+  const layoutPolicy = useLayoutPolicy(workbenchRef);
   const { commands, workspaceRepository, importRepository, windowLifecycle } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
+  const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
   const tocVisible = useShellUiStore((state) => state.tocVisible);
   const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
+  const visibleSidebars = getVisibleSidebars(layoutPolicy, {
+    primary: primarySidebarVisible,
+    toc: tocVisible,
+    annotation: annotationSidebarVisible,
+  }, tocVisible ? 'toc' : primaryMaterialId ? 'annotation' : 'primary');
 
   useEffect(() => {
     let cancelled = false;
@@ -147,13 +156,46 @@ export function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-      <div className="flex min-h-0 flex-1">
+    <div className="flex h-full flex-col bg-zinc-950 text-zinc-100">
+      <div
+        ref={workbenchRef}
+        data-layout-mode={layoutPolicy.mode}
+        data-sidebar-presentation={layoutPolicy.sidebarPresentation}
+        className="relative flex min-h-0 min-w-0 flex-1"
+      >
         <ActivityBar />
-        {tocVisible ? <TocSidebar /> : null}
-        {primarySidebarVisible ? <PrimarySidebar /> : null}
-        <EditorArea />
-        {annotationSidebarVisible ? <AnnotationSidebar /> : null}
+        {layoutPolicy.sidebarPresentation === 'inline' ? (
+          <>
+            {visibleSidebars.includes('toc') ? <TocSidebar /> : null}
+            {visibleSidebars.includes('primary') ? <PrimarySidebar /> : null}
+            <EditorArea layoutPolicy={layoutPolicy} />
+            {visibleSidebars.includes('annotation') ? <AnnotationSidebar /> : null}
+          </>
+        ) : (
+          <>
+            <EditorArea layoutPolicy={layoutPolicy} />
+            <div
+              aria-label="紧凑布局侧栏抽屉"
+              className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+            >
+              {visibleSidebars.includes('toc') ? (
+                <div className="pointer-events-auto absolute inset-y-0 left-12 w-60 shadow-2xl shadow-black/50">
+                  <TocSidebar />
+                </div>
+              ) : null}
+              {visibleSidebars.includes('primary') ? (
+                <div className="pointer-events-auto absolute inset-y-0 left-[15rem] w-64 shadow-2xl shadow-black/50">
+                  <PrimarySidebar />
+                </div>
+              ) : null}
+              {visibleSidebars.includes('annotation') ? (
+                <div className="pointer-events-auto absolute inset-y-0 right-0 w-72 shadow-2xl shadow-black/50">
+                  <AnnotationSidebar />
+                </div>
+              ) : null}
+            </div>
+          </>
+        )}
       </div>
       <StatusBar />
       <MetadataEditorDialog />

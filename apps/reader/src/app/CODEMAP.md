@@ -2,6 +2,8 @@
 
 ## 功能
 
+- `App.tsx`：在应用外壳层读取 `LayoutPolicy`，为紧凑容器渲染覆盖式侧栏抽屉，并保留 Editor Group、侧栏和阅读位置等工作区状态；根容器承接平台安全区。
+
 - `main.tsx`（位于 `src/` 根，不在本目录）通过 `createRoot` 挂载，组合 `AppServicesProvider` 与 `App`。
 - `bootstrap.ts`：组装 `AppServices`（`CommandRegistry` + `WorkspaceRepository` + `ImportRepository` + `AnnotationRepository` + `AnnotationExportDestinationPicker` + `AnnotationExportWriter` + `BackupRepository` + `FilePicker` + `BackupDestinationPicker` + `ExternalUrlOpener` + `WindowLifecycle`）。`isTauriRuntime()` 检测 `__TAURI_INTERNALS__`，据此选择 Tauri Adapter 或内存 Adapter；桌面端的 `WindowLifecycle` 只暴露关闭请求监听与销毁窗口两项能力；`createAppServices()` 注册工作台、书库、批注导出、备份与阅读命令，内存降级时用演示 EPUB 种子化书库，可注入平台窄接口供测试。
 - `filePicker.ts`：`FilePicker` 窄接口，`pickEpubs()` 一次返回多份文件路径。Tauri 端经 `@tauri-apps/plugin-dialog` 打开系统文件选择器（`multiple: true`）；内存端返回固定演示源路径数组。
