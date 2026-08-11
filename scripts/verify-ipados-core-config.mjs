@@ -46,6 +46,10 @@ assert(workflow.includes("XCODE_VERSION: '16.4'"), 'The iPadOS job must pin the 
 assert(workflow.includes('xcode-select -s "$xcode_path"'), 'The iPadOS job must select the pinned Xcode toolchain');
 assert(workflow.includes('pnpm tauri ios init'), 'The iPadOS job must generate the native Xcode project');
 assert(workflow.includes('pnpm tauri ios build'), 'The iPadOS job must build a native simulator app');
+assert(
+  workflow.includes('sed -nE') && workflow.includes('[0-9A-Fa-f-]{36}'),
+  'The iPadOS job must extract a simulator UUID instead of assuming the second parenthesized field',
+);
 assert(workflow.includes('xcrun simctl launch'), 'The iPadOS job must launch the native app');
 assert(workflow.includes('xcrun simctl io'), 'The iPadOS job must capture real WebView evidence');
 assert(workflow.includes('mkdir -p "$evidence_dir"'), 'The iPadOS job must initialize its evidence directory before building');
