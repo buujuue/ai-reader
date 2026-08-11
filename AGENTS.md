@@ -75,6 +75,7 @@ pnpm build                  # 前端类型检查 + Vite 构建
 pnpm tauri build            # 原生应用构建(Windows 为主验收平台)
 pnpm test                   # Vitest 全量测试
 pnpm typecheck              # TypeScript 严格模式类型检查
+pnpm verify:macos           # 校验 macOS 核心阅读冒烟的 Tauri 打包、窗口与权限配置
 cargo test                  # Rust 迁移与 workspace 持久化契约
 cargo clippy --workspace --all-targets -- -D warnings
 ```

@@ -1,5 +1,5 @@
 /*
- * 生成 AI Reader 的应用图标(PNG + ICO)。
+ * 生成 AI Reader 的应用图标(PNG + ICO + ICNS)。
  * 用法:node scripts/generate-icons.mjs
  * 输出到 apps/reader/src-tauri/icons/,供 Tauri 打包与窗口图标使用。
  */
@@ -134,10 +134,34 @@ function encodeIco(sizes) {
   return Buffer.concat([header, ...entries, ...payloads]);
 }
 
+function encodeIcns(entries) {
+  const payloads = entries.map(({ type, size }) => {
+    const png = encodePng(size, drawIcon(size));
+    const header = Buffer.alloc(8);
+    header.write(type, 0, 4, 'ascii');
+    header.writeUInt32BE(8 + png.length, 4);
+    return Buffer.concat([header, png]);
+  });
+  const body = Buffer.concat(payloads);
+  const header = Buffer.alloc(8);
+  header.write('icns', 0, 4, 'ascii');
+  header.writeUInt32BE(8 + body.length, 4);
+  return Buffer.concat([header, body]);
+}
+
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(join(OUT_DIR, '32x32.png'), encodePng(32, drawIcon(32)));
 writeFileSync(join(OUT_DIR, '128x128.png'), encodePng(128, drawIcon(128)));
 writeFileSync(join(OUT_DIR, '128x128@2x.png'), encodePng(256, drawIcon(256)));
 writeFileSync(join(OUT_DIR, 'icon.png'), encodePng(512, drawIcon(512)));
 writeFileSync(join(OUT_DIR, 'icon.ico'), encodeIco([16, 24, 32, 48, 64, 256]));
+writeFileSync(
+  join(OUT_DIR, 'icon.icns'),
+  encodeIcns([
+    { type: 'ic07', size: 128 },
+    { type: 'ic08', size: 256 },
+    { type: 'ic09', size: 512 },
+    { type: 'ic10', size: 1024 },
+  ]),
+);
 console.log(`icons written to ${OUT_DIR}`);
