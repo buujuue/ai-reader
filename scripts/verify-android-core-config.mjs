@@ -61,8 +61,12 @@ assert(workflow.includes('disable-linux-hw-accel: false'), 'The Android job must
 assert(workflow.includes('bash .github/scripts/android-emulator-smoke.sh'), 'The Android job must run the emulator smoke script as one shell command');
 assert(androidSmoke.includes('adb install'), 'The Android smoke script must install the generated APK');
 assert(
-  androidSmoke.includes('aapt dump badging'),
-  'The Android smoke script must derive the package ID from the generated APK',
+  androidSmoke.includes('"$ANDROID_HOME/build-tools"'),
+  'The Android smoke script must locate aapt from the configured Android SDK',
+);
+assert(
+  androidSmoke.includes('"$aapt_path" dump badging'),
+  'The Android smoke script must invoke the resolved aapt path',
 );
 assert(
   !androidSmoke.includes('tauri.conf.json'),

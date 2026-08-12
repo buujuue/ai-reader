@@ -3,12 +3,16 @@
 set -euo pipefail
 
 : "${EVIDENCE_DIR:?EVIDENCE_DIR must be set by the workflow}"
+: "${ANDROID_HOME:?ANDROID_HOME must be set by the workflow}"
 
 apk_path="$(find apps/reader/src-tauri/gen/android -type f -name '*.apk' -path '*/build/outputs/apk/*' -print -quit)"
 test -n "$apk_path"
 test -f "$apk_path"
 
-apk_badging="$(aapt dump badging "$apk_path")"
+aapt_path="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+test -x "$aapt_path"
+
+apk_badging="$("$aapt_path" dump badging "$apk_path")"
 package_id="$(printf '%s\n' "$apk_badging" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
 launchable_activity="$(printf '%s\n' "$apk_badging" | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")"
 test -n "$package_id"
