@@ -303,7 +303,7 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
-          profile: Pixel_C
+          profile: pixel_c
           disable-linux-hw-accel: false
           script: bash .github/scripts/android-emulator-smoke.sh
 
