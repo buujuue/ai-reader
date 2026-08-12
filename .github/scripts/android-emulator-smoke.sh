@@ -18,34 +18,15 @@ launchable_activity="$(printf '%s\n' "$apk_badging" | sed -n "s/^launchable-acti
 test -n "$package_id"
 test -n "$launchable_activity"
 
-record_resources() {
-  local label="$1"
-  {
-    printf '\n=== %s ===\n' "$label"
-    date -Is
-    free -h
-    if test -r /sys/fs/cgroup/memory.current; then
-      printf 'cgroup memory.current=' && cat /sys/fs/cgroup/memory.current
-      printf 'cgroup memory.max=' && cat /sys/fs/cgroup/memory.max
-      cat /sys/fs/cgroup/memory.events
-    fi
-    ps -eo pid,ppid,rss,%mem,%cpu,comm --sort=-rss | sed -n '1,20p'
-  } | tee -a "$EVIDENCE_DIR/resource-usage.log"
-}
-
 cleanup() {
   adb logcat -d > "$EVIDENCE_DIR/android-logcat.txt" 2>&1 || true
 }
 
 trap cleanup EXIT
 
-record_resources before-install
 adb install "$apk_path" | tee "$EVIDENCE_DIR/install.log"
-record_resources after-install
 adb shell monkey -p "$package_id" 1 | tee "$EVIDENCE_DIR/launch.log"
-record_resources after-launch
 sleep 8
-record_resources before-start-screenshot
 adb exec-out screencap -p > "$EVIDENCE_DIR/android-tablet-start.png"
 adb shell uiautomator dump /sdcard/ai-reader-start-ui.xml >/dev/null
 adb shell cat /sdcard/ai-reader-start-ui.xml > "$EVIDENCE_DIR/android-tablet-start-ui.xml"
