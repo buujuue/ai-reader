@@ -62,13 +62,53 @@ describe('工作台命令处理', () => {
   });
 
   it('切换目录命令切换目录侧栏的运行时可见状态', async () => {
-    expect(useShellUiStore.getState().tocVisible).toBe(false);
+    expect(useWorkspaceStore.getState().tocVisible).toBe(false);
 
     await registry.execute(COMMAND_IDS.workbenchToggleToc);
-    expect(useShellUiStore.getState().tocVisible).toBe(true);
+    expect(useWorkspaceStore.getState().tocVisible).toBe(true);
+    await expect(repository.loadState()).resolves.toMatchObject({ tocVisible: true });
 
     await registry.execute(COMMAND_IDS.workbenchToggleToc);
-    expect(useShellUiStore.getState().tocVisible).toBe(false);
+    expect(useWorkspaceStore.getState().tocVisible).toBe(false);
+    await expect(repository.loadState()).resolves.toMatchObject({ tocVisible: false });
+  });
+
+  it('返回键关闭对话框与 WebView 后退都经稳定命令执行', async () => {
+    useShellUiStore.getState().openMetadataEditor('material-1');
+    await registry.execute(COMMAND_IDS.shellDismissDialog, 'metadata');
+    expect(useShellUiStore.getState().metadataEditorMaterialId).toBeNull();
+
+    const historyBack = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    await registry.execute(COMMAND_IDS.appBack, true);
+    expect(historyBack).toHaveBeenCalledOnce();
+    historyBack.mockRestore();
+  });
+
+  it('保存后重新加载会恢复标签、分组、活动视图和全部侧栏期望状态', async () => {
+    const firstViewId = useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().openView('material-2');
+    useWorkspaceStore.getState().splitEditorGroup('down');
+    await registry.execute(COMMAND_IDS.workbenchToggleToc);
+    useWorkspaceStore.getState().setPrimarySidebarVisible(false);
+    useWorkspaceStore.getState().setAnnotationSidebarVisible(false);
+
+    await registry.execute(COMMAND_IDS.workbenchSaveState);
+
+    useWorkspaceStore.getState().resetToDefault();
+    const restored = await repository.loadState();
+    useWorkspaceStore.getState().hydrate(restored);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.primarySidebarVisible).toBe(false);
+    expect(state.annotationSidebarVisible).toBe(false);
+    expect(state.tocVisible).toBe(true);
+    expect(state.editorGroups).toHaveLength(2);
+    expect(state.editorGroups[0]!.views.map((view) => view.id)).toEqual([
+      firstViewId,
+      expect.any(String),
+    ]);
+    expect(state.activeEditorGroupId).toBe('group-2');
+    expect(state.editorGroups[1]!.activeViewId).toBe(state.editorGroups[1]!.views[0]!.id);
   });
 
   it('切换批注侧栏命令会持久化面板期望状态', async () => {

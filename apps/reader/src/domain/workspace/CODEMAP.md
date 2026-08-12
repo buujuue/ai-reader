@@ -2,9 +2,9 @@
 
 ## 功能
 
-- 工作区状态当前为 schema 7，额外保存 `primaryMaterialId`（独立于焦点的主要阅读材料）与 `annotationSidebarVisible`（批注侧栏期望状态）；旧 DTO 缺失字段时分别回退为空和显示。
+- 工作区状态当前为 schema 8，保存 `primaryMaterialId`（独立于焦点的主要阅读材料）、`primarySidebarVisible`、`tocVisible` 与 `annotationSidebarVisible`（三类侧栏期望状态）；旧 DTO 缺失字段时回退到安全默认值。
 
-- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + `primarySidebarVisible` + `annotationSidebarVisible` + `primaryMaterialId` + `splitDirection` + `activeEditorGroupId` + `editorGroups` + `globalReadingTypography` 全局阅读默认 + `materialTypography` 材料级排版覆盖）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history` + `sourceMode`），同一组内按 `materialId` 最多保留一个视图，跨组允许同材料视图，并含 `activeViewId`；第一版最多两个组。`ReadingLocation`、`NavigationHistory` 与 `ReadingTypography` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`（当前 7）。
+- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + 三类侧栏期望状态 + `primaryMaterialId` + `splitDirection` + `activeEditorGroupId` + `editorGroups` + `globalReadingTypography` 全局阅读默认 + `materialTypography` 材料级排版覆盖）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history` + `sourceMode`），同一组内按 `materialId` 最多保留一个视图，跨组允许同材料视图，并含 `activeViewId`；第一版最多两个组。`ReadingLocation`、`NavigationHistory` 与 `ReadingTypography` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`（当前 8）。
 - `workspaceRepository.ts`：typed Repository 接口（`loadState` / `saveState`），是前端调用 Rust 持久化能力的窄边界。
 - `tauriWorkspaceRepository.ts`：Tauri Adapter，经 `@tauri-apps/api/core` 的 `invoke` 调用 `load_workspace_state` / `save_workspace_state` 命令；注入伪 `TauriInvoke` 供测试，附 `assertWorkspaceStateShape` 载荷校验（含排版字段校验与旧数据回退到全局默认）。
 - `inMemoryWorkspaceRepository.ts`：内存 Adapter，浏览器降级开发用。

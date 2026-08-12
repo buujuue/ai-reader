@@ -195,3 +195,114 @@ jobs:
           name: ai-reader-ipados-${{ github.sha }}
           if-no-files-found: warn
           path: ${{ runner.temp }}/ai-reader-ipados-evidence
+
+  android:
+    name: Android tablet 原生验证
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 初始化 Android 证据目录
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/ai-reader-android-evidence"
+          mkdir -p "$evidence_dir"
+          printf '%s\n' 'Android tablet evidence directory initialized' > "$evidence_dir/workflow-started.txt"
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 配置 Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 配置 Rust Android 目标
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: 安装 JavaScript 依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 校验 Android 核心配置
+        run: pnpm verify:android
+
+      - name: TypeScript 类型检查
+        run: pnpm typecheck
+
+      - name: 前端测试
+        run: pnpm test
+
+      - name: Rust 测试
+        run: cargo test
+
+      - name: Rust Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: 前端构建
+        run: pnpm build
+
+      - name: 生成 Android 原生工程
+        working-directory: apps/reader
+        run: pnpm tauri android init --ci --skip-targets-install
+
+      - name: 构建 Android debug APK
+        working-directory: apps/reader
+        run: pnpm tauri android build --debug --target x86_64 --apk
+
+      - name: 启动 Android 平板模拟器并采集真实 WebView 证据
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/ai-reader-android-evidence
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: Pixel_C
+          script: |
+            set -euo pipefail
+            apk_path="$(find apps/reader/src-tauri/gen/android -type f -name '*.apk' -path '*/build/outputs/apk/*' -print -quit)"
+            test -n "$apk_path"
+            package_id="$(aapt dump badging "$apk_path" | sed -n "s/package: name='\([^']*\)'.*/\1/p")"
+            test -n "$package_id"
+            adb install "$apk_path" | tee "$EVIDENCE_DIR/install.log"
+            adb shell monkey -p "$package_id" 1 | tee "$EVIDENCE_DIR/launch.log"
+            sleep 8
+            adb exec-out screencap -p > "$EVIDENCE_DIR/android-tablet-start.png"
+            adb shell uiautomator dump /sdcard/ai-reader-start-ui.xml >/dev/null
+            adb shell cat /sdcard/ai-reader-start-ui.xml > "$EVIDENCE_DIR/android-tablet-start-ui.xml"
+            adb shell input swipe 1050 900 400 900 350
+            sleep 2
+            adb exec-out screencap -p > "$EVIDENCE_DIR/android-tablet-after-touch.png"
+            adb shell uiautomator dump /sdcard/ai-reader-touch-ui.xml >/dev/null
+            adb shell cat /sdcard/ai-reader-touch-ui.xml > "$EVIDENCE_DIR/android-tablet-touch-ui.xml"
+            adb shell input keyevent 4
+            sleep 1
+            adb shell am force-stop "$package_id"
+            adb shell monkey -p "$package_id" 1 | tee "$EVIDENCE_DIR/relaunch.log"
+            sleep 8
+            adb exec-out screencap -p > "$EVIDENCE_DIR/android-tablet-after-restart.png"
+            adb logcat -d > "$EVIDENCE_DIR/android-logcat.txt"
+
+      - name: 上传 Android 原生证据
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-reader-android-${{ github.sha }}
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/ai-reader-android-evidence

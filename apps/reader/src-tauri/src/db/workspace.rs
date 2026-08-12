@@ -105,6 +105,8 @@ pub struct EditorGroupState {
 pub struct WorkspaceState {
     pub schema_version: u32,
     pub primary_sidebar_visible: bool,
+    #[serde(default)]
+    pub toc_visible: bool,
     /// 批注侧栏期望状态,旧工作区缺失时显示。
     #[serde(default = "default_annotation_sidebar_visible")]
     pub annotation_sidebar_visible: bool,
@@ -146,8 +148,9 @@ pub struct PartialTypography {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 7,
+            schema_version: 8,
             primary_sidebar_visible: true,
+            toc_visible: false,
             annotation_sidebar_visible: true,
             primary_material_id: None,
             split_direction: None,
@@ -235,8 +238,9 @@ mod tests {
             },
         );
         WorkspaceState {
-            schema_version: 7,
+            schema_version: 8,
             primary_sidebar_visible: false,
+            toc_visible: true,
             annotation_sidebar_visible: false,
             primary_material_id: Some("mat-1".to_string()),
             split_direction: Some("down".to_string()),
@@ -307,7 +311,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":7,"primarySidebarVisible":true,"annotationSidebarVisible":true,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
+            r#"{"schemaVersion":8,"primarySidebarVisible":true,"tocVisible":false,"annotationSidebarVisible":true,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
         );
     }
 

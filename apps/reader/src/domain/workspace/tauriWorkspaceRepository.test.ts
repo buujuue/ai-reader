@@ -84,11 +84,21 @@ describe('TauriWorkspaceRepository 边界映射', () => {
     await expect(repository.loadState()).rejects.toThrow();
   });
 
+  it('加载旧 DTO 时为缺失的目录侧栏字段使用默认值', async () => {
+    const legacyState = structuredClone(DEFAULT_WORKSPACE_STATE) as Partial<WorkspaceState>;
+    delete legacyState.tocVisible;
+    const invoke: TauriInvoke = async () => legacyState;
+
+    const repository = createTauriWorkspaceRepository(invoke);
+
+    await expect(repository.loadState()).resolves.toMatchObject({ tocVisible: false });
+  });
+
   it('线格式与 Rust 端锁定的 camelCase DTO 一致', () => {
-    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(7);
+    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(8);
     expect(DEFAULT_WORKSPACE_STATE.activeEditorGroupId).toBe(DEFAULT_EDITOR_GROUP_ID);
     expect(JSON.stringify(DEFAULT_WORKSPACE_STATE)).toBe(
-      '{"schemaVersion":7,"primarySidebarVisible":true,"annotationSidebarVisible":true,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{}}',
+      '{"schemaVersion":8,"primarySidebarVisible":true,"tocVisible":false,"annotationSidebarVisible":true,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{}}',
     );
   });
 });

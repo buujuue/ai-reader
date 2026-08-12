@@ -121,6 +121,10 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   return {
     schemaVersion: candidate.schemaVersion,
     primarySidebarVisible: candidate.primarySidebarVisible,
+    tocVisible:
+      typeof candidate.tocVisible === 'boolean'
+        ? candidate.tocVisible
+        : DEFAULT_WORKSPACE_STATE.tocVisible,
     annotationSidebarVisible:
       typeof candidate.annotationSidebarVisible === 'boolean'
         ? candidate.annotationSidebarVisible

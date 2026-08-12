@@ -4,6 +4,8 @@ export const COMMAND_IDS = {
   workbenchSetPrimaryMaterial: 'workbench.setPrimaryMaterial',
   workbenchToggleToc: 'workbench.toggleToc',
   workbenchSaveState: 'workbench.saveState',
+  appBack: 'app.back',
+  shellDismissDialog: 'shell.dismissDialog',
   workbenchFocusEditorGroup: 'workbench.focusEditorGroup',
   workbenchSplitEditorGroupRight: 'workbench.splitEditorGroupRight',
   workbenchSplitEditorGroupDown: 'workbench.splitEditorGroupDown',

@@ -12,8 +12,6 @@ export interface ShellUiStoreState {
   externalLinkUrl: string | null;
   /** 正在编辑排版的阅读视图 id;null 表示未打开排版设置对话框。 */
   typographyEditorViewId: string | null;
-  /** 目录面板是否可见(运行时状态,不持久化)。 */
-  tocVisible: boolean;
   /** 正在编辑笔记的批注(materialId + annotationId);null 表示未打开笔记编辑器。 */
   noteEditorTarget: { materialId: string; annotationId: string } | null;
   /** 等待脏 Markdown 视图关闭确认的 viewId;null 表示未打开脏文档关闭对话框。 */
@@ -38,8 +36,6 @@ export interface ShellUiStoreState {
   closeMarkdownDirtyClose: () => void;
   setMarkdownRecoverySnapshots: (snapshots: MarkdownRecoverySnapshot[]) => void;
   removeMarkdownRecoverySnapshot: (materialId: string) => void;
-  setTocVisible: (visible: boolean) => void;
-  toggleToc: () => void;
 }
 
 export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
@@ -48,7 +44,6 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   purgeMaterialId: null,
   externalLinkUrl: null,
   typographyEditorViewId: null,
-  tocVisible: false,
   noteEditorTarget: null,
   markdownDirtyCloseViewId: null,
   markdownDirtyCloseAction: null,
@@ -76,6 +71,4 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
         (snapshot) => snapshot.materialId !== materialId,
       ),
     })),
-  setTocVisible: (visible) => set({ tocVisible: visible }),
-  toggleToc: () => set((state) => ({ tocVisible: !state.tocVisible })),
 }));

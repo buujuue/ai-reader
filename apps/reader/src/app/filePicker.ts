@@ -1,10 +1,18 @@
 import { open } from '@tauri-apps/plugin-dialog';
+import { isAndroidWebView } from './platform';
 
-/** 系统文件选择器窄接口。取消选择返回 null,不产生任何记录或暂存文件。 */
+const ANDROID_BOOK_MIME_TYPES = [
+  'application/epub+zip',
+  'application/pdf',
+  'text/markdown',
+  'text/plain',
+];
+
+/** 系统文件选择器窄接口。取消选择返回 null，不产生任何记录或暂存文件。 */
 export interface FilePicker {
-  /** 一次选择多份阅读材料(EPUB/PDF/Markdown);用户取消返回 null。 */
+  /** 一次选择多份阅读材料（EPUB/PDF/Markdown）；用户取消返回 null。 */
   pickBooks(): Promise<string[] | null>;
-  /** 选择一张封面图片;用户取消返回 null。 */
+  /** 选择一张封面图片；用户取消返回 null。 */
   pickImage(): Promise<string | null>;
 }
 
@@ -14,8 +22,16 @@ export function createTauriFilePicker(): FilePicker {
       const selected = await open({
         multiple: true,
         directory: false,
+        pickerMode: 'document',
+        fileAccessMode: 'copy',
         filters: [
-          { name: '阅读材料', extensions: ['epub', 'pdf', 'md', 'markdown'] },
+          {
+            name: '阅读材料',
+            // Android 文档选择器按 MIME 类型过滤；桌面端继续使用扩展名过滤。
+            extensions: isAndroidWebView()
+              ? ANDROID_BOOK_MIME_TYPES
+              : ['epub', 'pdf', 'md', 'markdown'],
+          },
         ],
       });
       if (selected === null) {
@@ -28,6 +44,8 @@ export function createTauriFilePicker(): FilePicker {
       const selected = await open({
         multiple: false,
         directory: false,
+        pickerMode: 'image',
+        fileAccessMode: 'copy',
         filters: [
           { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
         ],
@@ -40,7 +58,7 @@ export function createTauriFilePicker(): FilePicker {
   };
 }
 
-/** 浏览器降级开发用:返回固定的演示源路径数组,由内存 Adapter 提供对应字节。 */
+/** 浏览器降级开发用：返回固定的演示源路径数组，由内存 Adapter 提供对应字节。 */
 export function createInMemoryFilePicker(demoSourcePaths: string[]): FilePicker {
   return {
     async pickBooks(): Promise<string[] | null> {

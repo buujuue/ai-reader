@@ -12,6 +12,7 @@ describe('Workspace Store', () => {
     const state = useWorkspaceStore.getState();
 
     expect(state.primarySidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.primarySidebarVisible);
+    expect(state.tocVisible).toBe(DEFAULT_WORKSPACE_STATE.tocVisible);
     expect(state.primaryMaterialId).toBe(DEFAULT_WORKSPACE_STATE.primaryMaterialId);
     expect(state.annotationSidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.annotationSidebarVisible);
     expect(state.editorGroups).toEqual(DEFAULT_WORKSPACE_STATE.editorGroups);

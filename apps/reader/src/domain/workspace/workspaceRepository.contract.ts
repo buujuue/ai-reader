@@ -19,6 +19,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     const state: typeof DEFAULT_WORKSPACE_STATE = {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
+      tocVisible: true,
       annotationSidebarVisible: false,
       primaryMaterialId: 'mat-1',
       splitDirection: 'down',
@@ -57,6 +58,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: false,
+      tocVisible: false,
       annotationSidebarVisible: false,
       primaryMaterialId: null,
       splitDirection: null,
@@ -69,6 +71,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
+      tocVisible: true,
       annotationSidebarVisible: true,
       primaryMaterialId: 'mat-2',
       splitDirection: null,
@@ -81,6 +84,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
     await expect(repository.loadState()).resolves.toEqual({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: true,
+      tocVisible: true,
       annotationSidebarVisible: true,
       primaryMaterialId: 'mat-2',
       splitDirection: null,

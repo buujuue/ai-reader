@@ -68,6 +68,7 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 ## 开发命令
 
 ```powershell
+# Workspace State owns serialized tabs, editor groups, active views, primary material, and sidebar preference state.
 pnpm install                # 安装 JS 依赖(pnpm ≥ 10,Node ≥ 22)
 pnpm dev                    # 浏览器降级开发(内存 Repository,无 Tauri)
 pnpm tauri dev              # 完整桌面开发(Vite + Tauri)
@@ -77,6 +78,7 @@ pnpm test                   # Vitest 全量测试
 pnpm typecheck              # TypeScript 严格模式类型检查
 pnpm verify:macos           # 校验 macOS 核心阅读冒烟的 Tauri 打包、窗口与权限配置
 pnpm verify:ipados          # 校验 iPadOS 核心阅读冒烟的原生配置与工作流步骤
+pnpm verify:android         # 校验 Android 平板核心阅读冒烟的原生配置与工作流步骤
 cargo test                  # Rust 迁移与 workspace 持久化契约
 cargo clippy --workspace --all-targets -- -D warnings
 ```

@@ -35,6 +35,8 @@ import {
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { onBackButtonPress } from '@tauri-apps/api/app';
+import { isAndroidWebView } from './platform';
 import {
   createInMemoryBackupDestinationPicker,
   createTauriBackupDestinationPicker,
@@ -62,6 +64,16 @@ export interface WindowLifecycle {
   destroy: () => Promise<void>;
 }
 
+export interface AndroidBackButtonEvent {
+  canGoBack: boolean;
+}
+
+export interface AndroidBackButton {
+  onBackButtonPress: (
+    handler: (event: AndroidBackButtonEvent) => void | Promise<void>,
+  ) => Promise<() => void>;
+}
+
 export interface AppServices {
   commands: CommandRegistry;
   workspaceRepository: WorkspaceRepository;
@@ -75,6 +87,7 @@ export interface AppServices {
   filePicker: FilePicker;
   externalUrlOpener: ExternalUrlOpener;
   windowLifecycle: WindowLifecycle | null;
+  androidBackButton: AndroidBackButton | null;
 }
 
 export interface AppServicesOptions {
@@ -94,6 +107,7 @@ export interface AppServicesOptions {
   /** 可注入的页面光栅化函数(测试用)。 */
   pdfRasterize?: PdfPageRasterizer;
   windowLifecycle?: WindowLifecycle | null;
+  androidBackButton?: AndroidBackButton | null;
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
@@ -107,6 +121,24 @@ function createWindowLifecycle(): WindowLifecycle | null {
   return {
     onCloseRequested: (handler) => appWindow.onCloseRequested(handler),
     destroy: () => appWindow.destroy(),
+  };
+}
+
+function createAndroidBackButton(): AndroidBackButton | null {
+  if (
+    !isTauriRuntime() ||
+    !isAndroidWebView()
+  ) {
+    return null;
+  }
+
+  return {
+    onBackButtonPress: async (handler) => {
+      const listener = await onBackButtonPress(handler);
+      return () => {
+        void listener.unregister();
+      };
+    },
   };
 }
 
@@ -178,6 +210,10 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     options.windowLifecycle !== undefined
       ? options.windowLifecycle
       : createWindowLifecycle();
+  const androidBackButton =
+    options.androidBackButton !== undefined
+      ? options.androidBackButton
+      : createAndroidBackButton();
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
@@ -240,5 +276,6 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     filePicker: importServices.filePicker,
     externalUrlOpener,
     windowLifecycle,
+    androidBackButton,
   };
 }

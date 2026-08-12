@@ -11,14 +11,13 @@ import {
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useLibraryStore } from '../workbench/libraryStore';
-import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 
 export function ActivityBar() {
   const { commands } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const importing = useLibraryStore((state) => state.importing);
-  const tocVisible = useShellUiStore((state) => state.tocVisible);
+  const tocVisible = useWorkspaceStore((state) => state.tocVisible);
   const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
 
   const handleTogglePrimarySidebar = () => {

@@ -15,12 +15,21 @@ export interface WorkbenchCommandDependencies {
   annotationRepository?: AnnotationRepository;
 }
 
+type DismissibleShellDialog =
+  | 'markdownDirtyClose'
+  | 'metadata'
+  | 'purge'
+  | 'externalLink'
+  | 'typography'
+  | 'note';
+
 /** 从当前 Serialized Store 组装可持久化的工作区状态。 */
 export function serializeWorkspaceState(): WorkspaceState {
   const store = useWorkspaceStore.getState();
   return {
     schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
     primarySidebarVisible: store.primarySidebarVisible,
+    tocVisible: store.tocVisible,
     annotationSidebarVisible: store.annotationSidebarVisible,
     primaryMaterialId: store.primaryMaterialId,
     splitDirection: store.splitDirection,
@@ -39,6 +48,34 @@ export function registerWorkbenchCommands(
   registry: CommandRegistry,
   dependencies: WorkbenchCommandDependencies,
 ): void {
+  registry.register(COMMAND_IDS.appBack, async (...args: unknown[]) => {
+    if (args[0] === true) window.history.back();
+  });
+
+  registry.register(COMMAND_IDS.shellDismissDialog, async (...args: unknown[]) => {
+    const dialog = args[0] as DismissibleShellDialog | undefined;
+    switch (dialog) {
+      case 'markdownDirtyClose':
+        useShellUiStore.getState().closeMarkdownDirtyClose();
+        break;
+      case 'metadata':
+        useShellUiStore.getState().closeMetadataEditor();
+        break;
+      case 'purge':
+        useShellUiStore.getState().closePurgeConfirm();
+        break;
+      case 'externalLink':
+        useShellUiStore.getState().closeExternalLinkConfirm();
+        break;
+      case 'typography':
+        useShellUiStore.getState().closeTypographyEditor();
+        break;
+      case 'note':
+        useShellUiStore.getState().closeNoteEditor();
+        break;
+    }
+  });
+
   registry.register(COMMAND_IDS.workbenchTogglePrimarySidebar, async () => {
     const nextVisible = !useWorkspaceStore.getState().primarySidebarVisible;
 
@@ -95,7 +132,18 @@ export function registerWorkbenchCommands(
   });
 
   registry.register(COMMAND_IDS.workbenchToggleToc, async () => {
-    useShellUiStore.getState().toggleToc();
+    const nextVisible = !useWorkspaceStore.getState().tocVisible;
+
+    try {
+      const state = serializeWorkspaceState();
+      await dependencies.workspaceRepository.saveState({ ...state, tocVisible: nextVisible });
+    } catch (error) {
+      console.error('保存目录侧栏状态失败', error);
+      useShellUiStore.getState().setStatusMessage('保存目录侧栏状态失败');
+      throw error;
+    }
+
+    useWorkspaceStore.getState().setTocVisible(nextVisible);
   });
 
   registry.register(COMMAND_IDS.workbenchFocusEditorGroup, async (...args: unknown[]) => {

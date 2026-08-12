@@ -24,6 +24,7 @@ import {
  */
 export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
+  tocVisible: boolean;
   annotationSidebarVisible: boolean;
   primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
@@ -34,6 +35,7 @@ export interface WorkspaceStoreState {
   /** 阅读材料级排版覆盖;键为 BookId。 */
   materialTypography: Record<string, Partial<ReadingTypography>>;
   setPrimarySidebarVisible: (visible: boolean) => void;
+  setTocVisible: (visible: boolean) => void;
   setAnnotationSidebarVisible: (visible: boolean) => void;
   setPrimaryMaterial: (materialId: string | null) => void;
   focusEditorGroup: (groupId: string) => void;
@@ -132,6 +134,7 @@ function normalizeWorkspaceViews(
 
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
+  tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
   annotationSidebarVisible: DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
   primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
   splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
@@ -141,6 +144,8 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
 
   setPrimarySidebarVisible: (visible) => set({ primarySidebarVisible: visible }),
+
+  setTocVisible: (visible) => set({ tocVisible: visible }),
 
   setAnnotationSidebarVisible: (visible) => set({ annotationSidebarVisible: visible }),
 
@@ -360,6 +365,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     const materials = uniqueMaterialIds(normalized.editorGroups);
     set({
       primarySidebarVisible: state.primarySidebarVisible,
+      tocVisible: state.tocVisible,
       annotationSidebarVisible: state.annotationSidebarVisible,
       primaryMaterialId:
         state.primaryMaterialId ?? (materials.length === 1 ? materials[0]! : null),
@@ -374,6 +380,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   resetToDefault: () =>
     set({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
+      tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
       annotationSidebarVisible: DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
       primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
       splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,

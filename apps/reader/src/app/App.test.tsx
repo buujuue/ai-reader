@@ -155,6 +155,8 @@ describe('阅读工作台外壳', () => {
     await repository.saveState({
       ...structuredClone(DEFAULT_WORKSPACE_STATE),
       primarySidebarVisible: false,
+      tocVisible: true,
+      annotationSidebarVisible: false,
     });
 
     renderApp(services);
@@ -164,6 +166,9 @@ describe('阅读工作台外壳', () => {
       ).not.toBeInTheDocument();
     });
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
+    expect(useWorkspaceStore.getState().tocVisible).toBe(true);
+    expect(useWorkspaceStore.getState().annotationSidebarVisible).toBe(false);
+    expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument();
   });
 
   it('启动恢复工作区后检查 Markdown 恢复快照', async () => {
@@ -565,6 +570,7 @@ describe('打开 EPUB 并重启续读', () => {
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
+      tocVisible: workspace.tocVisible,
       annotationSidebarVisible: workspace.annotationSidebarVisible,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
@@ -704,6 +710,7 @@ describe('打开 EPUB 并重启续读', () => {
     await repository.saveState({
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
+      tocVisible: workspace.tocVisible,
       annotationSidebarVisible: workspace.annotationSidebarVisible,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,

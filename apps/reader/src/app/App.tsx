@@ -14,7 +14,9 @@ import { ReaderSettingsDialog } from '../components/ReaderSettingsDialog';
 import { StatusBar } from '../components/StatusBar';
 import { TocSidebar } from '../components/TocSidebar';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import { resolveAndroidBackAction } from './androidBackButton';
 import { useShellUiStore } from '../workbench/shellUiStore';
+import { useSearchStore } from '../workbench/searchStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { getVisibleSidebars, useLayoutPolicy } from '../workbench/layoutPolicy';
 import { useAppServices } from './AppServicesContext';
@@ -22,16 +24,44 @@ import { useAppServices } from './AppServicesContext';
 export function App() {
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const layoutPolicy = useLayoutPolicy(workbenchRef);
-  const { commands, workspaceRepository, importRepository, windowLifecycle } = useAppServices();
+  const {
+    commands,
+    workspaceRepository,
+    importRepository,
+    windowLifecycle,
+    androidBackButton,
+  } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
-  const tocVisible = useShellUiStore((state) => state.tocVisible);
+  const tocVisible = useWorkspaceStore((state) => state.tocVisible);
   const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
+  const activeViewId = useWorkspaceStore((state) => {
+    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
+    return group?.activeViewId ?? null;
+  });
+  const activeViewSourceMode = useWorkspaceStore((state) => {
+    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
+    const view = group?.views.find((candidate) => candidate.id === group.activeViewId);
+    return view?.sourceMode ?? false;
+  });
+  const activeSearchViewId = useSearchStore((state) =>
+    activeViewId && state.views[activeViewId]?.active ? activeViewId : null,
+  );
+  const markdownDirtyCloseOpen = useShellUiStore(
+    (state) => state.markdownDirtyCloseViewId !== null,
+  );
+  const recoveryDialogOpen = useShellUiStore((state) => state.markdownRecoverySnapshots.length > 0);
+  const metadataDialogOpen = useShellUiStore((state) => state.metadataEditorMaterialId !== null);
+  const purgeDialogOpen = useShellUiStore((state) => state.purgeMaterialId !== null);
+  const externalLinkDialogOpen = useShellUiStore((state) => state.externalLinkUrl !== null);
+  const typographyDialogOpen = useShellUiStore((state) => state.typographyEditorViewId !== null);
+  const noteDialogOpen = useShellUiStore((state) => state.noteEditorTarget !== null);
   const visibleSidebars = getVisibleSidebars(layoutPolicy, {
     primary: primarySidebarVisible,
     toc: tocVisible,
     annotation: annotationSidebarVisible,
   }, tocVisible ? 'toc' : primaryMaterialId ? 'annotation' : 'primary');
+  const visibleSidebarKey = visibleSidebars.join(',');
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +97,102 @@ export function App() {
       cancelled = true;
     };
   }, [commands, workspaceRepository]);
+
+  // Android 返回键只退出次级状态；脏 Markdown 仍必须经过保存/丢弃确认。
+  useEffect(() => {
+    if (!androidBackButton) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const sidebarCommands = {
+      primary: COMMAND_IDS.workbenchTogglePrimarySidebar,
+      toc: COMMAND_IDS.workbenchToggleToc,
+      annotation: COMMAND_IDS.workbenchToggleAnnotationSidebar,
+    } as const;
+
+    void androidBackButton
+      .onBackButtonPress((event) => {
+        const action = resolveAndroidBackAction({
+          compactLayout: layoutPolicy.mode === 'compact',
+          visibleSidebars: visibleSidebars as Array<'primary' | 'toc' | 'annotation'>,
+          activeViewId,
+          activeViewSourceMode,
+          activeSearchViewId,
+          markdownDirtyCloseOpen,
+          recoveryDialogOpen,
+          metadataDialogOpen,
+          purgeDialogOpen,
+          externalLinkDialogOpen,
+          typographyDialogOpen,
+          noteDialogOpen,
+        });
+
+        switch (action.kind) {
+          case 'closeSearch':
+            void commands.execute(COMMAND_IDS.readerSearchClose, action.viewId).catch(() => undefined);
+            break;
+          case 'closeSidebar':
+            void commands.execute(sidebarCommands[action.sidebar]).catch(() => undefined);
+            break;
+          case 'dismissMarkdownDirtyClose':
+            void commands
+              .execute(COMMAND_IDS.shellDismissDialog, 'markdownDirtyClose')
+              .catch(() => undefined);
+            break;
+          case 'dismissMetadataDialog':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'metadata').catch(() => undefined);
+            break;
+          case 'dismissPurgeDialog':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'purge').catch(() => undefined);
+            break;
+          case 'dismissExternalLinkDialog':
+            void commands
+              .execute(COMMAND_IDS.shellDismissDialog, 'externalLink')
+              .catch(() => undefined);
+            break;
+          case 'dismissTypographyDialog':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'typography').catch(() => undefined);
+            break;
+          case 'dismissNoteDialog':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'note').catch(() => undefined);
+            break;
+          case 'exitMarkdownSourceMode':
+            void commands
+              .execute(COMMAND_IDS.markdownToggleSourceMode, action.viewId)
+              .catch(() => undefined);
+            break;
+          case 'stay':
+            break;
+          case 'delegateToWebView':
+            void commands.execute(COMMAND_IDS.appBack, event.canGoBack).catch(() => undefined);
+            break;
+        }
+      })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [
+    activeSearchViewId,
+    activeViewId,
+    activeViewSourceMode,
+    commands,
+    externalLinkDialogOpen,
+    layoutPolicy.mode,
+    markdownDirtyCloseOpen,
+    metadataDialogOpen,
+    noteDialogOpen,
+    purgeDialogOpen,
+    recoveryDialogOpen,
+    androidBackButton,
+    typographyDialogOpen,
+    visibleSidebarKey,
+  ]);
 
   // 桌面端先阻止窗口关闭,等待恢复快照与阅读位置落盘后再销毁窗口。
   useEffect(() => {
