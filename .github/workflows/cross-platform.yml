@@ -247,10 +247,18 @@ jobs:
       - name: Enable KVM for Android emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm
-          test -w /dev/kvm
+          if ! sudo udevadm control --reload-rules; then
+            echo '::warning::Unable to reload udev rules; checking the existing KVM device directly.'
+          fi
+          if ! sudo udevadm trigger --name-match=kvm; then
+            echo '::warning::Unable to trigger the KVM udev rule; checking the existing KVM device directly.'
+          fi
+          if [ ! -e /dev/kvm ]; then
+            echo '::error::This runner does not expose /dev/kvm; use a GitHub-hosted Linux runner with Android hardware acceleration.'
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          ls -l /dev/kvm
 
       - name: 配置 Rust Android 目标
         uses: dtolnay/rust-toolchain@stable

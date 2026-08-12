@@ -55,6 +55,8 @@ assert(workflow.includes('pnpm tauri android init'), 'The Android job must gener
 assert(workflow.includes('pnpm tauri android build'), 'The Android job must build a native APK');
 assert(workflow.includes('android-emulator-runner'), 'The Android job must use a real Android emulator');
 assert(workflow.includes('Enable KVM for Android emulator'), 'The Android job must enable KVM before starting the emulator');
+assert(workflow.includes('sudo chmod 666 /dev/kvm'), 'The Android job must make KVM accessible to the runner user');
+assert(workflow.includes("if [ ! -e /dev/kvm ]; then"), 'The Android job must report runners that do not expose KVM');
 assert(workflow.includes('disable-linux-hw-accel: false'), 'The Android job must require Linux hardware acceleration');
 assert(workflow.includes('bash .github/scripts/android-emulator-smoke.sh'), 'The Android job must run the emulator smoke script as one shell command');
 assert(androidSmoke.includes('adb install'), 'The Android smoke script must install the generated APK');
