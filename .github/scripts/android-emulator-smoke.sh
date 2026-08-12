@@ -8,8 +8,11 @@ apk_path="$(find apps/reader/src-tauri/gen/android -type f -name '*.apk' -path '
 test -n "$apk_path"
 test -f "$apk_path"
 
-package_id="$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync('apps/reader/src-tauri/tauri.conf.json','utf8')).identifier)")"
+apk_badging="$(aapt dump badging "$apk_path")"
+package_id="$(printf '%s\n' "$apk_badging" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+launchable_activity="$(printf '%s\n' "$apk_badging" | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")"
 test -n "$package_id"
+test -n "$launchable_activity"
 
 collect_logcat() {
   adb logcat -d > "$EVIDENCE_DIR/android-logcat.txt" 2>&1 || true

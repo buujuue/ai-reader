@@ -60,6 +60,18 @@ assert(workflow.includes("if [ ! -e /dev/kvm ]; then"), 'The Android job must re
 assert(workflow.includes('disable-linux-hw-accel: false'), 'The Android job must require Linux hardware acceleration');
 assert(workflow.includes('bash .github/scripts/android-emulator-smoke.sh'), 'The Android job must run the emulator smoke script as one shell command');
 assert(androidSmoke.includes('adb install'), 'The Android smoke script must install the generated APK');
+assert(
+  androidSmoke.includes('aapt dump badging'),
+  'The Android smoke script must derive the package ID from the generated APK',
+);
+assert(
+  !androidSmoke.includes('tauri.conf.json'),
+  'The Android smoke script must not assume the Tauri identifier is the APK package ID',
+);
+assert(
+  androidSmoke.includes('launchable-activity'),
+  'The Android smoke script must verify that the APK exposes a launcher activity',
+);
 assert(androidSmoke.includes('screencap -p'), 'The Android smoke script must capture real WebView tablet evidence');
 assert(androidSmoke.includes('adb logcat'), 'The Android smoke script must upload Android runtime logs');
 assert(workflow.includes('actions/upload-artifact@v7'), 'The workflow must use the Node 24 artifact action');
