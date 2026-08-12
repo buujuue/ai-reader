@@ -230,6 +230,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install Linux host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: 配置 Rust Android 目标
         uses: dtolnay/rust-toolchain@stable
         with:

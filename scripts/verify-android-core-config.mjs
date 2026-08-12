@@ -46,6 +46,10 @@ assert(csp.includes("script-src 'self'"), 'Book content must not broaden executa
 assert(csp.includes("object-src 'none'"), 'Book content must not embed arbitrary objects');
 assert(workflow.includes('name: Android tablet'), 'The cross-platform workflow must include Android tablet validation');
 assert(workflow.includes('runs-on: ubuntu-24.04'), 'Android validation must run on a Linux Android-capable runner');
+assert(
+  workflow.includes('libwebkit2gtk-4.1-dev') && workflow.includes('libayatana-appindicator3-dev'),
+  'The Android Linux runner must install Tauri host build dependencies before Rust checks',
+);
 assert(workflow.includes('pnpm tauri android init'), 'The Android job must generate the native project');
 assert(workflow.includes('pnpm tauri android build'), 'The Android job must build a native APK');
 assert(workflow.includes('android-emulator-runner'), 'The Android job must use a real Android emulator');
