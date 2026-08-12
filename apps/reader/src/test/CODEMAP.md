@@ -3,6 +3,7 @@
 ## 功能
 
 - `setup.ts`：Vitest 全局测试环境配置。引入 `@testing-library/jest-dom/vitest` 的匹配器，并在每个用例后执行 `@testing-library/react` 的 `cleanup()`，避免跨用例 DOM 泄漏。
+- `fixtures/`：可复用的安全与领域测试夹具；夹具自身不参与生产运行时。
 
 ## 依赖其它文件夹（树）
 

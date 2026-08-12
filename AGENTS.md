@@ -79,6 +79,7 @@ pnpm typecheck              # TypeScript 严格模式类型检查
 pnpm verify:macos           # 校验 macOS 核心阅读冒烟的 Tauri 打包、窗口与权限配置
 pnpm verify:ipados          # 校验 iPadOS 核心阅读冒烟的原生配置与工作流步骤
 pnpm verify:android         # 校验 Android 平板核心阅读冒烟的原生配置与工作流步骤
+pnpm verify:v1              # 第一版跨端交付静态总验收
 cargo test                  # Rust 迁移与 workspace 持久化契约
 cargo clippy --workspace --all-targets -- -D warnings
 ```
@@ -129,6 +130,7 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 - `.scratch/reader-foundation/spec.md`：第一版完整规格和验收边界。
 - `docs/product/vision.md`：产品定位、目标与非目标。
 - `docs/architecture/overview.md`：总体架构、TS/Rust 分工、模块关系和实施顺序。
+- `docs/architecture/v1-delivery-acceptance.md`：第一版跨端交付验收矩阵、证据边界和复现命令。
 - `docs/adr/`：逐项记录已确认的架构决策及理由。
 - `docs/agents/`：工程技能使用的事项追踪器、状态标签和领域文档约定。
 - `docs/legal/third-party.md`：第三方组件许可与借鉴来源登记。

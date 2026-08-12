@@ -76,7 +76,7 @@ function sanitizeAttributes(element: Element): void {
 
     if (isUrlAttribute(lower)) {
       const value = attr.value.trim();
-      if (!isAllowedUrl(value)) {
+      if (!isAllowedUrl(value, element, lower)) {
         element.removeAttribute(attr.name);
       }
     }
@@ -87,7 +87,7 @@ function isUrlAttribute(lower: string): boolean {
   return lower === 'href' || lower === 'src' || lower === 'action' || lower === 'background';
 }
 
-function isAllowedUrl(value: string): boolean {
+function isAllowedUrl(value: string, element: Element, attribute: string): boolean {
   if (!value) {
     return true;
   }
@@ -102,8 +102,15 @@ function isAllowedUrl(value: string): boolean {
   if (value.startsWith('data:')) {
     return ALLOWED_DATA_URI.test(value);
   }
-  if (ALLOWED_URL_PROTOCOLS.test(value) || value.startsWith('#')) {
+  if (value.startsWith('#')) {
     return true;
+  }
+  // 书内外链由宿主拦截后交给系统浏览器；其它元素上的显式远程 URL 都是
+  // 资源加载请求，不能让阅读内容借此访问网络。相对路径仍可引用 EPUB
+  // 自带的图片、样式和字体。
+  if (ALLOWED_URL_PROTOCOLS.test(value)) {
+    const tagName = element.localName.toLowerCase();
+    return attribute === 'href' && (tagName === 'a' || tagName === 'area');
   }
   // 走完协议判断后:允许相对路径(不以 ":" 开头的非协议串)。
   return !/^[a-z][a-z0-9+.-]*:/i.test(value);

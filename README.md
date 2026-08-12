@@ -29,6 +29,7 @@ pnpm tauri build --no-bundle  # 只生成可执行文件
 # 测试与检查
 pnpm test               # Vitest(工作台、Command、仓库契约)
 pnpm typecheck          # TypeScript 严格模式检查
+pnpm verify:v1          # 第一版交付静态总验收
 cargo test              # Rust 迁移、workspace 持久化契约
 cargo clippy --workspace --all-targets -- -D warnings
 ```

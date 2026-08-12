@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
 import { sanitizeEpubContent, sanitizeHtmlFragment } from './sanitizer';
+import {
+  MALICIOUS_EPUB_XHTML,
+  MALICIOUS_MARKDOWN,
+} from '../../test/fixtures/maliciousContent';
+import { parseMarkdown } from './markdown/markdownParser';
+
+describe('恶意阅读材料夹具', () => {
+  it('EPUB XHTML 夹具不会执行脚本、嵌入对象或危险链接', () => {
+    const output = sanitizeEpubContent(MALICIOUS_EPUB_XHTML);
+
+    expect(output).not.toContain('__bookPayload');
+    expect(output).not.toMatch(/<(?:iframe|object|embed)\b/i);
+    expect(output).not.toMatch(/\bon(?:load|error)=/i);
+    expect(output).not.toContain('javascript:');
+    expect(output).not.toContain('//evil.example');
+    expect(output).not.toContain('https://evil.example/remote');
+    expect(output).toContain('应保留的 EPUB 正文');
+  });
+
+  it('Markdown 夹具经过 HTML 清洗后只保留安全正文', () => {
+    const output = parseMarkdown(MALICIOUS_MARKDOWN)
+      .sections.map((section) => section.html)
+      .join('\n');
+
+    expect(output).not.toContain('__markdownPayload');
+    expect(output).not.toMatch(/<(?:iframe|object)\b/i);
+    expect(output).not.toMatch(/\bonerror=/i);
+    expect(output).not.toContain('javascript:');
+    expect(output).not.toContain('//evil.example');
+    expect(output).not.toContain('https://evil.example/remote');
+    expect(output).toContain('正文应保留。');
+  });
+});
 
 describe('sanitizeEpubContent', () => {
   it('移除 script 元素及其内容', () => {
@@ -38,6 +71,15 @@ describe('sanitizeEpubContent', () => {
     const output = sanitizeEpubContent(input);
 
     expect(output).not.toContain('javascript:');
+    expect(output).toContain('https://safe.example');
+  });
+
+  it('移除远程图片和外部样式表,但保留交给系统浏览器的外链', () => {
+    const input = `<link rel="stylesheet" href="https://evil.example/book.css"><img src="https://evil.example/book.png"><a href="https://safe.example">安全</a>`;
+
+    const output = sanitizeHtmlFragment(input);
+
+    expect(output).not.toContain('evil.example');
     expect(output).toContain('https://safe.example');
   });
 

@@ -14,6 +14,7 @@
     "tauri": "pnpm --filter @ai-reader/app tauri",
     "verify:macos": "node scripts/verify-macos-core-config.mjs",
     "verify:ipados": "node scripts/verify-ipados-core-config.mjs",
-    "verify:android": "pnpm --filter @ai-reader/app verify:android"
+    "verify:android": "pnpm --filter @ai-reader/app verify:android",
+    "verify:v1": "node scripts/verify-v1-delivery.mjs"
   }
 }
