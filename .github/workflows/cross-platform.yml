@@ -183,7 +183,7 @@ jobs:
           test -n "$app_path"
           xcrun simctl install "$device_id" "$app_path"
           evidence_dir="$RUNNER_TEMP/ai-reader-ipados-evidence"
-          xcrun simctl launch --console "$device_id" com.buujuue.ai-reader > "$evidence_dir/launch.log" 2>&1
+          xcrun simctl launch "$device_id" com.buujuue.ai-reader > "$evidence_dir/launch.log" 2>&1
           sleep 5
           xcrun simctl io "$device_id" screenshot "$evidence_dir/ipados-webview.png"
           xcrun simctl shutdown "$device_id"
