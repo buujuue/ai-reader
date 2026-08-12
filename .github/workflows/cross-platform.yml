@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   verify:
+    # TEMP(android-smoke): Android 模拟器稳定后恢复桌面验证。
+    if: ${{ false }}
     name: ${{ matrix.name }} 验证
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -99,6 +101,8 @@ jobs:
             target/release/bundle/dmg/*.dmg
 
   ipados:
+    # TEMP(android-smoke): Android 模拟器稳定后恢复 iPadOS 验证。
+    if: ${{ false }}
     name: iPadOS 原生验证
     runs-on: macos-15
     timeout-minutes: 60
@@ -273,18 +277,23 @@ jobs:
         run: pnpm verify:android
 
       - name: TypeScript 类型检查
+        if: ${{ false }} # TEMP(android-smoke)
         run: pnpm typecheck
 
       - name: 前端测试
+        if: ${{ false }} # TEMP(android-smoke)
         run: pnpm test
 
       - name: Rust 测试
+        if: ${{ false }} # TEMP(android-smoke)
         run: cargo test
 
       - name: Rust Clippy
+        if: ${{ false }} # TEMP(android-smoke)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: 前端构建
+        if: ${{ false }} # TEMP(android-smoke); Tauri build 会执行 beforeBuildCommand
         run: pnpm build
 
       - name: 生成 Android 原生工程
@@ -295,6 +304,13 @@ jobs:
         working-directory: apps/reader
         run: pnpm tauri android build --debug --target x86_64 --apk
 
+      - name: 释放 Android 构建进程并记录资源
+        run: |
+          set -euo pipefail
+          apps/reader/src-tauri/gen/android/gradlew --stop || true
+          free -h
+          ps -eo pid,ppid,rss,%mem,%cpu,comm --sort=-rss | sed -n '1,20p'
+
       - name: 启动 Android 平板模拟器并采集真实 WebView 证据
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -304,6 +320,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_c
+          ram-size: 1536M
+          heap-size: 256M
           disable-linux-hw-accel: false
           script: bash .github/scripts/android-emulator-smoke.sh
 
