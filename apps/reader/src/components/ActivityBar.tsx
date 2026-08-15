@@ -33,7 +33,6 @@ export function ActivityBar() {
         className="app-activity-button"
       >
         <LibraryBig size={20} aria-hidden />
-        <span>书库</span>
       </button>
       <button
         type="button"
@@ -44,7 +43,6 @@ export function ActivityBar() {
         className="app-activity-button"
       >
         <ListTree size={20} aria-hidden />
-        <span>目录</span>
       </button>
     </nav>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookMarked, ImageOff } from 'lucide-react';
+import { ImageOff } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 
@@ -7,15 +7,17 @@ import { useAppServices } from '../app/AppServicesContext';
  * 封面渲染:读取托管封面字节并以对象 URL 渲染。
  * - 懒加载:默认惰性,仅当封面进入视口(IntersectionObserver)才读取并按需解码,较大书库不会一次解码全部封面。
  * - 可释放:卸载时 revoke 对象 URL,避免大书库累积内存。
- * - 三态呈现:无封面(暂无封面占位)、加载失败(封面加载失败占位)、成功(封面图)。
+ * - 三态呈现:无封面(书名占位)、加载失败(封面加载失败占位)、成功(封面图)。
  * 测试环境无 IntersectionObserver 时退化为可见即加载。
  */
 export function MaterialCover({
   materialId,
+  title,
   lazy = true,
   className = '',
 }: {
   materialId: string;
+  title: string;
   lazy?: boolean;
   className?: string;
 }) {
@@ -93,9 +95,10 @@ export function MaterialCover({
     );
   } else {
     content = (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-zinc-500">
-        <BookMarked size={16} aria-hidden />
-        <span className="text-[10px]">暂无封面</span>
+      <div className="flex h-full w-full items-center justify-center bg-[var(--prototype-app-bg)] px-2 text-center text-[var(--prototype-text)]">
+        <span className="line-clamp-5 break-words text-[11px] font-medium leading-4">
+          {title}
+        </span>
       </div>
     );
   }
@@ -103,7 +106,7 @@ export function MaterialCover({
   return (
     <div
       ref={containerRef}
-      className={`relative aspect-[3/4] w-full overflow-hidden rounded-md border border-zinc-700 bg-zinc-800 ${className}`}
+      className={`relative aspect-[3/4] w-full overflow-hidden rounded-md border border-[var(--prototype-border)] bg-[var(--prototype-app-bg)] ${className}`}
     >
       {content}
     </div>

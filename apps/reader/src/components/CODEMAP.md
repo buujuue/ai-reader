@@ -8,10 +8,11 @@
 - `SelectionToolbar.tsx`：监听正文文本选区与 PDF 扫描页区域选区；按选区类型显示高亮动作，经 `annotation.createHighlight` 或 `annotation.createPdfArea` Command 创建批注，不把选区活对象写入工作区状态。
 
 - `ActivityBar.tsx`：左侧活动栏只提供“书库”与“目录”两个互斥入口，分别执行 `workbench.togglePrimarySidebar` 与 `workbench.toggleToc`；导入动作位于真实书库面板与文件菜单。
-- `PrimarySidebar.tsx`：书库侧栏，紧凑封面网格展示 `libraryStore.materials`，顶部搜索框按标题/作者即时筛选；点击或键盘激活封面卡片执行 `library.openBook` 打开阅读标签；卡片右上角「编辑」执行 `shellUiStore.openMetadataEditor` 打开元数据编辑器、「移入回收站」执行 `library.trash`；底部回收站区块展示 `libraryStore.trashedMaterials`，可「恢复」（`library.restoreFromTrash`）与「永久删除」（`shellUiStore.openPurgeConfirm` 打开确认对话框）；含书库空、筛选无结果两类空态。
-- `MaterialCover.tsx`：封面渲染，经 `importRepository.readCover` 读取托管封面字节并以对象 URL 渲染；默认 IntersectionObserver 懒加载（进入视口才解码）、卸载时 revoke 释放；无封面「暂无封面」与加载失败「封面加载失败」两种占位。
-- `EditorArea.tsx`：编辑器区，按持久化拆分方向渲染最多两个 Editor Group；每组渲染独立标签栏（tablist）与活动 `ReadingView`。点击组、标签和控件通过 Command 维护当前组与 Runtime；无标签时显示空状态占位；关闭按钮执行 `reader.closeView`；「阅读排版」按钮打开 `ReaderSettingsDialog`；Markdown 材料显示「进入/退出源码模式」按钮执行 `markdown.toggleSourceMode`；提供向右/向下拆分按钮。
-- `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；标签切换和关闭时由 Reader Command 统一 flush 并释放同组非活动 Runtime，组件不直接管理 Runtime 生命周期；右侧材料更多菜单提供查看/导出批注、设置主要材料与阅读排版入口；高亮点击只保留阅读器原有视觉反馈，不打开笔记编辑器。Markdown 视图处于源码模式时渲染 `MarkdownSourceEditor` 而非阅读容器。Reader 外部不直接操作 Foliate View。
+- `SidebarPanelHeader.tsx`：书库与目录共用的固定顶栏结构，统一标题、图标、右侧操作槽、行高和触控命中区，不承载具体业务行为。
+- `PrimarySidebar.tsx`：书库侧栏，紧凑封面网格展示 `libraryStore.materials`，顶部搜索框按标题/作者即时筛选；点击或键盘激活封面卡片执行 `library.openBook` 打开阅读标签；鼠标悬浮或键盘聚焦书卡后，书库标题栏右上角的「更多操作」菜单承载元数据编辑、主要材料和移入回收站命令；底部回收站区块展示 `libraryStore.trashedMaterials`，可「恢复」（`library.restoreFromTrash`）与「永久删除」（`shellUiStore.openPurgeConfirm` 打开确认对话框）；含书库空、筛选无结果两类空态。
+- `MaterialCover.tsx`：封面渲染，经 `importRepository.readCover` 读取托管封面字节并以对象 URL 渲染；默认 IntersectionObserver 懒加载（进入视口才解码）、卸载时 revoke 释放；无封面复用工作区底色和文字颜色显示书名占位，加载失败显示「封面加载失败」。
+- `EditorArea.tsx`：编辑器区，按持久化拆分方向渲染最多两个 Editor Group；每组直接承载活动 `ReadingView`，不再渲染标签栏。点击编辑器组和紧凑布局组切换按钮通过 Command 维护当前组与 Runtime；无活动视图时显示空状态占位。
+- `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；阅读工具栏提供阅读排版与 Markdown 源码模式，存在拆分组时在材料更多操作左侧提供关闭当前拆分区的 X；材料更多菜单提供向右/向下拆分、查看/导出批注与设置主要材料；导航历史仍由目录、搜索和 Reader Command 维护，不在常驻工具栏显示前进/后退按钮。Markdown 视图处于源码模式时渲染 `MarkdownSourceEditor` 而非阅读容器。Reader 外部不直接操作 Foliate View。
 - `MarkdownSourceEditor.tsx`：Markdown 源码模式编辑器（ADR-0009）。仅在首次进入源码模式时动态加载 CodeMirror 6（高亮、撤销重做、查找替换），读写共享 `MarkdownDocumentSession` 缓冲区，并把用户确认恢复的外部会话文本同步到已挂载编辑器；程序化同步不会回流为用户编辑 Command，避免放弃后重新制造快照。绑定 Ctrl/Cmd+S 执行 `markdown.save`，由 `ReadingView` 在 `sourceMode` 时渲染。
 - `MarkdownDirtyCloseDialog.tsx`：脏 Markdown 文档关闭/退出源码模式确认对话框。提供「保存」「放弃」「取消」，分别执行 `markdown.closeDirty` 的 save/discard/cancel；由 `shellUiStore.markdownDirtyCloseViewId` 控制开关。
 - `MarkdownRecoveryDialog.tsx`：启动恢复对话框。逐份展示 available/conflict/corrupt 快照；有效或冲突快照可经 `markdown.recovery.resolve` 载入为未保存缓冲区，损坏快照只允许丢弃，绝不自动覆盖正式内容。
@@ -21,7 +22,7 @@
 - `PurgeConfirmDialog.tsx`：永久删除二次确认对话框。用户需输入书名才可执行 `library.purge`，取消或关闭不改变任何数据；由 `shellUiStore.purgeMaterialId` 控制开关。
 - `ExternalLinkDialog.tsx`：外部链接确认对话框。书内点击的外部链接先展示目标，确认后经 `reader.openExternalUrl` 交给系统浏览器（ADR-0010）；由 `shellUiStore.externalLinkUrl` 控制开关。
 - `ReaderSettingsDialog.tsx`：阅读排版对话框。调整当前激活阅读视图所属材料的字体、字号、行距、页边距、主题与分页/滚动模式，并可将材料级覆盖恢复为全局默认；所有变更经 `reader.typography.apply` / `reader.typography.reset` 命令执行并由 Workspace Store 持久化；由 `shellUiStore.typographyEditorViewId` 控制开关。
-- `StatusBar.tsx`：底部状态栏，展示 `shellUiStore.statusMessage`。
+- `StatusBar.tsx`：底部状态栏，展示当前激活材料的 `AI Reader · 书名` 身份文案与 `shellUiStore.statusMessage`。
 
 ## 依赖其它文件夹（树）
 
@@ -37,8 +38,9 @@ components/
     ├── readerCommands.ts        ReadingView 调 mountViewDocument
     ├── markdownSessionStore.ts  MarkdownSourceEditor 读写共享会话缓冲区
     ├── searchStore.ts           SearchBar 读视图搜索状态
-    ├── libraryStore.ts          PrimarySidebar 读 materials/trashedMaterials;ActivityBar 读 importing
-    └── shellUiStore.ts          ApplicationBar/AnnotationPanel 读运行时面板状态;StatusBar 读 statusMessage;MarkdownDirtyCloseDialog 读脏关闭状态;MarkdownRecoveryDialog 读恢复队列
+    ├── libraryStore.ts          PrimarySidebar 读 materials/trashedMaterials;StatusBar 读当前材料元数据;ActivityBar 读 importing
+    ├── shellUiStore.ts          ApplicationBar/AnnotationPanel 读运行时面板状态;StatusBar 读 statusMessage;MarkdownDirtyCloseDialog 读脏关闭状态;MarkdownRecoveryDialog 读恢复队列
+    └── workspaceStore.ts        StatusBar 读当前激活 Editor Group/ReadingView;ReadingView 读拆分与活动组
 ```
 
 ## 被谁依赖（树）

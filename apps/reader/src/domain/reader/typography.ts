@@ -64,6 +64,13 @@ export const THEME_PALETTES: Record<ReadingTheme, { background: string; foregrou
   dark: { background: '#18181b', foreground: '#e4e4e7' },
 };
 
+/** 内容文档内滚动条滑块颜色,按阅读主题保持足够的可见度。 */
+const READING_SCROLLBAR_THUMB_COLORS: Record<ReadingTheme, string> = {
+  light: 'rgb(31 41 55 / 35%)',
+  sepia: 'rgb(59 47 29 / 35%)',
+  dark: 'rgb(228 228 231 / 35%)',
+};
+
 export function isFontFamilyKey(value: unknown): value is FontFamilyKey {
   return value === 'serif' || value === 'sansSerif' || value === 'system';
 }
@@ -133,12 +140,14 @@ export function resolveTypography(
 export function buildTypographyCss(settings: ReadingTypography): string {
   const palette = THEME_PALETTES[settings.theme];
   const fontFamily = FONT_FAMILY_CSS[settings.fontFamily];
+  const scrollbarThumb = READING_SCROLLBAR_THUMB_COLORS[settings.theme];
   return `
 html {
   --font-family: ${fontFamily};
   --font-size: ${settings.fontSize}px;
   --line-height: ${settings.lineHeight};
   --theme-bg-color: ${palette.background};
+  --reading-scrollbar-thumb: ${scrollbarThumb};
   background-color: ${palette.background} !important;
   color: ${palette.foreground} !important;
 }
@@ -148,5 +157,33 @@ html, body {
   line-height: ${settings.lineHeight};
   background-color: ${palette.background} !important;
   color: ${palette.foreground} !important;
+}
+html, body, body * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--reading-scrollbar-thumb) transparent;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+body *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+body *::-webkit-scrollbar-track,
+html::-webkit-scrollbar-corner,
+body::-webkit-scrollbar-corner,
+body *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+body *::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: var(--reading-scrollbar-thumb);
+  background-clip: padding-box;
 }`;
 }

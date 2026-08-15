@@ -101,13 +101,16 @@ export function MarkdownSourceEditor({ viewId }: { viewId: string }) {
 
   if (loadError) {
     return (
-      <div className="flex h-full items-center justify-center bg-zinc-950 text-sm text-zinc-500">
+      <div className="app-reading-source-editor flex h-full items-center justify-center bg-zinc-950 text-sm text-zinc-500">
         源码编辑器加载失败
       </div>
     );
   }
 
   return (
-    <div className="h-full w-full overflow-hidden bg-zinc-950" ref={containerRef} />
+    <div
+      className="app-reading-source-editor h-full w-full overflow-hidden bg-zinc-950"
+      ref={containerRef}
+    />
   );
 }

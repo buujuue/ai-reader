@@ -19,7 +19,7 @@ const FORBIDDEN_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'base', '
 
 /** 危险属性:事件处理器与可注入脚本载荷的属性。 */
 const FORBIDDEN_ATTR_PREFIX = /^on/i;
-const FORBIDDEN_ATTRS = new Set(['srcdoc', 'formaction', 'xlink:href', 'srcset']);
+const FORBIDDEN_ATTRS = new Set(['srcdoc', 'formaction', 'srcset']);
 
 /**
  * 清洗一段 XHTML/HTML 内容,返回清洗后的完整文档字符串。
@@ -84,7 +84,13 @@ function sanitizeAttributes(element: Element): void {
 }
 
 function isUrlAttribute(lower: string): boolean {
-  return lower === 'href' || lower === 'src' || lower === 'action' || lower === 'background';
+  return (
+    lower === 'href' ||
+    lower === 'xlink:href' ||
+    lower === 'src' ||
+    lower === 'action' ||
+    lower === 'background'
+  );
 }
 
 function isAllowedUrl(value: string, element: Element, attribute: string): boolean {
@@ -109,9 +115,21 @@ function isAllowedUrl(value: string, element: Element, attribute: string): boole
   // 资源加载请求，不能让阅读内容借此访问网络。相对路径仍可引用 EPUB
   // 自带的图片、样式和字体。
   if (ALLOWED_URL_PROTOCOLS.test(value)) {
+    if (value.startsWith('blob:')) {
+      return isBlobImageAttribute(element, attribute);
+    }
     const tagName = element.localName.toLowerCase();
     return attribute === 'href' && (tagName === 'a' || tagName === 'area');
   }
   // 走完协议判断后:允许相对路径(不以 ":" 开头的非协议串)。
   return !/^[a-z][a-z0-9+.-]*:/i.test(value);
+}
+
+/** Foliate 将 EPUB 包内资源替换成 blob URL,仅允许它们作为图片载荷进入内容文档。 */
+function isBlobImageAttribute(element: Element, attribute: string): boolean {
+  const tagName = element.localName.toLowerCase();
+  if (attribute === 'src') {
+    return tagName === 'img' || tagName === 'image';
+  }
+  return (attribute === 'href' || attribute === 'xlink:href') && tagName === 'image';
 }

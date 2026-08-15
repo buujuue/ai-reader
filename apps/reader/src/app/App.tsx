@@ -324,11 +324,22 @@ export function App() {
         data-sidebar-presentation={layoutPolicy.sidebarPresentation}
         className="relative flex min-h-0 min-w-0 flex-1"
       >
-        <ActivityBar />
+        <div
+          className="app-left-navigation"
+          data-has-panel={
+            layoutPolicy.sidebarPresentation === 'inline' && effectiveVisibleSidebars.length > 0
+          }
+        >
+          <ActivityBar />
+          {layoutPolicy.sidebarPresentation === 'inline' ? (
+            <>
+              {effectiveVisibleSidebars.includes('toc') ? <TocSidebar /> : null}
+              {effectiveVisibleSidebars.includes('primary') ? <PrimarySidebar /> : null}
+            </>
+          ) : null}
+        </div>
         {layoutPolicy.sidebarPresentation === 'inline' ? (
           <>
-            {effectiveVisibleSidebars.includes('toc') ? <TocSidebar /> : null}
-            {effectiveVisibleSidebars.includes('primary') ? <PrimarySidebar /> : null}
             <div id="reader-main" className="app-reader-main min-h-0 min-w-0 flex-1">
               <EditorArea layoutPolicy={layoutPolicy} />
             </div>

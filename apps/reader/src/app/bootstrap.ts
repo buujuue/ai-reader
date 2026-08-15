@@ -165,7 +165,7 @@ export function createImportServices(): {
   addInMemorySource(
     sources,
     DEMO_SOURCE_PATH,
-    buildEpub({ title: '示例书', author: '示例作者', language: 'zh', withCover: true }),
+    buildEpub({ title: '示例书', author: '示例作者', language: 'zh', withCover: true, withImage: true }),
   );
   return {
     importRepository: createInMemoryImportRepository(sources),

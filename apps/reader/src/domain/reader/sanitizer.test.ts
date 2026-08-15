@@ -109,6 +109,15 @@ describe('sanitizeEpubContent', () => {
     expect(output).toContain('data:image/png');
   });
 
+  it('保留 Foliate 为 EPUB 包内图片生成的 blob URL', () => {
+    const output = sanitizeEpubContent(
+      '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body><img src="blob:https://app.test/asset" alt="包内图片"/><svg><image xlink:href="blob:https://app.test/svg"/></svg></body></html>',
+    );
+
+    expect(output).toContain('src="blob:https://app.test/asset"');
+    expect(output).toContain('xlink:href="blob:https://app.test/svg"');
+  });
+
   it('保留合法的相对与片段链接', () => {
     const input = `<html xmlns="http://www.w3.org/1999/xhtml"><body>
       <a href="chapter2.xhtml">下一章</a>

@@ -58,7 +58,9 @@ export function buildEpub(options: {
   author?: string;
   language?: string;
   withCover?: boolean;
+  withImage?: boolean;
 }): Uint8Array {
+  const withImage = options.withImage ?? false;
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -71,7 +73,8 @@ export function buildEpub(options: {
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"/>
     <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
     <item id="chapter2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
-    ${options.withCover ? '<item id="cover-image" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>' : ''}
+    ${options.withCover ? '<item id="cover-image" href="images/cover.png" media-type="image/png" properties="cover-image"/>' : ''}
+    ${withImage ? '<item id="body-image" href="images/body.png" media-type="image/png"/>' : ''}
   </manifest>
   <spine>
     <itemref idref="chapter1"/>
@@ -90,17 +93,25 @@ export function buildEpub(options: {
     {
       name: 'OEBPS/chapter1.xhtml',
       data: encode(
-        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head><body><h1>第一章</h1><p>这是第一章的正文内容,用于验证真实渲染。</p></body></html>',
+        `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head><body><h1>第一章</h1>${withImage ? '<img src="images/body.png" alt="测试图片"/><p data-image-marker="body-image">这是第一章的正文内容,用于验证真实渲染。</p>' : '<p>这是第一章的正文内容,用于验证真实渲染。</p>'}</body></html>`,
       ),
     },
-    {
-      name: 'OEBPS/chapter2.xhtml',
-      data: encode(
-        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第二章</title></head><body><h1>第二章</h1><p>这是第二章的正文内容,用于验证翻页。</p></body></html>',
-      ),
-    },
-  ]);
+      {
+        name: 'OEBPS/chapter2.xhtml',
+        data: encode(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第二章</title></head><body><h1>第二章</h1><p>这是第二章的正文内容,用于验证翻页。</p></body></html>',
+        ),
+      },
+      ...(options.withCover ? [{ name: 'OEBPS/images/cover.png', data: ONE_PIXEL_PNG }] : []),
+      ...(withImage ? [{ name: 'OEBPS/images/body.png', data: ONE_PIXEL_PNG }] : []),
+    ]);
 }
+
+/** 最小有效 PNG,供真实 EPUB 渲染冒烟测试验证包内图片资源链路。 */
+const ONE_PIXEL_PNG = Uint8Array.from(
+  atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+  (char) => char.charCodeAt(0),
+);
 
 function containerXml(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>

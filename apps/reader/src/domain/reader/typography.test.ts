@@ -67,6 +67,9 @@ describe('阅读排版', () => {
     expect(css).toContain('line-height: 1.6');
     expect(css).toContain('background-color: #ffffff');
     expect(css).toContain('color: #1f2937');
+    expect(css).toContain('scrollbar-width: thin');
+    expect(css).toContain('width: 8px');
+    expect(css).toContain('background: transparent');
     // 字体来自固定映射,不包含用户可控的自由文本。
     expect(css).not.toContain('</style>');
     expect(css).not.toContain('javascript:');

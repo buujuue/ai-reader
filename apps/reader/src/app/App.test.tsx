@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -136,7 +136,7 @@ describe('阅读工作台外壳', () => {
     expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('导入阅读材料');
     expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('导出完整备份');
     expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('恢复完整备份');
-    expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('关闭当前标签');
+    expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('关闭当前材料');
     expect(screen.queryByText('Agent 侧栏')).not.toBeInTheDocument();
     expect(screen.queryByText('切换到浅色主题')).not.toBeInTheDocument();
   });
@@ -194,7 +194,7 @@ describe('阅读工作台外壳', () => {
       );
 
       await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-      await waitFor(() => expect(screen.getByText('示例书')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
       await user.click(screen.getByRole('button', { name: '打开 示例书' }));
 
       await waitFor(() =>
@@ -282,7 +282,7 @@ describe('阅读工作台外壳', () => {
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
 
     await waitFor(() => {
-      expect(screen.getByText('示例书')).toBeInTheDocument();
+      expect(screen.getAllByText('示例书').length).toBeGreaterThan(0);
     });
     expect(screen.getByText('示例作者')).toBeInTheDocument();
     expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入 1 份文件/);
@@ -293,13 +293,13 @@ describe('阅读工作台外壳', () => {
     renderApp(services);
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
     await waitFor(() => {
-      expect(screen.getByText('示例书')).toBeInTheDocument();
+      expect(screen.getAllByText('示例书').length).toBeGreaterThan(0);
     });
 
     const search = screen.getByRole('searchbox', { name: '筛选书库' });
     await user.type(search, '示例作者');
 
-    expect(screen.getByText('示例书')).toBeInTheDocument();
+    expect(screen.getAllByText('示例书').length).toBeGreaterThan(0);
 
     await user.clear(search);
     await user.type(search, '不存在的书名');
@@ -332,7 +332,7 @@ describe('阅读工作台外壳', () => {
     renderApp(services);
 
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByText('示例书')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
 
     const importedMaterials = await services.importRepository.listMaterials();
     const material = importedMaterials[importedMaterials.length - 1]!;
@@ -398,7 +398,7 @@ describe('阅读工作台外壳', () => {
 
     await services.commands.execute(COMMAND_IDS.workbenchSetPrimaryMaterial, materialId);
     await services.commands.execute(COMMAND_IDS.libraryOpenBook, material);
-    await waitFor(() => expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('toolbar', { name: /示例书/ })).toBeInTheDocument());
     await waitFor(() => expect(hosts[0]?.init).toHaveBeenCalled());
     const materialMenuButton = screen.getByRole('button', { name: '材料更多操作' });
     await user.click(materialMenuButton);
@@ -428,7 +428,7 @@ describe('阅读工作台外壳', () => {
     await user.clear(search);
     await user.click(screen.getByRole('button', { name: '跳转到批注 第一段重要原文' }));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument();
+      expect(screen.getByRole('toolbar', { name: /示例书/ })).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(
@@ -511,9 +511,11 @@ describe('回收站:安全删除资料', () => {
     renderApp(services);
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
     await waitFor(() => {
-      expect(screen.getByText('示例书')).toBeInTheDocument();
+      expect(screen.getAllByText('示例书').length).toBeGreaterThan(0);
     });
-    await user.click(screen.getByRole('button', { name: /移入回收站 示例书/ }));
+    screen.getByRole('button', { name: /打开 示例书/ }).focus();
+    await user.click(screen.getByRole('button', { name: '书库更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '移入回收站' }));
     await waitFor(() => {
       expect(screen.queryByText('示例书')).not.toBeInTheDocument();
     });
@@ -525,10 +527,12 @@ describe('回收站:安全删除资料', () => {
     renderApp(services);
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
     await waitFor(() => {
-      expect(screen.getByText('示例书')).toBeInTheDocument();
+      expect(screen.getAllByText('示例书').length).toBeGreaterThan(0);
     });
 
-    await user.click(screen.getByRole('button', { name: /移入回收站 示例书/ }));
+    screen.getByRole('button', { name: /打开 示例书/ }).focus();
+    await user.click(screen.getByRole('button', { name: '书库更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '移入回收站' }));
 
     await waitFor(() => {
       expect(screen.queryByText('示例书')).not.toBeInTheDocument();
@@ -548,7 +552,7 @@ describe('回收站:安全删除资料', () => {
     await user.click(screen.getByRole('button', { name: /恢复 示例书/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('示例书')).toBeInTheDocument();
+      expect(screen.getAllByText('示例书').length).toBeGreaterThan(0);
     });
     expect(useLibraryStore.getState().trashedMaterials).toHaveLength(0);
     expect(useLibraryStore.getState().materials).toHaveLength(1);
@@ -608,7 +612,7 @@ describe('打开 EPUB 并重启续读', () => {
     useWorkspaceStore.getState().resetToDefault();
   });
 
-  it('从书库打开一本书后会新增阅读标签,再次点击会回到同一标签', async () => {
+  it('从书库打开一本书后会新增阅读区,拆分与关闭入口位于材料更多操作', async () => {
     const user = userEvent.setup();
     renderApp(services);
 
@@ -618,15 +622,36 @@ describe('打开 EPUB 并重启续读', () => {
     await user.click(openButton);
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument();
+      expect(screen.getByRole('toolbar', { name: /示例书/ })).toBeInTheDocument();
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    });
+    const readingToolbar = screen.getByRole('toolbar', { name: /示例书/ });
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(within(readingToolbar).getByRole('button', { name: '阅读排版' })).toBeInTheDocument();
+    expect(within(readingToolbar).queryByRole('button', { name: '向右拆分编辑器组' })).not.toBeInTheDocument();
+
+    await user.click(within(readingToolbar).getByRole('button', { name: '材料更多操作' }));
+    expect(screen.getByRole('menu', { name: '材料更多操作菜单' })).toHaveTextContent('向右拆分编辑器组');
+    expect(screen.getByRole('menu', { name: '材料更多操作菜单' })).toHaveTextContent('向下拆分编辑器组');
+    await user.click(screen.getByRole('menuitem', { name: '向右拆分编辑器组' }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups).toHaveLength(2);
+      expect(screen.getAllByRole('toolbar', { name: /示例书/ })).toHaveLength(2);
+    });
+    const closeSplitButtons = screen.getAllByRole('button', { name: '关闭当前拆分区' });
+    expect(closeSplitButtons).toHaveLength(2);
+    await user.click(closeSplitButtons[1]!);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: '关闭当前拆分区' })).not.toBeInTheDocument();
     });
 
     await user.click(openButton);
 
     await waitFor(() => {
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
-      expect(screen.getAllByRole('tab', { name: /示例书/ })).toHaveLength(1);
+      expect(screen.getAllByRole('toolbar', { name: /示例书/ })).toHaveLength(1);
     });
   });
 
@@ -673,7 +698,7 @@ describe('打开 EPUB 并重启续读', () => {
     });
   });
 
-  it('标签栏后退/前进按钮执行导航历史命令', async () => {
+  it('工作台不在常驻工具栏显示阅读位置前进/后退按钮', async () => {
     const user = userEvent.setup();
     renderApp(services);
 
@@ -684,23 +709,10 @@ describe('打开 EPUB 并重启续读', () => {
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
     });
 
-    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
-    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/1)' });
-    useWorkspaceStore.getState().pushViewLocation(viewId, { kind: 'epub', cfi: 'epubcfi(/6/2)' });
-
-    await user.click(screen.getByRole('button', { name: '后退' }));
-
-    await waitFor(() => {
-      const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
-      expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/1)' });
-    });
-
-    await user.click(screen.getByRole('button', { name: '前进' }));
-
-    await waitFor(() => {
-      const view = useWorkspaceStore.getState().editorGroups[0]!.views[0]!;
-      expect(view.location).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/2)' });
-    });
+    expect(screen.queryByRole('button', { name: '应用后退' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '应用前进' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '后退' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '前进' })).not.toBeInTheDocument();
   });
 
   it('重启多标签时只恢复活动标签的渲染器', async () => {
@@ -946,7 +958,7 @@ describe('导入并阅读固定版式 PDF', () => {
 
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
     await waitFor(() => {
-      expect(screen.getByText('示例 PDF')).toBeInTheDocument();
+      expect(screen.getAllByText('示例 PDF').length).toBeGreaterThan(0);
     });
     expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已导入 1 份文件/);
 
@@ -954,7 +966,7 @@ describe('导入并阅读固定版式 PDF', () => {
     await user.click(openButton);
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /示例 PDF/ })).toBeInTheDocument();
+      expect(screen.getByRole('toolbar', { name: /示例 PDF/ })).toBeInTheDocument();
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
     });
   });
@@ -986,9 +998,9 @@ describe('导入并阅读固定版式 PDF', () => {
     renderApp(withTextServices);
 
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByText('示例 PDF')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('示例 PDF').length).toBeGreaterThan(0));
     await user.click(await screen.findByRole('button', { name: /打开 示例 PDF/ }));
-    await waitFor(() => expect(screen.getByRole('tab', { name: /示例 PDF/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('toolbar', { name: /示例 PDF/ })).toBeInTheDocument());
 
     // 触发 Ctrl+F 打开搜索栏并输入关键词;搜索命中后应产生结果。
     await user.keyboard('{Control>}f{/Control}');

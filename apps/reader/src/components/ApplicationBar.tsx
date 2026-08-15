@@ -1,9 +1,8 @@
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown } from 'lucide-react';
+import { BookOpen, Check } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
-import { useLibraryStore } from '../workbench/libraryStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 
 type MenuKey = 'file' | 'edit' | 'view' | null;
@@ -33,17 +32,8 @@ export function ApplicationBar() {
     const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
     return group?.activeViewId ?? null;
   });
-  const activeMaterialId = useWorkspaceStore((state) => {
-    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
-    const view = group?.views.find((candidate) => candidate.id === group.activeViewId);
-    return view?.materialId ?? null;
-  });
-  const activeMaterial = useLibraryStore((state) =>
-    state.materials.find((material) => material.id === activeMaterialId),
-  );
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
-  const editorGroupCount = useWorkspaceStore((state) => state.editorGroups.length);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -76,7 +66,7 @@ export function ApplicationBar() {
         { id: 'backup', label: '导出完整备份…' },
         { id: 'restore', label: '恢复完整备份…' },
         { id: 'separator-2', separator: true },
-        { id: 'close', label: '关闭当前标签', disabled: !activeViewId },
+        { id: 'close', label: '关闭当前材料', disabled: !activeViewId },
       ];
     }
     if (menu === 'edit') {
@@ -89,11 +79,6 @@ export function ApplicationBar() {
       { id: 'library', label: '书库', checked: primarySidebarVisible },
       { id: 'toc', label: '目录', checked: tocVisible },
       { id: 'separator-1', separator: true },
-      {
-        id: 'split-right',
-        label: '向右拆分编辑器',
-        disabled: editorGroupCount >= 2,
-      },
       { id: 'typography', label: '阅读排版…', disabled: !activeViewId },
     ];
   };
@@ -124,9 +109,6 @@ export function ApplicationBar() {
       case 'view:toc':
         execute(COMMAND_IDS.workbenchToggleToc);
         break;
-      case 'view:split-right':
-        execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
-        break;
       case 'view:typography':
         execute(COMMAND_IDS.readerOpenTypography);
         break;
@@ -139,12 +121,6 @@ export function ApplicationBar() {
         <span className="app-mark" aria-label="AI Reader">
           <BookOpen size={16} aria-hidden />
         </span>
-        <button type="button" aria-label="应用后退" title="应用后退" onClick={() => execute(COMMAND_IDS.readerBack)}>
-          <ArrowLeft size={17} aria-hidden />
-        </button>
-        <button type="button" aria-label="应用前进" title="应用前进" onClick={() => execute(COMMAND_IDS.readerForward)}>
-          <ArrowRight size={17} aria-hidden />
-        </button>
         {(['file', 'edit', 'view'] as const).map((menu) => {
           const label = menu === 'file' ? '文件' : menu === 'edit' ? '编辑' : '视图';
           const open = openMenu === menu;
@@ -158,7 +134,6 @@ export function ApplicationBar() {
                 onClick={() => setOpenMenu(open ? null : menu)}
               >
                 {label}
-                <ChevronDown size={13} aria-hidden />
               </button>
               {open ? (
                 <div role="menu" aria-label={`${label}菜单`} className="app-menu">
@@ -187,13 +162,6 @@ export function ApplicationBar() {
             </div>
           );
         })}
-      </div>
-      <div className="app-topbar-document" title={activeMaterial?.title ?? 'AI Reader'}>
-        <span>{activeMaterial?.title ?? 'AI Reader'}</span>
-        <small>阅读工作区</small>
-      </div>
-      <div className="app-topbar-status" aria-live="polite">
-        <span>{activeMaterial ? '正在阅读' : '本地书库'}</span>
       </div>
     </header>
   );

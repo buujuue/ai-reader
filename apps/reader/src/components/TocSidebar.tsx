@@ -1,10 +1,11 @@
-import { BookMarked, ChevronRight } from 'lucide-react';
+import { ChevronRight, ListTree } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { TocItem } from '../domain/reader/toc';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { SidebarPanelHeader } from './SidebarPanelHeader';
 
 function TocNode({
   item,
@@ -69,12 +70,9 @@ export function TocSidebar() {
   return (
     <aside
       aria-label="目录侧栏"
-      className="flex w-60 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/40"
+      className="app-sidebar-panel"
     >
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2.5">
-        <BookMarked size={16} aria-hidden className="text-zinc-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">目录</h2>
-      </div>
+      <SidebarPanelHeader icon={ListTree} title="目录" />
       <div className="flex-1 overflow-y-auto py-2">
         {toc.length === 0 ? (
           <p className="px-3 py-4 text-xs leading-5 text-zinc-500">

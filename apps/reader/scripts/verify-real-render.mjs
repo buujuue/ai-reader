@@ -52,7 +52,11 @@ async function main() {
   try {
     await waitForServer(APP_URL);
 
-    const browser = await puppeteer.launch({ executablePath: CHROME, headless: true });
+    const browser = await puppeteer.launch({
+      executablePath: CHROME,
+      headless: true,
+      args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    });
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     const pageErrors = [];
@@ -73,11 +77,14 @@ async function main() {
       btn?.click();
     });
 
-    // 等待 foliate 完成排版并产生阅读位置。
+    // 等待 foliate 完成排版并创建真实内容文档。CFI 在无布局或部分 WebView
+    // 环境中可能不会及时暴露，不能作为图片资源已加载的前置条件。
     await page.waitForFunction(
       () => {
         const view = document.querySelector('foliate-view');
-        return !!view?.book && !!view?.lastLocation?.cfi;
+        return !!view?.book && !!view?.renderer?.getContents?.()?.some((content) =>
+          content.doc?.querySelector('img[alt="测试图片"]'),
+        );
       },
       { timeout: 15000 },
     );
@@ -85,6 +92,12 @@ async function main() {
     const state = await page.evaluate(() => {
       const view = document.querySelector('foliate-view');
       const container = view?.parentElement;
+      const image = view?.renderer?.getContents?.()
+        ?.flatMap((content) => Array.from(content.doc?.images ?? []))
+        ?.find((candidate) => candidate.getAttribute('data-image-marker') === 'body-image')
+        ?? view?.renderer?.getContents?.()
+          ?.flatMap((content) => Array.from(content.doc?.querySelectorAll('img') ?? []))
+          ?.find((candidate) => candidate.getAttribute('alt') === '测试图片');
       const rect = container ? container.getBoundingClientRect() : null;
       return {
         hasView: !!view,
@@ -94,6 +107,11 @@ async function main() {
         cfi: view?.lastLocation?.cfi ?? null,
         viewHeight: view ? getComputedStyle(view).height : null,
         containerRect: rect ? { w: rect.width, h: rect.height } : null,
+        image: image ? {
+          src: image.getAttribute('src'),
+          complete: image.complete,
+          naturalWidth: image.naturalWidth,
+        } : null,
       };
     });
 
@@ -105,9 +123,11 @@ async function main() {
     const failures = [];
     if (!state.hasView) failures.push('未创建 foliate-view 元素');
     if (!state.hasBook) failures.push('未挂载 BookDocument');
-    if (!state.cfi) failures.push('未产生阅读位置(CFI),说明未完成分页渲染');
+    if (!state.cfi) failures.push('未产生阅读位置(CFI),但这不阻断内容与图片资源验收');
     if (!state.viewHeight || state.viewHeight === '0px') failures.push('渲染器高度为 0');
     if (!state.containerRect || state.containerRect.h === 0) failures.push('容器高度为 0');
+    if (!state.image) failures.push('未找到 EPUB 正文图片元素');
+    else if (!state.image.complete || state.image.naturalWidth === 0) failures.push(`EPUB 图片未加载:${JSON.stringify(state.image)}`);
     if (pageErrors.length > 0) failures.push(`页面错误:${pageErrors.join('; ')}`);
 
     console.log('真实渲染冒烟结果:');

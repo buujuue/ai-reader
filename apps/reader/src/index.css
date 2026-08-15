@@ -6,6 +6,10 @@ body,
   height: 100%;
 }
 
+:root {
+  --app-scrollbar-thumb: rgb(161 161 170 / 58%);
+}
+
 html {
   background-color: #09090b;
 }
@@ -32,6 +36,54 @@ body {
 *::before,
 *::after {
   box-sizing: inherit;
+}
+
+/* 全局滚动条统一为约 8px,轨道/转角透明,避免出现黑色背景。 */
+html,
+body,
+#root,
+#root * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+#root *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+#root::-webkit-scrollbar-track,
+#root *::-webkit-scrollbar-track,
+html::-webkit-scrollbar-corner,
+body::-webkit-scrollbar-corner,
+#root::-webkit-scrollbar-corner,
+#root *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+#root::-webkit-scrollbar-thumb,
+#root *::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: var(--app-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+#root::-webkit-scrollbar-thumb:hover,
+#root *::-webkit-scrollbar-thumb:hover {
+  /* 悬停只保持普通滑块颜色,避免出现过强的亮色强调。 */
+  background-color: var(--app-scrollbar-thumb);
 }
 
 /* PDF 文本层:透明的可选择/复制文本,与 Canvas 正交对齐(工单 #15)。 */
@@ -122,29 +174,42 @@ body {
 .app-topbar {
   position: relative;
   z-index: 40;
-  display: grid;
-  min-height: 46px;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, auto) minmax(0, 1fr);
-  align-items: center;
-  border-bottom: 1px solid var(--prototype-border);
-  user-select: none;
-}
-
-.app-topbar-start,
-.app-topbar-document,
-.app-topbar-status {
   display: flex;
-  min-width: 0;
+  min-height: 37px;
   align-items: center;
+  user-select: none;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .app-topbar-start {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
   gap: 2px;
   padding: 0 7px;
 }
 
 .app-topbar-start > button,
-.app-topbar-start .app-menu-trigger,
+.app-topbar-start .app-menu-trigger {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 37px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--prototype-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--prototype-motion), background var(--prototype-motion);
+}
+
 .app-icon-button {
   display: inline-flex;
   min-width: 44px;
@@ -252,31 +317,6 @@ body {
   background: var(--prototype-border);
 }
 
-.app-topbar-document {
-  justify-content: center;
-  gap: 8px;
-  font-weight: 550;
-}
-
-.app-topbar-document > span {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-topbar-document small,
-.app-topbar-status {
-  color: var(--prototype-text-muted);
-  font-size: 11px;
-  font-weight: 450;
-}
-
-.app-topbar-status {
-  justify-content: flex-end;
-  padding: 0 14px;
-}
-
 .app-activity-rail {
   position: relative;
   z-index: 30;
@@ -288,6 +328,10 @@ body {
   gap: 4px;
   padding: 8px 5px;
   border-right: 1px solid var(--prototype-border);
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .app-activity-button {
@@ -306,11 +350,6 @@ body {
   background: transparent;
   cursor: pointer;
   transition: color var(--prototype-motion), background var(--prototype-motion), transform var(--prototype-motion);
-}
-
-.app-activity-button span {
-  font-size: 10px;
-  line-height: 1;
 }
 
 .app-activity-button:hover,
@@ -333,41 +372,270 @@ body {
 .app-reader-main {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  padding: 0 8px;
 }
 
-.app-shell [aria-label='编辑器区'] {
-  background: var(--prototype-reader-bg);
+.app-left-navigation {
+  display: flex;
+  min-width: 54px;
+  min-height: 0;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--prototype-border-strong);
+  border-radius: var(--prototype-radius-lg);
+  background: var(--prototype-surface);
 }
 
+.app-shell .app-left-navigation > [aria-label='书库侧栏'],
+.app-shell .app-left-navigation > [aria-label='目录侧栏'] {
+  border-right: 0;
+}
+
+.app-left-navigation:not([data-has-panel='true']) > .app-activity-rail {
+  border-right: 0;
+}
+
+.app-shell [aria-label='编辑器区'],
+.app-shell [aria-label='编辑器组'] {
+  background: transparent;
+}
+
+.app-shell .app-sidebar-panel,
 .app-shell [aria-label='书库侧栏'],
 .app-shell [aria-label='目录侧栏'] {
+  display: flex;
   width: 304px;
   min-width: 240px;
-  border-color: var(--prototype-border);
-  background: var(--prototype-surface);
-  -webkit-backdrop-filter: blur(26px) saturate(1.12);
-  backdrop-filter: blur(26px) saturate(1.12);
+  min-height: 0;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--prototype-border);
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.app-shell .app-left-navigation > .app-sidebar-panel,
+.app-shell .app-left-navigation > [aria-label='书库侧栏'],
+.app-shell .app-left-navigation > [aria-label='目录侧栏'] {
+  border-right: 0;
+}
+
+.sidebar-panel-header {
+  display: grid;
+  min-height: 44px;
+  height: 44px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--prototype-border);
+}
+
+.sidebar-panel-header-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-panel-header-title h2 {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prototype-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-panel-header-actions {
+  display: flex;
+  width: auto;
+  min-width: 44px;
+  height: 44px;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+}
+
+.sidebar-panel-header-action {
+  display: inline-flex;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  color: var(--prototype-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--prototype-motion), background var(--prototype-motion);
+}
+
+.sidebar-panel-header-action:hover:not(:disabled) {
+  color: var(--prototype-text);
+  background: var(--prototype-surface-hover);
+}
+
+.sidebar-panel-header-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.library-more-menu {
+  top: calc(100% + 5px);
+  right: 0;
+  left: auto;
+  width: 232px;
+}
+
+.library-more-menu-context {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px 8px;
+  border-bottom: 1px solid var(--prototype-border);
+}
+
+.library-more-menu-context strong {
+  overflow: hidden;
+  color: var(--prototype-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-more-menu-eyebrow {
+  color: var(--prototype-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.library-more-menu .library-menu-danger {
+  color: var(--prototype-danger);
+}
+
+.library-more-menu .library-menu-danger:hover:not(:disabled) {
+  color: var(--prototype-danger);
+  background: color-mix(in srgb, var(--prototype-danger) 20%, transparent);
 }
 
 .app-reading-view {
   display: flex;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--prototype-border-strong);
+  border-radius: var(--prototype-radius-lg);
   background: var(--prototype-reader-bg);
 }
 
 .app-reading-toolbar {
   position: relative;
   z-index: 5;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   min-height: 38px;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 0 10px 0 15px;
   border-bottom: 1px solid var(--prototype-border);
   color: var(--prototype-text-muted);
-  background: color-mix(in srgb, var(--prototype-surface-strong) 74%, transparent);
+  background: transparent;
+}
+
+.app-shell [data-view-id],
+.app-reading-source-editor {
+  background: transparent;
+}
+
+.app-shell > footer[aria-label='状态栏'] {
+  border-top: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.app-reading-toolbar-actions {
+  grid-column: 1;
+  justify-self: start;
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.app-reading-toolbar-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.app-reading-toolbar-actions .app-icon-button {
+  flex: 0 0 auto;
+  color: var(--prototype-text-secondary);
+}
+
+.app-reading-toolbar-actions .app-icon-button:hover:not(:disabled),
+.app-reading-toolbar-actions .app-icon-button.is-active {
+  color: var(--prototype-text);
+  background: var(--prototype-surface-hover);
+}
+
+.app-reading-toolbar-actions .app-icon-button.is-active {
+  color: var(--prototype-accent-strong);
+  background: var(--prototype-accent-soft);
+}
+
+.app-reading-toolbar-actions .app-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.app-reading-toolbar-title {
+  grid-column: 2;
+  min-width: 0;
+  max-width: min(40vw, 320px);
+  overflow: hidden;
+  color: var(--prototype-text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.app-reading-toolbar-title > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-reading-toolbar-end {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-reading-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--prototype-border);
 }
 
 .app-material-menu {
@@ -582,17 +850,6 @@ body {
     min-width: 0;
   }
 
-  .app-topbar {
-    grid-template-columns: 1fr auto;
-  }
-
-  .app-topbar-document {
-    display: none;
-  }
-
-  .app-topbar-status {
-    padding-inline: 8px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

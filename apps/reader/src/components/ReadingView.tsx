@@ -1,4 +1,13 @@
-import { MoreHorizontal, Star, StickyNote, X } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowRight,
+  Code2,
+  MoreHorizontal,
+  Settings2,
+  Star,
+  StickyNote,
+  X,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
@@ -7,6 +16,7 @@ import { ReadingInputController } from '../domain/reader/readingInput';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
 import { useLibraryStore } from '../workbench/libraryStore';
+import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { MarkdownSourceEditor } from './MarkdownSourceEditor';
 import { SearchBar } from './SearchBar';
@@ -146,6 +156,7 @@ export function ReadingView({ viewId }: { viewId: string }) {
     }
     return null;
   });
+  const hasSplit = useWorkspaceStore((state) => state.editorGroups.length >= 2);
 
   return (
     <div
@@ -158,7 +169,16 @@ export function ReadingView({ viewId }: { viewId: string }) {
         }
       }}
     >
-      {materialId ? <MaterialReadingToolbar materialId={materialId} /> : null}
+      {materialId ? (
+        <MaterialReadingToolbar
+          materialId={materialId}
+          viewId={viewId}
+          groupId={groupId}
+          isMarkdown={document?.format === 'markdown'}
+          isSourceMode={isMarkdownSourceMode}
+          hasSplit={hasSplit}
+        />
+      ) : null}
       {isMarkdownSourceMode ? (
         <div className="min-h-0 min-w-0 flex-1">
           <MarkdownSourceEditor viewId={viewId} />
@@ -178,7 +198,21 @@ export function ReadingView({ viewId }: { viewId: string }) {
   );
 }
 
-function MaterialReadingToolbar({ materialId }: { materialId: string }) {
+function MaterialReadingToolbar({
+  materialId,
+  viewId,
+  groupId,
+  isMarkdown,
+  isSourceMode,
+  hasSplit,
+}: {
+  materialId: string;
+  viewId: string;
+  groupId: string | null;
+  isMarkdown: boolean;
+  isSourceMode: boolean;
+  hasSplit: boolean;
+}) {
   const { commands } = useAppServices();
   const material = useLibraryStore((state) =>
     state.materials.find((candidate) => candidate.id === materialId),
@@ -188,6 +222,29 @@ function MaterialReadingToolbar({ materialId }: { materialId: string }) {
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  const executeForGroup = (commandId: CommandId, ...args: unknown[]) => {
+    const focus =
+      groupId && useWorkspaceStore.getState().activeEditorGroupId !== groupId
+        ? commands.execute(COMMAND_IDS.workbenchFocusEditorGroup, groupId)
+        : Promise.resolve();
+    void focus
+      .then(() => commands.execute(commandId, ...args))
+      .catch(() => undefined);
+  };
+
+  const openTypography = () => {
+    useShellUiStore.getState().openTypographyEditor(viewId);
+  };
+
+  const toggleSourceMode = () => {
+    executeForGroup(COMMAND_IDS.markdownToggleSourceMode, viewId);
+  };
+
+  const splitEditor = (commandId: CommandId) => {
+    setOpen(false);
+    executeForGroup(commandId);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -229,26 +286,82 @@ function MaterialReadingToolbar({ materialId }: { materialId: string }) {
   };
 
   return (
-    <div className="app-reading-toolbar">
-      <div className="min-w-0 truncate text-xs text-[var(--prototype-text-muted)]">
-        <span className="mr-2">当前位置</span>
-        <strong className="text-[var(--prototype-text-secondary)]">{material?.title ?? '阅读材料'}</strong>
-      </div>
-      <div ref={menuRef} className="relative shrink-0">
+    <div
+      role="toolbar"
+      aria-label={`当前阅读工具 - ${material?.title ?? '阅读材料'}`}
+      className="app-reading-toolbar"
+    >
+      <div className="app-reading-toolbar-actions" aria-label="阅读工具">
         <button
-          ref={menuButtonRef}
           type="button"
-          aria-label="材料更多操作"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          title="材料更多操作"
-          onClick={() => setOpen((visible) => !visible)}
+          aria-label="阅读排版"
+          title="调整阅读排版（字体、字号、行距、页边距、主题、分页/滚动）"
+          onClick={openTypography}
           className="app-icon-button"
         >
-          <MoreHorizontal size={17} aria-hidden />
+          <Settings2 size={16} aria-hidden />
         </button>
-        {open ? (
-          <div role="menu" aria-label="材料更多操作菜单" className="app-material-menu">
+        {isMarkdown ? (
+          <button
+            type="button"
+            aria-label={isSourceMode ? '退出源码模式' : '进入源码模式'}
+            title={isSourceMode ? '退出源码模式' : '进入源码模式（Ctrl+切换）'}
+            onClick={toggleSourceMode}
+            className={`app-icon-button ${isSourceMode ? 'is-active' : ''}`}
+          >
+            <Code2 size={16} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      <div className="app-reading-toolbar-title" title={material?.title ?? '阅读材料'}>
+        <span>{material?.title ?? '阅读材料'}</span>
+      </div>
+      <div className="app-reading-toolbar-end">
+        {hasSplit ? (
+          <button
+            type="button"
+            aria-label="关闭当前拆分区"
+            title="关闭当前拆分区"
+            onClick={() => executeForGroup(COMMAND_IDS.readerCloseView, viewId)}
+            className="app-icon-button"
+          >
+            <X size={16} aria-hidden />
+          </button>
+        ) : null}
+        <div ref={menuRef} className="relative shrink-0">
+          <button
+            ref={menuButtonRef}
+            type="button"
+            aria-label="材料更多操作"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            title="材料更多操作"
+            onClick={() => setOpen((visible) => !visible)}
+            className="app-icon-button"
+          >
+            <MoreHorizontal size={17} aria-hidden />
+          </button>
+          {open ? (
+            <div role="menu" aria-label="材料更多操作菜单" className="app-material-menu">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={hasSplit}
+                onClick={() => splitEditor(COMMAND_IDS.workbenchSplitEditorGroupRight)}
+              >
+                <ArrowRight size={14} aria-hidden />
+                向右拆分编辑器组
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={hasSplit}
+                onClick={() => splitEditor(COMMAND_IDS.workbenchSplitEditorGroupDown)}
+              >
+                <ArrowDown size={14} aria-hidden />
+                向下拆分编辑器组
+              </button>
+              <div role="separator" />
             <button
               type="button"
               role="menuitem"
@@ -272,8 +385,9 @@ function MaterialReadingToolbar({ materialId }: { materialId: string }) {
               {primaryMaterialId === materialId ? <X size={14} aria-hidden /> : <Star size={14} aria-hidden />}
               {primaryMaterialId === materialId ? '取消主要材料' : '设为主要材料'}
             </button>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
