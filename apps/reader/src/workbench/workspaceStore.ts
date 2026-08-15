@@ -11,6 +11,7 @@ import type { ReadingTypography } from '../domain/reader/typography';
 import { resolveTypography } from '../domain/reader/typography';
 import {
   DEFAULT_WORKSPACE_STATE,
+  normalizeSidebarVisibility,
   SECOND_EDITOR_GROUP_ID,
   type EditorGroupSplitDirection,
   type EditorGroupState,
@@ -25,7 +26,6 @@ import {
 export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
   tocVisible: boolean;
-  annotationSidebarVisible: boolean;
   primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
   activeEditorGroupId: string;
@@ -36,7 +36,6 @@ export interface WorkspaceStoreState {
   materialTypography: Record<string, Partial<ReadingTypography>>;
   setPrimarySidebarVisible: (visible: boolean) => void;
   setTocVisible: (visible: boolean) => void;
-  setAnnotationSidebarVisible: (visible: boolean) => void;
   setPrimaryMaterial: (materialId: string | null) => void;
   focusEditorGroup: (groupId: string) => void;
   splitEditorGroup: (
@@ -135,7 +134,6 @@ function normalizeWorkspaceViews(
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
   tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
-  annotationSidebarVisible: DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
   primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
   splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
   activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
@@ -143,11 +141,15 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
   materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
 
-  setPrimarySidebarVisible: (visible) => set({ primarySidebarVisible: visible }),
+  setPrimarySidebarVisible: (visible) =>
+    set((state) => ({
+      ...normalizeSidebarVisibility(visible, state.tocVisible),
+    })),
 
-  setTocVisible: (visible) => set({ tocVisible: visible }),
-
-  setAnnotationSidebarVisible: (visible) => set({ annotationSidebarVisible: visible }),
+  setTocVisible: (visible) =>
+    set((state) => ({
+      ...normalizeSidebarVisibility(state.primarySidebarVisible, visible),
+    })),
 
   setPrimaryMaterial: (materialId) => set({ primaryMaterialId: materialId }),
 
@@ -364,9 +366,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     );
     const materials = uniqueMaterialIds(normalized.editorGroups);
     set({
-      primarySidebarVisible: state.primarySidebarVisible,
-      tocVisible: state.tocVisible,
-      annotationSidebarVisible: state.annotationSidebarVisible,
+      ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
       primaryMaterialId:
         state.primaryMaterialId ?? (materials.length === 1 ? materials[0]! : null),
       splitDirection: normalized.splitDirection,
@@ -381,7 +381,6 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     set({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
       tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
-      annotationSidebarVisible: DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
       primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
       splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,

@@ -28,6 +28,7 @@ import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useAnnotationStore } from '../workbench/annotationStore';
+import { useShellUiStore } from '../workbench/shellUiStore';
 import { createInMemoryAnnotationRepository } from '../domain/annotation/inMemoryAnnotationRepository';
 import type { Annotation } from '../domain/annotation/annotation';
 import { App } from './App';
@@ -45,7 +46,7 @@ function renderApp(services: AppServices) {
 function createFakeViewHost(): FoliateViewHost {
   return {
     async open() {},
-    async init() {},
+    init: vi.fn(async () => {}),
     async next() {},
     async prev() {},
     goToLocation: vi.fn(async () => {}),
@@ -100,24 +101,51 @@ describe('阅读工作台外壳', () => {
     repository = createInMemoryWorkspaceRepository();
     services = createAppServices({ workspaceRepository: repository });
     useWorkspaceStore.getState().resetToDefault();
+    useLibraryStore.getState().resetToDefault();
+    useReaderRuntime.getState().closeAll();
     useAnnotationStore.getState().resetToDefault();
+    useShellUiStore.getState().closeAnnotationPanel();
+    useShellUiStore.getState().restoreCompactActivityPanel();
   });
 
   it('呈现简体中文工作台外壳', () => {
     renderApp(services);
 
-    expect(screen.getByText('AI Reader')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'AI Reader' })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '活动栏' })).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: '书库侧栏' })).toBeInTheDocument();
     expect(screen.getByRole('status', { name: '状态栏' })).toBeInTheDocument();
     expect(screen.getByText(/尚未导入阅读材料/)).toBeInTheDocument();
   });
 
+  it('默认生产入口呈现 C 工作台顶栏并只保留书库与目录活动入口', () => {
+    renderApp(services);
+
+    expect(screen.getByRole('banner', { name: '应用顶栏' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '书库' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '目录' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '切换批注侧栏' })).not.toBeInTheDocument();
+  });
+
+  it('应用顶栏菜单只呈现真实生产动作', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '文件' }));
+    expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('导入阅读材料');
+    expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('导出完整备份');
+    expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('恢复完整备份');
+    expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('关闭当前标签');
+    expect(screen.queryByText('Agent 侧栏')).not.toBeInTheDocument();
+    expect(screen.queryByText('切换到浅色主题')).not.toBeInTheDocument();
+  });
+
   it('点击活动栏按钮通过 Command 往返隐藏主侧栏并持久化', async () => {
     const user = userEvent.setup();
     renderApp(services);
 
-    const toggle = screen.getByRole('button', { name: '切换主侧栏' });
+    const toggle = screen.getByRole('button', { name: '书库' });
     await user.click(toggle);
 
     await waitFor(() => {
@@ -136,7 +164,7 @@ describe('阅读工作台外壳', () => {
     const user = userEvent.setup();
     renderApp(services);
 
-    const toggle = screen.getByRole('button', { name: '切换主侧栏' });
+    const toggle = screen.getByRole('button', { name: '书库' });
     await user.click(toggle);
     await waitFor(() => {
       expect(screen.queryByRole('complementary', { name: '书库侧栏' })).not.toBeInTheDocument();
@@ -151,12 +179,47 @@ describe('阅读工作台外壳', () => {
     });
   });
 
+  it('紧凑布局打开材料后收起抽屉并允许切换目录', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
+    try {
+      services = createAppServices({
+        workspaceRepository: repository,
+        viewHostFactory: () => createFakeViewHost(),
+      });
+      const user = userEvent.setup();
+      renderApp(services);
+      await waitFor(() =>
+        expect(document.querySelector('[data-layout-mode="compact"]')).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+      await waitFor(() => expect(screen.getByText('示例书')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: '打开 示例书' }));
+
+      await waitFor(() =>
+        expect(screen.queryByRole('complementary', { name: '书库侧栏' })).not.toBeInTheDocument(),
+      );
+      expect(useShellUiStore.getState().compactActivityPanelDismissed).toBe(true);
+
+      await user.click(screen.getByRole('button', { name: '书库' }));
+      await waitFor(() =>
+        expect(screen.getByRole('complementary', { name: '书库侧栏' })).toBeInTheDocument(),
+      );
+      await user.click(screen.getByRole('button', { name: '目录' }));
+      await waitFor(() =>
+        expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument(),
+      );
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
+    }
+  });
+
   it('启动时恢复此前持久化的侧栏隐藏状态', async () => {
     await repository.saveState({
       ...structuredClone(DEFAULT_WORKSPACE_STATE),
       primarySidebarVisible: false,
       tocVisible: true,
-      annotationSidebarVisible: false,
     });
 
     renderApp(services);
@@ -167,7 +230,6 @@ describe('阅读工作台外壳', () => {
     });
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
     expect(useWorkspaceStore.getState().tocVisible).toBe(true);
-    expect(useWorkspaceStore.getState().annotationSidebarVisible).toBe(false);
     expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument();
   });
 
@@ -246,7 +308,7 @@ describe('阅读工作台外壳', () => {
     expect(screen.queryByText('示例书')).not.toBeInTheDocument();
   });
 
-  it('主要材料的批注侧栏按批注文本筛选并保持材料级集合', async () => {
+  it('材料更多菜单打开批注覆盖面板并按批注文本筛选', async () => {
     const annotationRepository = createInMemoryAnnotationRepository();
     const exportDestinationPicker = {
       pickAnnotationExportDestination: vi.fn(async () => 'notes.md'),
@@ -272,7 +334,10 @@ describe('阅读工作台外壳', () => {
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
     await waitFor(() => expect(screen.getByText('示例书')).toBeInTheDocument());
 
-    const materialId = useLibraryStore.getState().materials[0]!.id;
+    const importedMaterials = await services.importRepository.listMaterials();
+    const material = importedMaterials[importedMaterials.length - 1]!;
+    const materialId = material.id;
+    const fingerprint = material.fingerprint;
     const annotations: Annotation[] = [
       {
         id: 'annotation-1',
@@ -282,7 +347,7 @@ describe('阅读工作台外壳', () => {
           quote: '第一段重要原文',
           before: '',
           after: '',
-          documentVersion: 'fingerprint',
+          documentVersion: fingerprint,
           recoveryState: 'resolved',
         },
         style: 'highlight',
@@ -300,7 +365,7 @@ describe('阅读工作台外壳', () => {
           quote: '第二段原文',
           before: '',
           after: '',
-          documentVersion: 'fingerprint',
+          documentVersion: fingerprint,
           recoveryState: 'orphaned',
         },
         style: 'highlight',
@@ -318,7 +383,7 @@ describe('阅读工作台外壳', () => {
           quote: '',
           before: '',
           after: '',
-          documentVersion: 'fingerprint',
+          documentVersion: fingerprint,
           recoveryState: 'resolved',
         },
         style: 'highlight',
@@ -331,16 +396,21 @@ describe('阅读工作台外壳', () => {
     ];
     for (const annotation of annotations) await annotationRepository.saveAnnotation(annotation);
 
-    await user.click(screen.getByRole('button', { name: '设为主要材料 示例书' }));
+    await services.commands.execute(COMMAND_IDS.workbenchSetPrimaryMaterial, materialId);
+    await services.commands.execute(COMMAND_IDS.libraryOpenBook, material);
+    await waitFor(() => expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument());
+    await waitFor(() => expect(hosts[0]?.init).toHaveBeenCalled());
+    const materialMenuButton = screen.getByRole('button', { name: '材料更多操作' });
+    await user.click(materialMenuButton);
+    await user.click(screen.getByRole('menuitem', { name: '查看本材料批注' }));
 
-    const sidebar = screen.getByRole('complementary', { name: '批注侧栏' });
+    const sidebar = screen.getByRole('dialog', { name: '材料批注面板' });
     expect(sidebar).toHaveTextContent('第一段重要原文');
     expect(sidebar).toHaveTextContent('第二段原文');
     expect(sidebar).toHaveTextContent('失联');
-    expect(sidebar).toHaveTextContent('人类可读的数据出口，不用于完整书库恢复');
-    expect(screen.getByRole('button', { name: '导出主要材料批注' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出材料批注' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '导出主要材料批注' }));
+    await user.click(screen.getByRole('button', { name: '导出材料批注' }));
     await waitFor(() => expect(exportWriter.writeMarkdown).toHaveBeenCalledOnce());
     expect(exportDestinationPicker.pickAnnotationExportDestination).toHaveBeenCalledWith(
       '示例书-批注.md',
@@ -361,22 +431,33 @@ describe('阅读工作台外壳', () => {
       expect(screen.getByRole('tab', { name: /示例书/ })).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(hosts[0]?.goToLocation).toHaveBeenCalledWith('epubcfi(/6/4)!/4/2/2/1:0');
+      expect(
+        hosts.some((host) =>
+          vi.mocked(host.goToLocation).mock.calls.some(
+            ([location]) => location === 'epubcfi(/6/4)!/4/2/2/1:0',
+          ),
+        ),
+      ).toBe(true);
     });
+
+    await user.click(screen.getByRole('button', { name: '关闭材料批注面板' }));
+    await waitFor(() => expect(document.activeElement).toBe(materialMenuButton));
   });
 
-  it('批注侧栏的期望状态可以通过活动栏命令恢复', async () => {
+  it('材料批注覆盖面板关闭后焦点归还且不写入工作区状态', async () => {
     const user = userEvent.setup();
     renderApp(services);
 
-    await user.click(screen.getByRole('button', { name: '切换批注侧栏' }));
-    await waitFor(() => {
-      expect(screen.queryByRole('complementary', { name: '批注侧栏' })).not.toBeInTheDocument();
-    });
-    await expect(repository.loadState()).resolves.toEqual({
-      ...DEFAULT_WORKSPACE_STATE,
-      annotationSidebarVisible: false,
-    });
+    const opener = screen.getByRole('button', { name: '书库' });
+    opener.focus();
+    useShellUiStore.getState().openAnnotationPanel('missing-material');
+    await waitFor(() =>
+      expect(screen.getByRole('dialog', { name: '材料批注面板' })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: '关闭材料批注面板' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '材料批注面板' })).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(opener);
+    await expect(repository.loadState()).resolves.toEqual(DEFAULT_WORKSPACE_STATE);
   });
 
   it('loads persisted primary material annotations before restoring views', async () => {
@@ -571,7 +652,6 @@ describe('打开 EPUB 并重启续读', () => {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       tocVisible: workspace.tocVisible,
-      annotationSidebarVisible: workspace.annotationSidebarVisible,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
@@ -711,7 +791,6 @@ describe('打开 EPUB 并重启续读', () => {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       tocVisible: workspace.tocVisible,
-      annotationSidebarVisible: workspace.annotationSidebarVisible,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
@@ -781,7 +860,7 @@ describe('目录与外部链接', () => {
     const user = userEvent.setup();
     renderApp(services);
 
-    const toggle = screen.getByRole('button', { name: '切换目录' });
+    const toggle = screen.getByRole('button', { name: '目录' });
     await user.click(toggle);
 
     expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument();

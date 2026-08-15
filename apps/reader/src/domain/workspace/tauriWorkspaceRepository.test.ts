@@ -95,10 +95,10 @@ describe('TauriWorkspaceRepository 边界映射', () => {
   });
 
   it('线格式与 Rust 端锁定的 camelCase DTO 一致', () => {
-    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(8);
+    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(9);
     expect(DEFAULT_WORKSPACE_STATE.activeEditorGroupId).toBe(DEFAULT_EDITOR_GROUP_ID);
     expect(JSON.stringify(DEFAULT_WORKSPACE_STATE)).toBe(
-      '{"schemaVersion":8,"primarySidebarVisible":true,"tocVisible":false,"annotationSidebarVisible":true,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{}}',
+      '{"schemaVersion":9,"primarySidebarVisible":true,"tocVisible":false,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{}}',
     );
   });
 });

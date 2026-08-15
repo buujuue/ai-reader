@@ -21,7 +21,8 @@ type DismissibleShellDialog =
   | 'purge'
   | 'externalLink'
   | 'typography'
-  | 'note';
+  | 'note'
+  | 'annotationPanel';
 
 /** 从当前 Serialized Store 组装可持久化的工作区状态。 */
 export function serializeWorkspaceState(): WorkspaceState {
@@ -30,7 +31,6 @@ export function serializeWorkspaceState(): WorkspaceState {
     schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
     primarySidebarVisible: store.primarySidebarVisible,
     tocVisible: store.tocVisible,
-    annotationSidebarVisible: store.annotationSidebarVisible,
     primaryMaterialId: store.primaryMaterialId,
     splitDirection: store.splitDirection,
     activeEditorGroupId: store.activeEditorGroupId,
@@ -73,17 +73,27 @@ export function registerWorkbenchCommands(
       case 'note':
         useShellUiStore.getState().closeNoteEditor();
         break;
+      case 'annotationPanel':
+        useShellUiStore.getState().closeAnnotationPanel();
+        break;
     }
   });
 
   registry.register(COMMAND_IDS.workbenchTogglePrimarySidebar, async () => {
-    const nextVisible = !useWorkspaceStore.getState().primarySidebarVisible;
+    const workspace = useWorkspaceStore.getState();
+    const shell = useShellUiStore.getState();
+    if (workspace.primarySidebarVisible && shell.compactActivityPanelDismissed) {
+      shell.restoreCompactActivityPanel();
+      return;
+    }
+    const nextVisible = !workspace.primarySidebarVisible;
 
     try {
       const state = serializeWorkspaceState();
       await dependencies.workspaceRepository.saveState({
         ...state,
         primarySidebarVisible: nextVisible,
+        tocVisible: nextVisible ? false : state.tocVisible,
       });
     } catch (error) {
       console.error('保存工作区状态失败', error);
@@ -91,37 +101,33 @@ export function registerWorkbenchCommands(
       throw error;
     }
 
+    if (nextVisible) useWorkspaceStore.getState().setTocVisible(false);
     useWorkspaceStore.getState().setPrimarySidebarVisible(nextVisible);
+    if (nextVisible) useShellUiStore.getState().restoreCompactActivityPanel();
     useShellUiStore
       .getState()
       .setStatusMessage(nextVisible ? '已保存工作区状态:侧栏显示' : '已保存工作区状态:侧栏隐藏');
   });
 
-  registry.register(COMMAND_IDS.workbenchToggleAnnotationSidebar, async () => {
-    const nextVisible = !useWorkspaceStore.getState().annotationSidebarVisible;
-
-    try {
+  registry.register(COMMAND_IDS.workbenchFocusLibraryFilter, async () => {
+    if (!useWorkspaceStore.getState().primarySidebarVisible) {
       const state = serializeWorkspaceState();
       await dependencies.workspaceRepository.saveState({
         ...state,
-        annotationSidebarVisible: nextVisible,
+        primarySidebarVisible: true,
+        tocVisible: false,
       });
-    } catch (error) {
-      console.error('保存批注侧栏状态失败', error);
-      useShellUiStore.getState().setStatusMessage('保存批注侧栏状态失败');
-      throw error;
+      useWorkspaceStore.getState().setTocVisible(false);
+      useWorkspaceStore.getState().setPrimarySidebarVisible(true);
     }
-
-    useWorkspaceStore.getState().setAnnotationSidebarVisible(nextVisible);
-    useShellUiStore
-      .getState()
-      .setStatusMessage(nextVisible ? '已显示批注侧栏' : '已隐藏批注侧栏');
+    useShellUiStore.getState().restoreCompactActivityPanel();
+    useShellUiStore.getState().requestLibraryFilterFocus();
   });
 
   registry.register(COMMAND_IDS.workbenchSetPrimaryMaterial, async (...args: unknown[]) => {
     const materialId = args[0] as string | null | undefined;
-    if (typeof materialId !== 'string' || materialId.length === 0) return;
-    if (dependencies.annotationRepository) {
+    if (materialId !== null && (typeof materialId !== 'string' || materialId.length === 0)) return;
+    if (materialId && dependencies.annotationRepository) {
       const annotations = await dependencies.annotationRepository.listByMaterial(materialId);
       useAnnotationStore.getState().setMaterialAnnotations(materialId, annotations);
     }
@@ -132,18 +138,55 @@ export function registerWorkbenchCommands(
   });
 
   registry.register(COMMAND_IDS.workbenchToggleToc, async () => {
-    const nextVisible = !useWorkspaceStore.getState().tocVisible;
+    const workspace = useWorkspaceStore.getState();
+    const shell = useShellUiStore.getState();
+    if (workspace.tocVisible && shell.compactActivityPanelDismissed) {
+      shell.restoreCompactActivityPanel();
+      return;
+    }
+    const nextVisible = !workspace.tocVisible;
 
     try {
       const state = serializeWorkspaceState();
-      await dependencies.workspaceRepository.saveState({ ...state, tocVisible: nextVisible });
+      await dependencies.workspaceRepository.saveState({
+        ...state,
+        tocVisible: nextVisible,
+        primarySidebarVisible: nextVisible ? false : state.primarySidebarVisible,
+      });
     } catch (error) {
       console.error('保存目录侧栏状态失败', error);
       useShellUiStore.getState().setStatusMessage('保存目录侧栏状态失败');
       throw error;
     }
 
+    if (nextVisible) useWorkspaceStore.getState().setPrimarySidebarVisible(false);
     useWorkspaceStore.getState().setTocVisible(nextVisible);
+    if (nextVisible) useShellUiStore.getState().restoreCompactActivityPanel();
+  });
+
+  registry.register(COMMAND_IDS.workbenchOpenAnnotationPanel, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    if (!materialId) return;
+    const returnFocusTarget =
+      typeof HTMLElement !== 'undefined' && args[1] instanceof HTMLElement
+        ? args[1]
+        : null;
+    useShellUiStore.getState().openAnnotationPanel(materialId, returnFocusTarget);
+  });
+
+  registry.register(COMMAND_IDS.annotationOpenNoteEditor, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    const annotationId = args[1] as string | undefined;
+    if (!materialId || !annotationId) return;
+    useShellUiStore.getState().openNoteEditor(materialId, annotationId);
+  });
+
+  registry.register(COMMAND_IDS.readerOpenTypography, async () => {
+    const state = useWorkspaceStore.getState();
+    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
+    if (group?.activeViewId) {
+      useShellUiStore.getState().openTypographyEditor(group.activeViewId);
+    }
   });
 
   registry.register(COMMAND_IDS.workbenchFocusEditorGroup, async (...args: unknown[]) => {

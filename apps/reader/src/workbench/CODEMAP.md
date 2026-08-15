@@ -4,7 +4,7 @@
 
 - `layoutPolicy.ts`：按 Workbench 实际容器宽度计算紧凑/中等/宽布局；紧凑布局只显示活动 Editor Group，并把侧栏降级为覆盖抽屉，不修改可序列化的工作区状态。对应 `layoutPolicy.test.ts`。
 
-- 主要材料与侧栏：`workspaceStore.ts` 持久化 `primaryMaterialId`、`primarySidebarVisible`、`tocVisible` 和 `annotationSidebarVisible`；`workbenchCommands.ts` 提供对应切换命令；`readerCommands.ts` 提供 `annotation.goTo`，集中处理批注跳转并拒绝失联批注的猜测定位。
+- 主要材料与侧栏：`workspaceStore.ts` 只持久化 `primaryMaterialId`、`primarySidebarVisible` 与 `tocVisible`；`shellUiStore.ts` 仅运行时持有批注覆盖面板 materialId、紧凑抽屉临时关闭状态和筛选聚焦 token；`workbenchCommands.ts` 提供侧栏/主要材料命令；`readerCommands.ts` 提供 `annotation.goTo`，集中处理批注跳转并拒绝失联批注的猜测定位。
 
 - `workspaceStore.ts`：zustand Store，持有可序列化的工作区状态（`primarySidebarVisible`、`splitDirection`、`activeEditorGroupId`、`editorGroups`、`globalReadingTypography` 全局阅读默认、`materialTypography` 材料级排版覆盖）及 `focusEditorGroup`/`splitEditorGroup`/`openView`/`closeView`/`setActiveView`/`setViewSourceMode`/`setViewLocation`/`pushViewLocation`/`setViewHistory`/`setGlobalReadingTypography`/`setMaterialTypography`/`resetMaterialTypography`/`getEffectiveTypography`/`hydrate`/`resetToDefault` 等动作；`openView` 只在当前组内按 BookId 复用已有标签，`splitEditorGroup` 最多创建第二组并复制当前活动视图；用 `navigationHistory` 维护每个视图的可序列化导航历史；渲染器、选区等活对象不进入本 Store。`ReadingView` 的 `sourceMode` 字段标记视图是否处于 Markdown 源码模式（可序列化）。
 - `readerRuntime.ts`：Reader Runtime（活对象 Store），按阅读视图 id 持有 `BookDocument`；每个 Editor Group 仅保留活动视图，整个应用最多两个活动渲染器；不参与持久化。
@@ -16,9 +16,9 @@
 - `markdownCommands.ts`：Markdown 源码编辑 Command 唯一实现入口。除源码模式、正式保存、放弃与脏关闭流程外，注册 `markdown.updateBuffer`（1 秒节制写 Recovery Snapshot，同一材料的异步写严格串行）、`markdown.recovery.check` / `resolve` / `flush`（启动检查、恢复或丢弃、终止前 flush）。正式保存先稳定当前写入，再原子保存正式材料；只有缓冲区未在保存期间变化才清理快照，否则保留脏会话并立即按新基础版本补写快照。清理失败保留为下次启动的安全冲突。
 - `annotationStore.ts` / `annotationCommands.ts`：按材料维护批注运行时集合，编排文本/扫描 PDF 区域高亮创建、笔记编辑、删除、加载与版本变化后的文本锚点恢复；恢复仅接受唯一引文与前后文匹配，失联批注保留但不绘制。
 - `annotationExportCommands.ts`：批注 Markdown 导出 Command 唯一入口；按材料读取批注、调用系统目标选择器与 typed 写入器，取消/失败均通过状态栏反馈且不改写阅读状态。
-- `shellUiStore.ts`：外壳运行时反馈状态（状态栏、各类对话框、`markdownRecoverySnapshots` 启动处理队列），不参与持久化。
+- `shellUiStore.ts`：外壳运行时反馈状态（状态栏、各类对话框、`markdownRecoverySnapshots` 启动处理队列、材料批注覆盖面板与紧凑抽屉状态），不参与持久化。
 - `libraryStore.ts`：书库可序列化状态（`materials`、`trashedMaterials`）与 `importing` 瞬时反馈。
-- `workbenchCommands.ts`：工作台 Command 的唯一实现入口。`registerWorkbenchCommands` 注册侧栏切换、`app.back`、`shell.dismissDialog`、`workbench.focusEditorGroup` 与 `workbench.saveState`，先经 Repository 持久化成功后更新 Store；状态序列化包含拆分方向。
+- `workbenchCommands.ts`：工作台 Command 的唯一实现入口。`registerWorkbenchCommands` 注册书库/目录侧栏切换、筛选聚焦、主要材料设置、材料批注覆盖面板、笔记编辑入口、阅读排版入口、`app.back`、`shell.dismissDialog`、`workbench.focusEditorGroup` 与 `workbench.saveState`；可序列化状态只在 Workspace Store 中持久化，覆盖面板等瞬时 UI 不落库。
 - `importBook.ts`：批量导入编排 `importBooks`（一次多选、顺序 stage → inspect → commit、逐文件结果与失败分类），`classifyImportError` 把失败归类为 empty/unsupported/corrupt/permission/space/other。
 - `libraryCommands.ts`：书库 Command 唯一实现入口（`library.import`、`library.refresh`、元数据覆盖 `library.updateMetadata`/`library.setCover`/`library.removeCover`/`library.restoreMetadata`，回收站 `library.trash`/`library.restoreFromTrash`/`library.purge`）。
 - `backupCommands.ts`：完整书库备份 Command 唯一入口（`library.exportBackup`）；先提示未加密备份风险，再打开目标选择器并 flush 当前阅读位置，只有 Rust 导出成功后才报告完成，取消或失败均不调用成功状态。

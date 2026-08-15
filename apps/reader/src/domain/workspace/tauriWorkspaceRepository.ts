@@ -15,6 +15,7 @@ import type { WorkspaceRepository } from './workspaceRepository';
 import {
   DEFAULT_EDITOR_GROUP_ID,
   DEFAULT_WORKSPACE_STATE,
+  normalizeSidebarVisibility,
   WORKSPACE_STATE_SCHEMA_VERSION,
   type EditorGroupSplitDirection,
   type EditorGroupState,
@@ -118,17 +119,15 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   const materialOverrideEntries = Object.entries(materialTypography)
     .filter((entry): entry is [string, unknown] => isTypographyOverride(entry[1]))
     .map(([materialId, override]) => [materialId, override]);
+  const sidebarVisibility = normalizeSidebarVisibility(
+    candidate.primarySidebarVisible,
+    typeof candidate.tocVisible === 'boolean'
+      ? candidate.tocVisible
+      : DEFAULT_WORKSPACE_STATE.tocVisible,
+  );
   return {
     schemaVersion: candidate.schemaVersion,
-    primarySidebarVisible: candidate.primarySidebarVisible,
-    tocVisible:
-      typeof candidate.tocVisible === 'boolean'
-        ? candidate.tocVisible
-        : DEFAULT_WORKSPACE_STATE.tocVisible,
-    annotationSidebarVisible:
-      typeof candidate.annotationSidebarVisible === 'boolean'
-        ? candidate.annotationSidebarVisible
-        : DEFAULT_WORKSPACE_STATE.annotationSidebarVisible,
+    ...sidebarVisibility,
     primaryMaterialId:
       candidate.primaryMaterialId === null || typeof candidate.primaryMaterialId === 'string'
         ? candidate.primaryMaterialId ?? null
@@ -148,7 +147,12 @@ export function createTauriWorkspaceRepository(invoke: TauriInvoke): WorkspaceRe
       return assertWorkspaceStateShape(raw);
     },
     async saveState(state: WorkspaceState): Promise<void> {
-      await invoke(WORKSPACE_COMMAND_NAMES.saveState, { state });
+      await invoke(WORKSPACE_COMMAND_NAMES.saveState, {
+        state: {
+          ...state,
+          ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+        },
+      });
     },
   };
 }

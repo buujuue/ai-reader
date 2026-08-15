@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Archive, BookMarked, BookOpenCheck, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Archive, BookMarked, BookOpenCheck, FilePlus2, RotateCcw, Search, Trash2 } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -22,6 +22,9 @@ export function PrimarySidebar() {
   const openMetadataEditor = useShellUiStore((state) => state.openMetadataEditor);
   const openPurgeConfirm = useShellUiStore((state) => state.openPurgeConfirm);
   const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
+  const importing = useLibraryStore((state) => state.importing);
+  const libraryFilterFocusToken = useShellUiStore((state) => state.libraryFilterFocusToken);
+  const filterRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState('');
   const [showTrash, setShowTrash] = useState(false);
 
@@ -29,6 +32,10 @@ export function PrimarySidebar() {
     () => filterMaterialsByQuery(materials, query),
     [materials, query],
   );
+
+  useEffect(() => {
+    if (libraryFilterFocusToken > 0) filterRef.current?.focus();
+  }, [libraryFilterFocusToken]);
 
   const handleOpen = (materialId: string) => {
     const material = materials.find((item) => item.id === materialId);
@@ -54,6 +61,10 @@ export function PrimarySidebar() {
       .catch(() => undefined);
   };
 
+  const handleImport = () => {
+    void commands.execute(COMMAND_IDS.libraryImport).catch(() => undefined);
+  };
+
   return (
     <aside
       aria-label="书库侧栏"
@@ -67,6 +78,16 @@ export function PrimarySidebar() {
             {materials.length}
           </span>
         ) : null}
+        <button
+          type="button"
+          aria-label="导入 EPUB"
+          title="导入阅读材料(EPUB、PDF、Markdown)"
+          onClick={handleImport}
+          disabled={importing}
+          className="ml-auto rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--prototype-focus)] disabled:opacity-50"
+        >
+          <FilePlus2 size={15} aria-hidden />
+        </button>
       </div>
 
       {materials.length > 0 ? (
@@ -78,6 +99,7 @@ export function PrimarySidebar() {
               className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500"
             />
             <input
+              ref={filterRef}
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -93,7 +115,7 @@ export function PrimarySidebar() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <p className="text-sm text-zinc-400">尚未导入阅读材料</p>
           <p className="text-xs leading-5 text-zinc-500">
-            点击活动栏的导入按钮选择一份 EPUB。外部原文件不会被修改或删除。
+            点击右上角导入按钮选择 EPUB、PDF 或 Markdown。外部原文件不会被修改或删除。
           </p>
         </div>
       ) : filtered.length === 0 ? (
@@ -134,7 +156,7 @@ export function PrimarySidebar() {
                       onClick={() => handleTrash(material.id)}
                       title={`移入回收站 ${material.title}`}
                       aria-label={`移入回收站 ${material.title}`}
-                      className="rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-red-300 focus-visible:opacity-100"
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-red-300 focus-visible:opacity-100"
                     >
                       <Trash2 size={12} aria-hidden />
                     </button>
@@ -143,7 +165,7 @@ export function PrimarySidebar() {
                       onClick={() => openMetadataEditor(material.id)}
                       title={`编辑 ${material.title} 的元数据`}
                       aria-label={`编辑 ${material.title} 的元数据`}
-                      className="rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-zinc-100"
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-md bg-zinc-900/70 p-1 text-zinc-300 hover:text-zinc-100"
                     >
                       <span className="text-[10px]">编辑</span>
                     </button>
@@ -161,7 +183,7 @@ export function PrimarySidebar() {
                           : `设为主要材料 ${material.title}`
                       }
                       aria-pressed={primaryMaterialId === material.id}
-                      className={`rounded-md bg-zinc-900/70 p-1 transition-colors hover:text-sky-300 focus-visible:opacity-100 ${
+                      className={`flex min-h-11 min-w-11 items-center justify-center rounded-md bg-zinc-900/70 p-1 transition-colors hover:text-sky-300 focus-visible:opacity-100 ${
                         primaryMaterialId === material.id ? 'text-sky-300' : 'text-zinc-300'
                       }`}
                     >

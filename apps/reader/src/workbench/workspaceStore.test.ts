@@ -14,7 +14,6 @@ describe('Workspace Store', () => {
     expect(state.primarySidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.primarySidebarVisible);
     expect(state.tocVisible).toBe(DEFAULT_WORKSPACE_STATE.tocVisible);
     expect(state.primaryMaterialId).toBe(DEFAULT_WORKSPACE_STATE.primaryMaterialId);
-    expect(state.annotationSidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.annotationSidebarVisible);
     expect(state.editorGroups).toEqual(DEFAULT_WORKSPACE_STATE.editorGroups);
   });
 
@@ -77,12 +76,10 @@ describe('Workspace Store', () => {
     expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-1');
   });
 
-  it('用户可以显式指定主要阅读材料并切换批注面板期望状态', () => {
+  it('用户可以显式指定主要阅读材料', () => {
     useWorkspaceStore.getState().setPrimaryMaterial('material-2');
-    useWorkspaceStore.getState().setAnnotationSidebarVisible(false);
 
     expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-2');
-    expect(useWorkspaceStore.getState().annotationSidebarVisible).toBe(false);
   });
 
   it('关闭材料后只剩一份材料时自动将它设为主要阅读材料', () => {

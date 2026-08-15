@@ -90,7 +90,6 @@ describe('工作台命令处理', () => {
     useWorkspaceStore.getState().splitEditorGroup('down');
     await registry.execute(COMMAND_IDS.workbenchToggleToc);
     useWorkspaceStore.getState().setPrimarySidebarVisible(false);
-    useWorkspaceStore.getState().setAnnotationSidebarVisible(false);
 
     await registry.execute(COMMAND_IDS.workbenchSaveState);
 
@@ -100,7 +99,6 @@ describe('工作台命令处理', () => {
 
     const state = useWorkspaceStore.getState();
     expect(state.primarySidebarVisible).toBe(false);
-    expect(state.annotationSidebarVisible).toBe(false);
     expect(state.tocVisible).toBe(true);
     expect(state.editorGroups).toHaveLength(2);
     expect(state.editorGroups[0]!.views.map((view) => view.id)).toEqual([
@@ -111,14 +109,12 @@ describe('工作台命令处理', () => {
     expect(state.editorGroups[1]!.activeViewId).toBe(state.editorGroups[1]!.views[0]!.id);
   });
 
-  it('切换批注侧栏命令会持久化面板期望状态', async () => {
-    await registry.execute(COMMAND_IDS.workbenchToggleAnnotationSidebar);
+  it('关闭材料批注覆盖面板命令不写入工作区状态', async () => {
+    useShellUiStore.getState().openAnnotationPanel('material-1');
+    await registry.execute(COMMAND_IDS.shellDismissDialog, 'annotationPanel');
 
-    expect(useWorkspaceStore.getState().annotationSidebarVisible).toBe(false);
-    await expect(repository.loadState()).resolves.toEqual({
-      ...DEFAULT_WORKSPACE_STATE,
-      annotationSidebarVisible: false,
-    });
+    expect(useShellUiStore.getState().annotationPanelMaterialId).toBeNull();
+    await expect(repository.loadState()).resolves.toEqual(DEFAULT_WORKSPACE_STATE);
   });
 
   it('指定主要阅读材料命令不会依赖当前焦点并持久化材料身份', async () => {

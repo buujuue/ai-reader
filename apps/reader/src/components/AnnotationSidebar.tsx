@@ -1,14 +1,13 @@
-import { Download, FileWarning, Search, StickyNote } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Download, FileWarning, Search, StickyNote, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { Annotation } from '../domain/annotation/annotation';
-import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
+import { decodePdfTextAnchor, isPdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { useAnnotationStore } from '../workbench/annotationStore';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
-import { useWorkspaceStore } from '../workbench/workspaceStore';
 
 const EMPTY_ANNOTATIONS: Annotation[] = [];
 
@@ -30,164 +29,211 @@ function matchesQuery(annotation: Annotation, query: string): boolean {
     annotation.anchor.after,
     annotationLabel(annotation),
     annotation.anchor.recoveryState === 'orphaned' ? '失联' : '高亮',
+    annotation.note.trim() ? '带文字笔记' : '仅高亮',
   ]
     .join('\n')
     .toLocaleLowerCase();
   return searchable.includes(query.trim().toLocaleLowerCase());
 }
 
-/**
- * 主要阅读材料的材料级批注面板。它不跟随当前焦点切换，只读取 Workspace Store
- * 中显式指定的 primaryMaterialId；点击条目统一交给 Command 负责打开/聚焦正文并跳转。
- */
-export function AnnotationSidebar() {
+export interface AnnotationPanelProps {
+  materialId: string;
+  onClose: () => void;
+}
+
+/** 材料级批注覆盖面板;归属由打开它的 Material More Menu 显式传入。 */
+export function AnnotationPanel({ materialId, onClose }: AnnotationPanelProps) {
   const { commands } = useAppServices();
-  const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const returnFocusTarget = useShellUiStore((state) => state.annotationPanelReturnFocus);
   const materials = useLibraryStore((state) => state.materials);
-  const annotations = useAnnotationStore((state) =>
-    primaryMaterialId ? state.byMaterial[primaryMaterialId] ?? EMPTY_ANNOTATIONS : EMPTY_ANNOTATIONS,
+  const annotations = useAnnotationStore(
+    (state) => state.byMaterial[materialId] ?? EMPTY_ANNOTATIONS,
   );
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState(false);
-  const material = materials.find((candidate) => candidate.id === primaryMaterialId);
+  const material = materials.find((candidate) => candidate.id === materialId);
   const filtered = useMemo(
     () => annotations.filter((annotation) => matchesQuery(annotation, query)),
     [annotations, query],
   );
 
+  useEffect(() => {
+    panelRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(
+        panelRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panelRef.current?.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (returnFocusTarget?.isConnected !== false) returnFocusTarget?.focus();
+    };
+  }, [onClose, returnFocusTarget]);
+
   const handleJump = (annotation: Annotation) => {
-    if (!primaryMaterialId) return;
     void commands
-      .execute(COMMAND_IDS.annotationGoTo, primaryMaterialId, annotation.id)
+      .execute(COMMAND_IDS.annotationGoTo, materialId, annotation.id)
       .catch(() => undefined);
   };
 
   const handleEdit = (annotation: Annotation) => {
-    useShellUiStore.getState().openNoteEditor(annotation.materialId, annotation.id);
+    void commands
+      .execute(COMMAND_IDS.annotationOpenNoteEditor, annotation.materialId, annotation.id)
+      .catch(() => undefined);
   };
 
   const handleExport = () => {
-    if (!primaryMaterialId || !material || exporting) return;
+    if (!material || exporting) return;
     setExporting(true);
     void commands
-      .execute(COMMAND_IDS.annotationExportMarkdown, primaryMaterialId)
+      .execute(COMMAND_IDS.annotationExportMarkdown, materialId)
       .catch(() => undefined)
       .finally(() => setExporting(false));
   };
 
   return (
-    <aside
-      aria-label="批注侧栏"
-      className="flex w-72 shrink-0 flex-col border-l border-zinc-800 bg-zinc-900/40"
-    >
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2.5">
-        <StickyNote size={16} aria-hidden className="text-zinc-400" />
-        <h2 className="truncate text-sm font-semibold text-zinc-200">主要材料批注</h2>
-        {primaryMaterialId ? (
-          <span className="ml-auto rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
-            {annotations.length}
-          </span>
-        ) : null}
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={!material || exporting}
-          aria-label="导出主要材料批注"
-          title="导出主要材料批注为人类可读 Markdown"
-          className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Download size={14} aria-hidden />
-        </button>
-      </div>
-
-      {material ? (
-        <div className="border-b border-zinc-800 px-3 py-2">
-          <p className="truncate text-xs font-medium text-sky-300">{material.title}</p>
-          <p className="truncate text-[10px] text-zinc-500">主要阅读材料</p>
-          <p className="mt-1 text-[10px] leading-4 text-zinc-600">
-            Markdown 是人类可读的数据出口，不用于完整书库恢复。
-          </p>
-        </div>
-      ) : null}
-
-      {primaryMaterialId ? (
-        <div className="border-b border-zinc-800 px-3 py-2">
-          <div className="relative">
-            <Search
-              size={13}
-              aria-hidden
-              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="按批注文本筛选…"
-              aria-label="筛选批注"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:outline-none"
-            />
+    <div className="app-annotation-overlay" role="presentation">
+      <button
+        type="button"
+        className="app-annotation-backdrop"
+        aria-label="关闭材料批注面板背景"
+        onClick={onClose}
+      />
+      <aside
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="材料批注面板"
+        tabIndex={-1}
+        className="app-annotation-panel"
+      >
+        <header className="app-annotation-header">
+          <div className="flex min-w-0 items-center gap-2">
+            <StickyNote size={17} aria-hidden />
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-semibold">材料批注</h2>
+              <p className="truncate text-[11px] text-[var(--prototype-text-muted)]">
+                {material?.title ?? '未知材料'}
+              </p>
+            </div>
+            <span className="rounded-full bg-[var(--prototype-surface-soft)] px-1.5 py-0.5 text-[10px]">
+              {annotations.length}
+            </span>
           </div>
-        </div>
-      ) : null}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={!material || exporting}
+              aria-label="导出材料批注"
+              title="导出材料批注为 Markdown"
+              className="app-icon-button"
+            >
+              <Download size={15} aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="关闭材料批注面板"
+              title="关闭材料批注面板"
+              className="app-icon-button"
+            >
+              <X size={16} aria-hidden />
+            </button>
+          </div>
+        </header>
 
-      {!primaryMaterialId ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-          <StickyNote size={24} aria-hidden className="text-zinc-600" />
-          <p className="text-sm text-zinc-400">尚未指定主要阅读材料</p>
-          <p className="text-xs leading-5 text-zinc-500">可在书库卡片上指定，批注会集中显示在这里。</p>
+        <div className="app-annotation-filter">
+          <Search size={13} aria-hidden />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="按引文、笔记或状态筛选…"
+            aria-label="筛选批注"
+          />
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-6 text-center text-xs leading-5 text-zinc-500">
-          {annotations.length === 0 ? '这份材料还没有批注' : '没有匹配的批注'}
+
+        <div className="app-annotation-summary" aria-live="polite">
+          <span>全部 {annotations.length}</span>
+          <span>仅高亮 {annotations.filter((annotation) => !annotation.note.trim()).length}</span>
+          <span>带笔记 {annotations.filter((annotation) => annotation.note.trim()).length}</span>
         </div>
-      ) : (
-        <ul className="flex-1 space-y-2 overflow-y-auto px-2 py-2">
-          {filtered.map((annotation) => {
-            const orphaned = annotation.anchor.recoveryState === 'orphaned';
-            const label = annotationLabel(annotation);
-            return (
-              <li key={annotation.id} className="rounded-md border border-zinc-800 bg-zinc-950/60 p-2">
-                <div className="flex items-start gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleJump(annotation)}
-                    aria-label={`跳转到批注 ${label}`}
-                    className="min-w-0 flex-1 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-                    title={orphaned ? '失联批注无法安全跳转' : '跳转到正文位置'}
-                  >
-                    <span
-                      className={`block text-xs leading-5 ${
-                        orphaned ? 'text-zinc-500 line-through' : 'text-zinc-200'
-                      }`}
-                    >
-                      {label}
-                    </span>
-                    {annotation.note ? (
-                      <span className="mt-1 block whitespace-pre-wrap text-[11px] leading-4 text-zinc-400">
-                        {annotation.note}
+
+        {filtered.length === 0 ? (
+          <div className="app-annotation-empty">
+            {annotations.length === 0 ? '这份材料还没有批注' : '没有匹配的批注'}
+          </div>
+        ) : (
+          <ul className="app-annotation-list">
+            {filtered.map((annotation) => {
+              const orphaned = annotation.anchor.recoveryState === 'orphaned';
+              const label = annotationLabel(annotation);
+              const kindLabel = annotation.note.trim() ? '带文字笔记' : '仅高亮';
+              return (
+                <li key={annotation.id} className={orphaned ? 'app-annotation-card orphaned' : 'app-annotation-card'}>
+                  <div className="app-annotation-card-meta">
+                    <span>{kindLabel}</span>
+                    {orphaned ? (
+                      <span className="app-annotation-orphaned">
+                        <FileWarning size={12} aria-hidden />
+                        失联批注
                       </span>
                     ) : null}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`编辑批注 ${annotation.id}`}
-                    onClick={() => handleEdit(annotation)}
-                    className="shrink-0 rounded px-1.5 py-1 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-                  >
-                    编辑
-                  </button>
-                </div>
-                {orphaned ? (
-                  <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-amber-400">
-                    <FileWarning size={11} aria-hidden />
-                    失联批注
-                  </span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </aside>
+                  </div>
+                  <div className="app-annotation-card-row">
+                    <button
+                      type="button"
+                      onClick={() => handleJump(annotation)}
+                      aria-label={`跳转到批注 ${label}`}
+                      disabled={orphaned}
+                      title={orphaned ? '失联批注无法安全跳转' : '跳转到正文位置'}
+                      className="app-annotation-jump"
+                    >
+                      <span>{label}</span>
+                      {annotation.note ? <small>{annotation.note}</small> : null}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`编辑批注 ${annotation.id}`}
+                      onClick={() => handleEdit(annotation)}
+                      className="app-annotation-edit"
+                    >
+                      编辑
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </aside>
+    </div>
   );
 }
+
+/** 兼容旧测试/外部导入名;生产 App 只挂载 AnnotationPanel。 */
+export const AnnotationSidebar = AnnotationPanel;

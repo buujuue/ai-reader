@@ -1,115 +1,50 @@
-import {
-  Archive,
-  ArchiveRestore,
-  LibraryBig,
-  ListTree,
-  PanelLeftClose,
-  PanelLeftOpen,
-  StickyNote,
-} from 'lucide-react';
+import { LibraryBig, ListTree } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
-import { useLibraryStore } from '../workbench/libraryStore';
+import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 
+/** 一级区域入口只保留书库和目录;导入、备份等低频动作位于应用顶栏菜单。 */
 export function ActivityBar() {
   const { commands } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
-  const importing = useLibraryStore((state) => state.importing);
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
-  const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
+  const compactActivityPanelDismissed = useShellUiStore(
+    (state) => state.compactActivityPanelDismissed,
+  );
 
-  const handleTogglePrimarySidebar = () => {
+  const toggleLibrary = () => {
     void commands.execute(COMMAND_IDS.workbenchTogglePrimarySidebar).catch(() => undefined);
   };
 
-  const handleToggleToc = () => {
+  const toggleToc = () => {
     void commands.execute(COMMAND_IDS.workbenchToggleToc).catch(() => undefined);
   };
 
-  const handleImport = () => {
-    void commands.execute(COMMAND_IDS.libraryImport).catch(() => undefined);
-  };
-
-  const handleBackup = () => {
-    void commands.execute(COMMAND_IDS.libraryExportBackup).catch(() => undefined);
-  };
-
-  const handleRestoreBackup = () => {
-    void commands.execute(COMMAND_IDS.libraryRestoreBackup).catch(() => undefined);
-  };
-
-  const handleToggleAnnotations = () => {
-    void commands.execute(COMMAND_IDS.workbenchToggleAnnotationSidebar).catch(() => undefined);
-  };
-
   return (
-    <nav
-      aria-label="活动栏"
-      className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-zinc-800 bg-zinc-900/70 py-2"
-    >
+    <nav aria-label="活动栏" className="app-activity-rail frosted-zone">
       <button
         type="button"
-        aria-label="导入 EPUB"
-        title="批量导入阅读材料(EPUB/PDF/Markdown,可多选)"
-        onClick={handleImport}
-        disabled={importing}
-        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 disabled:opacity-50"
+        aria-label="书库"
+        aria-pressed={primarySidebarVisible && !compactActivityPanelDismissed}
+        title={primarySidebarVisible ? '隐藏书库' : '显示书库'}
+        onClick={toggleLibrary}
+        className="app-activity-button"
       >
-        <LibraryBig size={18} aria-hidden />
+        <LibraryBig size={20} aria-hidden />
+        <span>书库</span>
       </button>
       <button
         type="button"
-        aria-label="导出完整书库备份"
-        title="导出未加密的完整书库备份"
-        onClick={handleBackup}
-        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-      >
-        <Archive size={18} aria-hidden />
-      </button>
-      <button
-        type="button"
-        aria-label="从完整书库备份恢复"
-        title="从完整书库备份恢复并替换当前书库"
-        onClick={handleRestoreBackup}
-        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-      >
-        <ArchiveRestore size={18} aria-hidden />
-      </button>
-      <button
-        type="button"
-        aria-label="切换批注侧栏"
-        aria-pressed={annotationSidebarVisible}
-        title={annotationSidebarVisible ? '隐藏批注侧栏' : '显示批注侧栏'}
-        onClick={handleToggleAnnotations}
-        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-      >
-        <StickyNote size={18} aria-hidden />
-      </button>
-      <button
-        type="button"
-        aria-label="切换主侧栏"
-        aria-pressed={primarySidebarVisible}
-        title={primarySidebarVisible ? '隐藏主侧栏' : '显示主侧栏'}
-        onClick={handleTogglePrimarySidebar}
-        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-      >
-        {primarySidebarVisible ? (
-          <PanelLeftClose size={18} aria-hidden />
-        ) : (
-          <PanelLeftOpen size={18} aria-hidden />
-        )}
-      </button>
-      <button
-        type="button"
-        aria-label="切换目录"
-        aria-pressed={tocVisible}
+        aria-label="目录"
+        aria-pressed={tocVisible && !compactActivityPanelDismissed}
         title={tocVisible ? '隐藏目录' : '显示目录'}
-        onClick={handleToggleToc}
-        className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+        onClick={toggleToc}
+        className="app-activity-button"
       >
-        <ListTree size={18} aria-hidden />
+        <ListTree size={20} aria-hidden />
+        <span>目录</span>
       </button>
     </nav>
   );

@@ -15,6 +15,7 @@ const baseState: AndroidBackState = {
   externalLinkDialogOpen: false,
   typographyDialogOpen: false,
   noteDialogOpen: false,
+  annotationPanelOpen: false,
 };
 
 describe('resolveAndroidBackAction', () => {

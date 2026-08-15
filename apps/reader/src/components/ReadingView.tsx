@@ -1,12 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { MoreHorizontal, Star, StickyNote, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS, type CommandId } from '../commands/commandRegistry';
 import { ReadingInputController } from '../domain/reader/readingInput';
-import { useAnnotationStore } from '../workbench/annotationStore';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
-import { useShellUiStore } from '../workbench/shellUiStore';
+import { useLibraryStore } from '../workbench/libraryStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { MarkdownSourceEditor } from './MarkdownSourceEditor';
 import { SearchBar } from './SearchBar';
@@ -138,35 +138,18 @@ export function ReadingView({ viewId }: { viewId: string }) {
     };
   }, [commands, groupId, isActiveView, viewId, document]);
 
-  // 批注交互:点击高亮覆盖层打开对应批注的笔记编辑器。
-  useEffect(() => {
-    const book = useReaderRuntime.getState().getDocument(viewId);
-    if (!book) return;
-    const materialId = useWorkspaceStore.getState().editorGroups
-      .flatMap((group) => group.views)
-      .find((view) => view.id === viewId)?.materialId;
-    if (!materialId) return;
-
-    const offShowAnnotation = book.onShowAnnotation((cfi) => {
-      const matching = useAnnotationStore
-        .getState()
-        .getMaterialAnnotations(materialId)
-        .find((annotation) => annotation.anchor.cfi === cfi);
-      if (!matching) {
-        return;
-      }
-      useShellUiStore.getState().openNoteEditor(materialId, matching.id);
-    });
-    return () => {
-      offShowAnnotation();
-    };
-  }, [viewId, document]);
-
   const isMarkdownSourceMode = sourceMode && document?.format === 'markdown';
+  const materialId = useWorkspaceStore((state) => {
+    for (const group of state.editorGroups) {
+      const view = group.views.find((candidate) => candidate.id === viewId);
+      if (view) return view.materialId;
+    }
+    return null;
+  });
 
   return (
     <div
-      className="relative h-full w-full overflow-hidden bg-zinc-950"
+      className="app-reading-view relative h-full w-full overflow-hidden bg-zinc-950"
       onPointerDown={() => {
         if (groupId && useWorkspaceStore.getState().activeEditorGroupId !== groupId) {
           void commands
@@ -175,10 +158,13 @@ export function ReadingView({ viewId }: { viewId: string }) {
         }
       }}
     >
+      {materialId ? <MaterialReadingToolbar materialId={materialId} /> : null}
       {isMarkdownSourceMode ? (
-        <MarkdownSourceEditor viewId={viewId} />
+        <div className="min-h-0 min-w-0 flex-1">
+          <MarkdownSourceEditor viewId={viewId} />
+        </div>
       ) : (
-        <>
+        <div className="relative min-h-0 min-w-0 flex-1">
           <SearchBar viewId={viewId} />
           <SelectionToolbar viewId={viewId} />
           <div
@@ -186,8 +172,109 @@ export function ReadingView({ viewId }: { viewId: string }) {
             data-view-id={viewId}
             className="h-full w-full overflow-hidden bg-zinc-950"
           />
-        </>
+        </div>
       )}
+    </div>
+  );
+}
+
+function MaterialReadingToolbar({ materialId }: { materialId: string }) {
+  const { commands } = useAppServices();
+  const material = useLibraryStore((state) =>
+    state.materials.find((candidate) => candidate.id === materialId),
+  );
+  const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', escape);
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+
+  const exportAnnotations = () => {
+    if (exporting) return;
+    setExporting(true);
+    void commands
+      .execute(COMMAND_IDS.annotationExportMarkdown, materialId)
+      .catch(() => undefined)
+      .finally(() => {
+        setExporting(false);
+        setOpen(false);
+      });
+  };
+
+  const setPrimary = () => {
+    void commands
+      .execute(
+        COMMAND_IDS.workbenchSetPrimaryMaterial,
+        primaryMaterialId === materialId ? null : materialId,
+      )
+      .catch(() => undefined)
+      .finally(() => setOpen(false));
+  };
+
+  return (
+    <div className="app-reading-toolbar">
+      <div className="min-w-0 truncate text-xs text-[var(--prototype-text-muted)]">
+        <span className="mr-2">当前位置</span>
+        <strong className="text-[var(--prototype-text-secondary)]">{material?.title ?? '阅读材料'}</strong>
+      </div>
+      <div ref={menuRef} className="relative shrink-0">
+        <button
+          ref={menuButtonRef}
+          type="button"
+          aria-label="材料更多操作"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title="材料更多操作"
+          onClick={() => setOpen((visible) => !visible)}
+          className="app-icon-button"
+        >
+          <MoreHorizontal size={17} aria-hidden />
+        </button>
+        {open ? (
+          <div role="menu" aria-label="材料更多操作菜单" className="app-material-menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const returnFocusTarget = menuButtonRef.current;
+                setOpen(false);
+                void commands
+                  .execute(COMMAND_IDS.workbenchOpenAnnotationPanel, materialId, returnFocusTarget)
+                  .catch(() => undefined);
+              }}
+            >
+              <StickyNote size={14} aria-hidden />
+              查看本材料批注
+            </button>
+            <button type="button" role="menuitem" disabled={exporting} onClick={exportAnnotations}>
+              <span aria-hidden className="w-3.5" />
+              {exporting ? '正在导出…' : '导出本材料批注'}
+            </button>
+            <div role="separator" />
+            <button type="button" role="menuitem" onClick={setPrimary}>
+              {primaryMaterialId === materialId ? <X size={14} aria-hidden /> : <Star size={14} aria-hidden />}
+              {primaryMaterialId === materialId ? '取消主要材料' : '设为主要材料'}
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

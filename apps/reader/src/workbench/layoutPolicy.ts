@@ -5,12 +5,11 @@ export const WIDE_LAYOUT_MIN_WIDTH = 1200;
 
 export type LayoutMode = 'compact' | 'medium' | 'wide';
 export type SidebarPresentation = 'inline' | 'overlay';
-export type SidebarId = 'toc' | 'primary' | 'annotation';
+export type SidebarId = 'toc' | 'primary';
 
 export interface SidebarVisibility {
   toc: boolean;
   primary: boolean;
-  annotation: boolean;
 }
 
 /**
@@ -27,7 +26,7 @@ export interface LayoutPolicy {
 
 /**
  * 把持久化的侧栏期望状态投影到当前容器，避免中等宽度和紧凑抽屉互相重叠。
- * 宽布局可以同时显示全部侧栏；其它布局只显示优先级最高的一个，但不修改期望状态。
+ * 所有布局都只显示一个侧栏；布局只改变呈现方式，不修改持久化期望状态。
  */
 export function getVisibleSidebars(
   policy: LayoutPolicy,
@@ -35,11 +34,11 @@ export function getVisibleSidebars(
   preferredSidebar: SidebarId = 'primary',
 ): SidebarId[] {
   const requested: SidebarId[] = [preferredSidebar];
-  for (const sidebar of ['primary', 'toc', 'annotation'] as const) {
+  for (const sidebar of ['primary', 'toc'] as const) {
     if (sidebar !== preferredSidebar) requested.push(sidebar);
   }
   const visible = requested.filter((sidebar) => visibility[sidebar]);
-  return policy.mode === 'wide' ? visible : visible.slice(0, 1);
+  return visible.slice(0, 1);
 }
 
 export function getLayoutPolicy(width: number): LayoutPolicy {

@@ -14,6 +14,14 @@ export interface ShellUiStoreState {
   typographyEditorViewId: string | null;
   /** 正在编辑笔记的批注(materialId + annotationId);null 表示未打开笔记编辑器。 */
   noteEditorTarget: { materialId: string; annotationId: string } | null;
+  /** 当前打开的材料批注面板归属;面板状态只属于运行时外壳。 */
+  annotationPanelMaterialId: string | null;
+  annotationPanelReturnFocus: HTMLElement | null;
+  /** 紧凑布局打开材料后临时收起活动面板,不改写 Workspace State。 */
+  compactActivityPanelDismissed: boolean;
+  compactActivityPanelDismissRequestToken: number;
+  /** 书库筛选框聚焦请求序号,用于让菜单命令驱动 UI 聚焦。 */
+  libraryFilterFocusToken: number;
   /** 等待脏 Markdown 视图关闭确认的 viewId;null 表示未打开脏文档关闭对话框。 */
   markdownDirtyCloseViewId: string | null;
   /** 脏文档对话框确认后要执行的动作:关闭视图或退出源码模式。 */
@@ -32,6 +40,12 @@ export interface ShellUiStoreState {
   closeTypographyEditor: () => void;
   openNoteEditor: (materialId: string, annotationId: string) => void;
   closeNoteEditor: () => void;
+  openAnnotationPanel: (materialId: string, returnFocusTarget?: HTMLElement | null) => void;
+  closeAnnotationPanel: () => void;
+  dismissCompactActivityPanel: () => void;
+  requestCompactActivityPanelDismissal: () => void;
+  restoreCompactActivityPanel: () => void;
+  requestLibraryFilterFocus: () => void;
   openMarkdownDirtyClose: (viewId: string, action: 'close' | 'exitSource') => void;
   closeMarkdownDirtyClose: () => void;
   setMarkdownRecoverySnapshots: (snapshots: MarkdownRecoverySnapshot[]) => void;
@@ -45,6 +59,11 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   externalLinkUrl: null,
   typographyEditorViewId: null,
   noteEditorTarget: null,
+  annotationPanelMaterialId: null,
+  annotationPanelReturnFocus: null,
+  compactActivityPanelDismissed: false,
+  compactActivityPanelDismissRequestToken: 0,
+  libraryFilterFocusToken: 0,
   markdownDirtyCloseViewId: null,
   markdownDirtyCloseAction: null,
   markdownRecoverySnapshots: [],
@@ -61,6 +80,26 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   openNoteEditor: (materialId, annotationId) =>
     set({ noteEditorTarget: { materialId, annotationId } }),
   closeNoteEditor: () => set({ noteEditorTarget: null }),
+  openAnnotationPanel: (materialId, returnFocusTarget) =>
+    set({
+      annotationPanelMaterialId: materialId,
+      annotationPanelReturnFocus:
+        returnFocusTarget ??
+        (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null),
+      compactActivityPanelDismissed: false,
+    }),
+  closeAnnotationPanel: () =>
+    set({ annotationPanelMaterialId: null, annotationPanelReturnFocus: null }),
+  dismissCompactActivityPanel: () => set({ compactActivityPanelDismissed: true }),
+  requestCompactActivityPanelDismissal: () =>
+    set((state) => ({
+      compactActivityPanelDismissRequestToken: state.compactActivityPanelDismissRequestToken + 1,
+    })),
+  restoreCompactActivityPanel: () => set({ compactActivityPanelDismissed: false }),
+  requestLibraryFilterFocus: () =>
+    set((state) => ({ libraryFilterFocusToken: state.libraryFilterFocusToken + 1 })),
   openMarkdownDirtyClose: (viewId, action) =>
     set({ markdownDirtyCloseViewId: viewId, markdownDirtyCloseAction: action }),
   closeMarkdownDirtyClose: () => set({ markdownDirtyCloseViewId: null, markdownDirtyCloseAction: null }),

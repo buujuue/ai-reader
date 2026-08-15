@@ -1,4 +1,4 @@
-export type AndroidBackSidebar = 'primary' | 'toc' | 'annotation';
+export type AndroidBackSidebar = 'primary' | 'toc';
 
 export interface AndroidBackState {
   compactLayout: boolean;
@@ -13,6 +13,7 @@ export interface AndroidBackState {
   externalLinkDialogOpen: boolean;
   typographyDialogOpen: boolean;
   noteDialogOpen: boolean;
+  annotationPanelOpen: boolean;
 }
 
 export type AndroidBackAction =
@@ -24,6 +25,7 @@ export type AndroidBackAction =
   | { kind: 'dismissExternalLinkDialog' }
   | { kind: 'dismissTypographyDialog' }
   | { kind: 'dismissNoteDialog' }
+  | { kind: 'dismissAnnotationPanel' }
   | { kind: 'exitMarkdownSourceMode'; viewId: string }
   | { kind: 'stay' }
   | { kind: 'delegateToWebView' };
@@ -43,6 +45,7 @@ export function resolveAndroidBackAction(state: AndroidBackState): AndroidBackAc
   if (state.externalLinkDialogOpen) return { kind: 'dismissExternalLinkDialog' };
   if (state.typographyDialogOpen) return { kind: 'dismissTypographyDialog' };
   if (state.noteDialogOpen) return { kind: 'dismissNoteDialog' };
+  if (state.annotationPanelOpen) return { kind: 'dismissAnnotationPanel' };
   if (state.activeSearchViewId) {
     return { kind: 'closeSearch', viewId: state.activeSearchViewId };
   }

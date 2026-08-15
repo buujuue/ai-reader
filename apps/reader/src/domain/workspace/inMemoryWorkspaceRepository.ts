@@ -1,5 +1,9 @@
 import type { WorkspaceRepository } from './workspaceRepository';
-import { DEFAULT_WORKSPACE_STATE, type WorkspaceState } from './workspaceState';
+import {
+  DEFAULT_WORKSPACE_STATE,
+  normalizeSidebarVisibility,
+  type WorkspaceState,
+} from './workspaceState';
 
 export function createInMemoryWorkspaceRepository(): WorkspaceRepository {
   let stored: WorkspaceState | null = null;
@@ -10,7 +14,10 @@ export function createInMemoryWorkspaceRepository(): WorkspaceRepository {
       return structuredClone(source);
     },
     async saveState(state: WorkspaceState): Promise<void> {
-      stored = structuredClone(state);
+      stored = structuredClone({
+        ...state,
+        ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+      });
     },
   };
 }

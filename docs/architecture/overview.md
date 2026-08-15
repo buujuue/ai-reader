@@ -78,11 +78,17 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Workbench
 
-拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。`AnnotationSidebar` 只读取主要材料的材料级批注集合，筛选通过引文/笔记文本完成，点击后经 `annotation.goTo` 跳转；失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
+拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。材料更多菜单位于阅读工具栏右侧，仅提供查看/导出材料批注与设置主要阅读材料；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
 ### Command Registry
 
 所有按钮、菜单、键盘和手势执行稳定 Command ID。快捷键只负责按键到 Command 的映射，Event 只表达已经发生的事实。
+
+工作台外壳第一阶段固定使用 C 深色视觉；阅读材料主题仍由 `ReadingTypography` 按全局默认/材料覆盖管理，避免引入第二套外壳主题状态。
+
+正文高亮仍以材料级 Annotation 记录保存，但不注册正文点击打开笔记编辑器的行为；材料批注面板区分仅高亮与带文字笔记，笔记编辑从面板进入。
+
+应用顶栏只注册文件、编辑、视图三组真实菜单 Command，分别覆盖导入/备份/恢复/关闭标签、书库筛选/当前材料搜索、书库/目录/拆分编辑器/阅读排版；不把原型占位动作迁移到生产。
 
 ### Library
 
@@ -130,7 +136,7 @@ Rust 流式创建包含数据库一致性快照、托管材料和封面的完整
 
 - 宽布局（至少 1200px）：两个 Editor Group，可固定和调整两侧栏。
 - 中布局（800–1199px）：可显示两个 Editor Group，但最多固定一个侧栏。
-- 紧凑布局（小于 800px）：只显示活动 Editor Group，侧栏使用覆盖抽屉；隐藏组状态不销毁。
+- 紧凑布局（小于 800px）：只显示活动 Editor Group，活动侧栏使用覆盖抽屉；打开阅读材料后抽屉自动收起，隐藏组与面板期望状态不销毁。
 
 布局由 Workbench 容器的 ResizeObserver 驱动。平台只提供安全区、指针类型和系统能力，不负责决定工作台结构。
 
@@ -145,7 +151,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 1 切片**：Windows 阅读工作区底座（Command Registry、Workspace Repository、typed Tauri 命令边界）。
 - **第 2 切片**：托管导入一份 EPUB（stage → inspect → commit、完整内容指纹、SQLite 落库）。
 - **第 3 切片**：安全打开 EPUB 并重启续读（`BookDocument`/`EpubBookDocument` + `foliate-js`、`ReadingLocation`、Editor Group 标签、位置节流写入与 flush、重启恢复、内容清洗）。
-- **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。
+- **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面网格、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。书库文件夹树与拖拽归类不属于本次原型迁移，另行切片。
 - **第 5 切片**：当前资料目录、搜索、导航历史与基本排版（`TocSidebar`、增量搜索 `searchStore`/`searchRunner`、导航历史后退/前进、阅读排版 `typography.ts` 与 `ReaderSettingsDialog`、排版设置持久化）。
 - **第 6 切片**：PDF 固定版式阅读（`pdf/` 子模块：`PdfBookDocument` + `pdfjs-dist`、范围读取并发上限、过期渲染取消、Canvas 内存预算、缩放/页面适配与视口恢复、扫描页无文字层仍显示、`readerSetPdfViewport`/`readerSetPdfFlow` 命令）。对应工单 #14。
 - **第 7 切片**：Markdown 安全导入并阅读（`markdown/` 子模块：`marked` 渲染 + `sanitizeHtmlFragment` 清洗、按一级标题分段、内存 EPUB 组装、`MarkdownBookDocument` 复用 Foliate 宿主、标题/作者提取与文件名兜底、`library.openBook` 读取）。对应工单 #17。
@@ -154,7 +160,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 10 切片**：版本变化后的文本锚点恢复（通过 `BookDocument.search()` 唯一匹配引文与前后文、迁移新 CFI 和文档指纹；歧义或失败时保留为失联批注且不绘制旧高亮）。
 - **第 11 切片**：多标签阅读工作区（标签激活与关闭 Command、标签顺序和活动视图持久化、非活动标签释放 Reader Runtime、重启时仅恢复活动标签、缺失材料不阻塞其它标签）。对应工单 #21。
 - **第 12 切片**：双 Editor Group 阅读工作区（向右/向下拆分、各组独立活动视图与输入焦点、同材料跨组阅读、最多两个活动渲染器、拆分布局与视图恢复）。对应工单 #22。
-- **第 13 切片**：显式主要阅读材料与集中批注面板（主要材料状态与批注侧栏期望状态持久化、单材料自动指定、材料级批注筛选、失联标识、EPUB/PDF 正文跳转）。对应工单 #23。
+- **第 13 切片**：显式主要阅读材料与材料批注面板（主要材料状态与材料操作菜单入口、单材料自动指定、材料级批注筛选、失联标识、EPUB/PDF 批注跳转）。对应工单 #23。
 - **第 14 切片**：PDF 文本批注与扫描页区域批注创建（文本选区按所属页生成 PDF 锚点、扫描页显示无文本提示并支持拖拽区域、区域锚点使用页码与归一化矩形、文本/区域创建统一经 Command 持久化）。对应工单 #24。
 - **第 15 切片**：完整书库备份导出与恢复（版本化 tar manifest、隔离解包与指纹/SQLite 校验、空间预检、当前库安全快照、可恢复文件切换、启动回滚及前端恢复入口）。对应工单 #25、#26。
 

@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { ActivityBar } from '../components/ActivityBar';
-import { AnnotationSidebar } from '../components/AnnotationSidebar';
+import { AnnotationPanel } from '../components/AnnotationSidebar';
+import { ApplicationBar } from '../components/ApplicationBar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { MarkdownDirtyCloseDialog } from '../components/MarkdownDirtyCloseDialog';
@@ -32,9 +33,7 @@ export function App() {
     androidBackButton,
   } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
-  const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
-  const annotationSidebarVisible = useWorkspaceStore((state) => state.annotationSidebarVisible);
   const activeViewId = useWorkspaceStore((state) => {
     const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
     return group?.activeViewId ?? null;
@@ -56,12 +55,34 @@ export function App() {
   const externalLinkDialogOpen = useShellUiStore((state) => state.externalLinkUrl !== null);
   const typographyDialogOpen = useShellUiStore((state) => state.typographyEditorViewId !== null);
   const noteDialogOpen = useShellUiStore((state) => state.noteEditorTarget !== null);
+  const annotationPanelMaterialId = useShellUiStore((state) => state.annotationPanelMaterialId);
+  const closeAnnotationPanel = useCallback(() => {
+    void commands.execute(COMMAND_IDS.shellDismissDialog, 'annotationPanel').catch(() => undefined);
+  }, [commands]);
+  const compactActivityPanelDismissed = useShellUiStore(
+    (state) => state.compactActivityPanelDismissed,
+  );
+  const compactActivityPanelDismissRequestToken = useShellUiStore(
+    (state) => state.compactActivityPanelDismissRequestToken,
+  );
   const visibleSidebars = getVisibleSidebars(layoutPolicy, {
     primary: primarySidebarVisible,
     toc: tocVisible,
-    annotation: annotationSidebarVisible,
-  }, tocVisible ? 'toc' : primaryMaterialId ? 'annotation' : 'primary');
-  const visibleSidebarKey = visibleSidebars.join(',');
+  }, tocVisible ? 'toc' : 'primary');
+  const effectiveVisibleSidebars =
+    layoutPolicy.mode === 'compact' && compactActivityPanelDismissed ? [] : visibleSidebars;
+  const visibleSidebarKey = effectiveVisibleSidebars.join(',');
+
+  useEffect(() => {
+    if (
+      layoutPolicy.mode === 'compact' &&
+      (activeViewId || compactActivityPanelDismissRequestToken > 0)
+    ) {
+      useShellUiStore.getState().dismissCompactActivityPanel();
+    } else if (layoutPolicy.mode !== 'compact') {
+      useShellUiStore.getState().restoreCompactActivityPanel();
+    }
+  }, [activeViewId, compactActivityPanelDismissRequestToken, layoutPolicy.mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,14 +127,13 @@ export function App() {
     const sidebarCommands = {
       primary: COMMAND_IDS.workbenchTogglePrimarySidebar,
       toc: COMMAND_IDS.workbenchToggleToc,
-      annotation: COMMAND_IDS.workbenchToggleAnnotationSidebar,
     } as const;
 
     void androidBackButton
       .onBackButtonPress((event) => {
         const action = resolveAndroidBackAction({
           compactLayout: layoutPolicy.mode === 'compact',
-          visibleSidebars: visibleSidebars as Array<'primary' | 'toc' | 'annotation'>,
+          visibleSidebars: effectiveVisibleSidebars as Array<'primary' | 'toc'>,
           activeViewId,
           activeViewSourceMode,
           activeSearchViewId,
@@ -124,6 +144,7 @@ export function App() {
           externalLinkDialogOpen,
           typographyDialogOpen,
           noteDialogOpen,
+          annotationPanelOpen: annotationPanelMaterialId !== null,
         });
 
         switch (action.kind) {
@@ -155,6 +176,9 @@ export function App() {
           case 'dismissNoteDialog':
             void commands.execute(COMMAND_IDS.shellDismissDialog, 'note').catch(() => undefined);
             break;
+          case 'dismissAnnotationPanel':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'annotationPanel').catch(() => undefined);
+            break;
           case 'exitMarkdownSourceMode':
             void commands
               .execute(COMMAND_IDS.markdownToggleSourceMode, action.viewId)
@@ -181,6 +205,7 @@ export function App() {
     activeSearchViewId,
     activeViewId,
     activeViewSourceMode,
+    annotationPanelMaterialId,
     commands,
     externalLinkDialogOpen,
     layoutPolicy.mode,
@@ -282,7 +307,17 @@ export function App() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950 text-zinc-100">
+    <div
+      className="app-shell workbench-prototype"
+      data-variant="C"
+      data-theme="dark"
+      data-tone="4"
+      data-glow="1.4"
+    >
+      <a className="app-skip-link" href="#reader-main">
+        跳到阅读正文
+      </a>
+      <ApplicationBar />
       <div
         ref={workbenchRef}
         data-layout-mode={layoutPolicy.mode}
@@ -292,31 +327,29 @@ export function App() {
         <ActivityBar />
         {layoutPolicy.sidebarPresentation === 'inline' ? (
           <>
-            {visibleSidebars.includes('toc') ? <TocSidebar /> : null}
-            {visibleSidebars.includes('primary') ? <PrimarySidebar /> : null}
-            <EditorArea layoutPolicy={layoutPolicy} />
-            {visibleSidebars.includes('annotation') ? <AnnotationSidebar /> : null}
+            {effectiveVisibleSidebars.includes('toc') ? <TocSidebar /> : null}
+            {effectiveVisibleSidebars.includes('primary') ? <PrimarySidebar /> : null}
+            <div id="reader-main" className="app-reader-main min-h-0 min-w-0 flex-1">
+              <EditorArea layoutPolicy={layoutPolicy} />
+            </div>
           </>
         ) : (
           <>
-            <EditorArea layoutPolicy={layoutPolicy} />
+            <div id="reader-main" className="app-reader-main min-h-0 min-w-0 flex-1">
+              <EditorArea layoutPolicy={layoutPolicy} />
+            </div>
             <div
               aria-label="紧凑布局侧栏抽屉"
               className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
             >
-              {visibleSidebars.includes('toc') ? (
-                <div className="pointer-events-auto absolute inset-y-0 left-12 w-60 shadow-2xl shadow-black/50">
+              {effectiveVisibleSidebars.includes('toc') ? (
+                <div className="pointer-events-auto absolute inset-y-0 left-[3.375rem] w-[min(304px,calc(100vw-54px))] shadow-2xl shadow-black/50">
                   <TocSidebar />
                 </div>
               ) : null}
-              {visibleSidebars.includes('primary') ? (
-                <div className="pointer-events-auto absolute inset-y-0 left-[15rem] w-64 shadow-2xl shadow-black/50">
+              {effectiveVisibleSidebars.includes('primary') ? (
+                <div className="pointer-events-auto absolute inset-y-0 left-[3.375rem] w-[min(304px,calc(100vw-54px))] shadow-2xl shadow-black/50">
                   <PrimarySidebar />
-                </div>
-              ) : null}
-              {visibleSidebars.includes('annotation') ? (
-                <div className="pointer-events-auto absolute inset-y-0 right-0 w-72 shadow-2xl shadow-black/50">
-                  <AnnotationSidebar />
                 </div>
               ) : null}
             </div>
@@ -331,6 +364,9 @@ export function App() {
       <ExternalLinkDialog />
       <ReaderSettingsDialog />
       <NoteEditorDialog />
+      {annotationPanelMaterialId ? (
+        <AnnotationPanel materialId={annotationPanelMaterialId} onClose={closeAnnotationPanel} />
+      ) : null}
     </div>
   );
 }

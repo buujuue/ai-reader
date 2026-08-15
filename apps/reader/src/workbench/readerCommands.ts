@@ -73,7 +73,12 @@ const viewMountReadiness = new Map<string, ViewMountReadiness>();
 
 function getViewMountReadiness(viewId: string): ViewMountReadiness {
   const existing = viewMountReadiness.get(viewId);
-  if (existing && !existing.settled) return existing;
+  if (existing) return existing;
+
+  return createViewMountReadiness(viewId);
+}
+
+function createViewMountReadiness(viewId: string): ViewMountReadiness {
 
   let resolvePromise!: () => void;
   const readiness: ViewMountReadiness = {
@@ -89,6 +94,12 @@ function getViewMountReadiness(viewId: string): ViewMountReadiness {
   };
   viewMountReadiness.set(viewId, readiness);
   return readiness;
+}
+
+function prepareViewMountReadiness(viewId: string): ViewMountReadiness {
+  const existing = viewMountReadiness.get(viewId);
+  if (existing && !existing.settled) return existing;
+  return createViewMountReadiness(viewId);
 }
 
 async function waitForViewMount(viewId: string): Promise<void> {
@@ -339,7 +350,7 @@ export function mountViewDocument(
   location: ReadingLocation | null,
   dependencies: ReaderCommandDependencies,
 ): ThrottledPositionPersister {
-  const readiness = getViewMountReadiness(viewId);
+  const readiness = prepareViewMountReadiness(viewId);
   const persister = new ThrottledPositionPersister({
     save: async (next) => {
       useWorkspaceStore.getState().setViewLocation(viewId, next);
@@ -466,6 +477,7 @@ export function registerReaderCommands(
         useWorkspaceStore.getState().setViewLocation(viewId, location);
       }
       await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+      useShellUiStore.getState().requestCompactActivityPanelDismissal();
     } catch (error) {
       if (getActiveViewId() !== viewId) {
         return;
