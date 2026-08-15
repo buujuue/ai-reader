@@ -44,6 +44,12 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 
 采用单一领域上下文：根目录 `CONTEXT.md` 与 `docs/adr/`。详见 `docs/agents/domain.md`。
 
+### UI style
+
+新增、修改或评审任何用户可见界面（页面、组件、布局、色彩、排版、图标、交互状态、响应式、动效与无障碍）前，必须先阅读根目录 `style.md`，并按其中的“UI 任务执行顺序”和“交付检查清单”实施。
+
+`style.md` 是默认视觉与体验规范，不改变产品范围或架构边界；与 `CONTEXT.md`、规格、ADR 或架构文档冲突时以后者为准。`WorkbenchPrototype.tsx` 只提供视觉方向，不得把原型 mock、未来 Agent 占位或绕过 Command/Repository 的行为移入生产代码。
+
 ## 重点参考对象：Readest
 
 - [readest/readest](https://github.com/readest/readest) 是本项目最重要的参考实现；本机参考仓库位于 `C:\code\projects\readest`。
@@ -127,6 +133,7 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 ## 文档索引
 
 - `CONTEXT.md`：领域模型与统一语言。
+- `style.md`：项目级 UI 设计风格、交互与无障碍准则；所有 UI 任务的必读路由。
 - `.scratch/reader-foundation/spec.md`：第一版完整规格和验收边界。
 - `docs/product/vision.md`：产品定位、目标与非目标。
 - `docs/architecture/overview.md`：总体架构、TS/Rust 分工、模块关系和实施顺序。
