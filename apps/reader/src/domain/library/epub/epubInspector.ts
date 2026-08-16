@@ -612,7 +612,10 @@ function assertXmlNestingDepth(xml: string, label: string): void {
     if (xml.startsWith('<!', index) && !xml.startsWith('<![CDATA[', index)) {
       const end = scanTagEnd(xml, index + 2, label);
       const declaration = xml.slice(index + 2, end).trim().toUpperCase();
-      if (declaration.startsWith('DOCTYPE')) {
+      // EPUB XHTML commonly uses the safe HTML5 declaration. Do not allow
+      // external identifiers or internal subsets, which could reintroduce
+      // entity/resource loading semantics into the untrusted reading path.
+      if (declaration.startsWith('DOCTYPE') && declaration !== 'DOCTYPE HTML') {
         throw new EpubInspectError(`${label}不允许包含 DOCTYPE`, 'corrupt');
       }
       index = end;

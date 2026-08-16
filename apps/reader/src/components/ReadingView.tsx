@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS, type CommandId } from '../commands/commandRegistry';
+import type { BookDocument } from '../domain/reader/bookDocument';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
@@ -29,8 +30,10 @@ import { SelectionToolbar } from './SelectionToolbar';
  */
 export function ReadingView({ viewId }: { viewId: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mountedDocumentRef = useRef<BookDocument | null>(null);
   const { commands, importRepository, workspaceRepository, annotationRepository } = useAppServices();
   const document = useReaderRuntime((state) => state.documents.get(viewId));
+  const documentState = useReaderRuntime((state) => state.documentStates.get(viewId));
   const groupId = useWorkspaceStore((state) =>
     state.editorGroups.find((group) => group.views.some((view) => view.id === viewId))?.id ?? null,
   );
@@ -51,6 +54,8 @@ export function ReadingView({ viewId }: { viewId: string }) {
     if (!container) return;
     const existing = useReaderRuntime.getState().getDocument(viewId);
     if (!existing) return;
+    if (mountedDocumentRef.current === existing) return;
+    mountedDocumentRef.current = existing;
 
     const workspace = useWorkspaceStore.getState();
     const group = workspace.editorGroups.find((g) =>
@@ -64,6 +69,11 @@ export function ReadingView({ viewId }: { viewId: string }) {
       view?.location ?? null,
       { importRepository, workspaceRepository, annotationRepository },
     );
+    return () => {
+      if (mountedDocumentRef.current === existing) {
+        mountedDocumentRef.current = null;
+      }
+    };
   }, [importRepository, workspaceRepository, viewId, document]);
 
   // 统一阅读输入:键盘 + 内容文档(iframe 内)的滚轮/点击/触摸都收敛到同一组翻页命令。
@@ -192,6 +202,22 @@ export function ReadingView({ viewId }: { viewId: string }) {
             data-view-id={viewId}
             className="h-full w-full overflow-hidden bg-zinc-950"
           />
+          {documentState?.status === 'error' ? (
+            <div
+              className="pointer-events-none absolute inset-0 flex items-center justify-center p-6"
+              role="alert"
+            >
+              <div className="pointer-events-auto max-w-lg rounded-lg border border-[var(--prototype-danger)]/45 bg-[var(--prototype-surface-strong)] px-5 py-4 text-sm text-[var(--prototype-text)] shadow-lg">
+                <p className="font-medium">无法打开阅读材料</p>
+                <p className="mt-2 break-words text-xs leading-5 text-[var(--prototype-text-secondary)]">
+                  {documentState.message}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-[var(--prototype-text-muted)]">
+                  请重新打开材料；如果仍然失败，请把这条错误信息反馈给开发者。
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

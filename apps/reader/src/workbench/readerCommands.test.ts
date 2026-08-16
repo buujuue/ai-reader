@@ -13,7 +13,7 @@ import { useWorkspaceStore } from './workspaceStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useSearchStore } from './searchStore';
 
-function createFakeViewHost(): FoliateViewHost {
+function createFakeViewHost(overrides: Partial<FoliateViewHost> = {}): FoliateViewHost {
   return {
     async open() {},
     async init() {},
@@ -60,6 +60,7 @@ function createFakeViewHost(): FoliateViewHost {
     clearSearch() {},
     applyTypography() {},
     close() {},
+    ...overrides,
   };
 }
 
@@ -102,7 +103,7 @@ describe('Reader 命令', () => {
     registry = new CommandRegistry();
     workspaceRepository = createInMemoryWorkspaceRepository();
     useWorkspaceStore.getState().resetToDefault();
-    useReaderRuntime.setState({ documents: new Map() });
+    useReaderRuntime.setState({ documents: new Map(), documentStates: new Map() });
   });
 
   it('打开书籍后新增标签并在运行时注册 BookDocument', async () => {
@@ -119,6 +120,71 @@ describe('Reader 命令', () => {
     expect(group.views).toHaveLength(1);
     expect(group.views[0]!.materialId).toBe(material.id);
     expect(useReaderRuntime.getState().documents.has(group.views[0]!.id)).toBe(true);
+  });
+
+  it('阅读文档打开失败时把错误写入运行时状态而不是留下无提示空白', async () => {
+    const material = await setupWithEpub();
+    const openError = new Error('WebView 阅读器初始化失败');
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost({
+        open: vi.fn().mockRejectedValue(openError),
+      }),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    mountViewDocument(
+      useReaderRuntime.getState().getDocument(viewId)!,
+      viewId,
+      document.createElement('div'),
+      null,
+      { importRepository, workspaceRepository },
+    );
+
+    await vi.waitFor(() => {
+      expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({
+        status: 'error',
+        message: openError.message,
+      });
+    });
+  });
+
+  it('同一视图重复挂载时只打开一次阅读器', async () => {
+    const material = await setupWithEpub();
+    const host = createFakeViewHost({ open: vi.fn(async () => {}) });
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => host,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(viewId)!;
+    const container = document.createElement('div');
+    mountViewDocument(book, viewId, container, null, { importRepository, workspaceRepository });
+    mountViewDocument(book, viewId, container, null, { importRepository, workspaceRepository });
+
+    await vi.waitFor(() => expect(host.open).toHaveBeenCalledOnce());
+  });
+
+  it('材料解析失败时保留标签并把解析错误写入运行时状态', async () => {
+    const material = await setupWithEpub();
+    vi.spyOn(importRepository, 'readManagedFile').mockResolvedValue(new Uint8Array([1, 2, 3]));
+    registerReaderCommands(registry, { importRepository, workspaceRepository });
+
+    await expect(registry.execute(COMMAND_IDS.libraryOpenBook, material)).rejects.toThrow(
+      '无法打开阅读材料',
+    );
+
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+    expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({
+      status: 'error',
+      message: expect.stringContaining('解析 EPUB 失败'),
+    });
   });
 
   it('拆分当前阅读任务后两个编辑器组各自保留一个活跃阅读器', async () => {

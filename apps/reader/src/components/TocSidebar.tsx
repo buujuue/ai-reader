@@ -60,6 +60,9 @@ export function TocSidebar() {
   const document = useReaderRuntime((state) =>
     activeViewId ? state.documents.get(activeViewId) : undefined,
   );
+  const documentState = useReaderRuntime((state) =>
+    activeViewId ? state.documentStates.get(activeViewId) : undefined,
+  );
   const toc = document?.getTOC() ?? [];
 
   const handleNavigate = (href: string) => {
@@ -74,7 +77,15 @@ export function TocSidebar() {
     >
       <SidebarPanelHeader icon={ListTree} title="目录" />
       <div className="flex-1 overflow-y-auto py-2">
-        {toc.length === 0 ? (
+        {documentState?.status === 'loading' ? (
+          <p className="px-3 py-4 text-xs leading-5 text-zinc-500" role="status">
+            正在加载目录…
+          </p>
+        ) : documentState?.status === 'error' ? (
+          <p className="px-3 py-4 text-xs leading-5 text-[var(--prototype-danger)]" role="alert">
+            目录加载失败：{documentState.message}
+          </p>
+        ) : toc.length === 0 ? (
           <p className="px-3 py-4 text-xs leading-5 text-zinc-500">
             当前书籍没有可用的目录。
           </p>

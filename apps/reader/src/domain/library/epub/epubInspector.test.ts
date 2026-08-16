@@ -20,6 +20,29 @@ describe('EpubInspector', () => {
     expect(result.metadata.title).toBe('压缩书');
   });
 
+  it('允许 EPUB XHTML 使用安全的 HTML5 DOCTYPE', async () => {
+    const epub = buildStoredZip([
+      { name: 'META-INF/container.xml', data: encode(containerXml()) },
+      { name: 'OEBPS/content.opf', data: encode(opfXml({})) },
+      {
+        name: 'OEBPS/chapter1.xhtml',
+        data: encode('<!DOCTYPE html><html><body><p>正文</p></body></html>'),
+      },
+      {
+        name: 'OEBPS/chapter2.xhtml',
+        data: encode('<html><body><p>第二章</p></body></html>'),
+      },
+      {
+        name: 'OEBPS/nav.xhtml',
+        data: encode('<html><body><nav><ol><li><a href="chapter1.xhtml">正文</a></li></ol></nav></body></html>'),
+      },
+    ]);
+
+    const result = await inspectEpub(epub);
+
+    expect(result.metadata.title).toBe('预检书');
+  });
+
   it('缺失的作者与语言以 null 表达', async () => {
     const epub = buildEpub({ title: '无作者书' });
 

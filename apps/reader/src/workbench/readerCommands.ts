@@ -63,6 +63,24 @@ export interface ReaderCommandDependencies {
  */
 const persisters = new Map<string, ThrottledPositionPersister>();
 
+interface ActiveViewMount {
+  document: BookDocument;
+  container: HTMLElement;
+  persister: ThrottledPositionPersister;
+}
+
+const activeMounts = new Map<string, ActiveViewMount>();
+
+function describeDocumentOpenError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error;
+  }
+  return '阅读器初始化失败，请重新打开该材料。';
+}
+
 interface ViewMountReadiness {
   promise: Promise<void>;
   resolve: () => void;
@@ -148,13 +166,18 @@ async function createEpubDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
 ): Promise<BookDocument | null> {
-  const bytes = await dependencies.importRepository.readManagedFile(material.id);
+  let bytes: Uint8Array;
+  try {
+    bytes = await dependencies.importRepository.readManagedFile(material.id);
+  } catch (error) {
+    throw new Error(`读取 EPUB 失败：${describeDocumentOpenError(error)}`);
+  }
   let metadata;
   try {
     const result = await inspectEpub(bytes);
     metadata = result.metadata;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`解析 EPUB 失败：${describeDocumentOpenError(error)}`);
   }
   return new EpubBookDocument({
     bytes,
@@ -171,13 +194,18 @@ async function createPdfDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
 ): Promise<BookDocument | null> {
-  const bytes = await dependencies.importRepository.readManagedFile(material.id);
+  let bytes: Uint8Array;
+  try {
+    bytes = await dependencies.importRepository.readManagedFile(material.id);
+  } catch (error) {
+    throw new Error(`读取 PDF 失败：${describeDocumentOpenError(error)}`);
+  }
   let metadata;
   try {
     const result = await inspectPdf(bytes, dependencies.pdfLib);
     metadata = result.metadata;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`解析 PDF 失败：${describeDocumentOpenError(error)}`);
   }
   return new PdfBookDocument({
     bytes,
@@ -264,6 +292,7 @@ function getOrCreatePendingDocument(
 
 /** 释放失活标签的活对象，但保留 Workspace Store 中的标签、位置和历史。 */
 async function disposeViewRuntime(viewId: string): Promise<void> {
+  activeMounts.delete(viewId);
   const persister = persisters.get(viewId);
   if (persister) {
     await persister.dispose();
@@ -282,22 +311,52 @@ async function ensureActiveViewDocument(
   viewId: string,
   material?: ReadingMaterial,
 ): Promise<BookDocument | null> {
-  const existing = useReaderRuntime.getState().getDocument(viewId);
+  const runtime = useReaderRuntime.getState();
+  const existing = runtime.getDocument(viewId);
   if (existing) return existing;
 
+  runtime.setDocumentState(viewId, { status: 'loading' });
+
   const view = findView(viewId);
-  if (!view || !isViewActive(viewId)) return null;
+  if (!view || !isViewActive(viewId)) {
+    runtime.setDocumentState(viewId, {
+      status: 'error',
+      message: '阅读视图已失效，请重新打开材料。',
+    });
+    return null;
+  }
 
   const targetMaterial =
     material ??
     (await dependencies.importRepository.listMaterials()).find(
       (candidate) => candidate.id === view.materialId,
     );
-  if (!targetMaterial) return null;
+  if (!targetMaterial) {
+    runtime.setDocumentState(viewId, {
+      status: 'error',
+      message: '找不到该阅读材料的托管文件。',
+    });
+    return null;
+  }
 
   const generation = runtimeGeneration;
-  const document = await getOrCreatePendingDocument(dependencies, viewId, targetMaterial);
-  if (!document) return null;
+  let document: BookDocument | null;
+  try {
+    document = await getOrCreatePendingDocument(dependencies, viewId, targetMaterial);
+  } catch (error) {
+    runtime.setDocumentState(viewId, {
+      status: 'error',
+      message: describeDocumentOpenError(error),
+    });
+    return null;
+  }
+  if (!document) {
+    runtime.setDocumentState(viewId, {
+      status: 'error',
+      message: '暂不支持打开该材料格式。',
+    });
+    return null;
+  }
 
   // A tab may have been switched away while the file was being inspected.
   // Do not leave a renderer behind for an inactive or closed view.
@@ -350,7 +409,13 @@ export function mountViewDocument(
   location: ReadingLocation | null,
   dependencies: ReaderCommandDependencies,
 ): ThrottledPositionPersister {
+  const existingMount = activeMounts.get(viewId);
+  if (existingMount?.document === document) {
+    return existingMount.persister;
+  }
+
   const readiness = prepareViewMountReadiness(viewId);
+  useReaderRuntime.getState().setDocumentState(viewId, { status: 'loading' });
   const persister = new ThrottledPositionPersister({
     save: async (next) => {
       useWorkspaceStore.getState().setViewLocation(viewId, next);
@@ -363,6 +428,7 @@ export function mountViewDocument(
     },
   });
   persisters.set(viewId, persister);
+  activeMounts.set(viewId, { document, container, persister });
 
   // 挂载时应用该材料实际生效的排版(材料级覆盖优先,否则回退全局默认)。
   const materialId = findView(viewId)?.materialId;
@@ -415,9 +481,19 @@ export function mountViewDocument(
           console.error('加载批注失败', error);
         });
       }
+      useReaderRuntime.getState().setDocumentState(viewId, { status: 'ready' });
     })
     .catch((error: unknown) => {
       readiness.resolve();
+      if (activeMounts.get(viewId)?.document === document) {
+        activeMounts.delete(viewId);
+        persisters.delete(viewId);
+        useReaderRuntime.getState().removeDocument(viewId);
+      }
+      useReaderRuntime.getState().setDocumentState(viewId, {
+        status: 'error',
+        message: describeDocumentOpenError(error),
+      });
       console.error('打开阅读文档失败', error);
     });
 
@@ -453,7 +529,6 @@ export function registerReaderCommands(
       throw new Error('打开书籍命令缺少阅读材料参数');
     }
     const activeGroupId = useWorkspaceStore.getState().activeEditorGroupId;
-    const existingView = findViewInGroupByMaterialId(activeGroupId, material.id);
     const previousViewId = getActiveViewId(activeGroupId);
     const viewId = useWorkspaceStore.getState().openView(material.id);
 
@@ -463,13 +538,6 @@ export function registerReaderCommands(
         if (getActiveViewId() !== viewId) {
           await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
           return;
-        }
-        if (!existingView) {
-          useWorkspaceStore.getState().closeView(viewId);
-          const nextViewId = getActiveViewId();
-          if (nextViewId) {
-            await ensureActiveViewDocument(dependencies, nextViewId);
-          }
         }
         throw new Error(`无法打开阅读材料:${material.title}`);
       }
@@ -481,13 +549,6 @@ export function registerReaderCommands(
     } catch (error) {
       if (getActiveViewId() !== viewId) {
         return;
-      }
-      if (!existingView) {
-        useWorkspaceStore.getState().closeView(viewId);
-        const nextViewId = getActiveViewId();
-        if (nextViewId) {
-          await ensureActiveViewDocument(dependencies, nextViewId);
-        }
       }
       throw error;
     }
