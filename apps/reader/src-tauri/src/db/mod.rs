@@ -200,6 +200,35 @@ mod tests {
     }
 
     #[test]
+    fn import_identity_migration_keeps_one_historical_ready_duplicate() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        run_migrations(&mut connection, &MIGRATIONS[..7]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO materials
+                 (id, status, fingerprint, title, source_file_name)
+                 VALUES ('a', 'ready', 'same', 'A', 'a.epub'),
+                        ('b', 'ready', 'same', 'B', 'b.epub')",
+                [],
+            )
+            .unwrap();
+
+        run_migrations(&mut connection, &MIGRATIONS[7..]).unwrap();
+
+        let rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM materials WHERE fingerprint = 'same' AND status = 'ready'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert!(connection
+            .query_row("SELECT 1 FROM materials WHERE id = 'a'", [], |_| Ok(()))
+            .is_ok());
+    }
+
+    #[test]
     fn failed_migration_rolls_back_without_partial_state() {
         let mut connection = Connection::open_in_memory().unwrap();
         let failing: &[(i64, &str)] = &[(

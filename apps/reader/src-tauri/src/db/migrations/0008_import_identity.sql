@@ -15,6 +15,25 @@ SET format = CASE
     ELSE 'unknown'
 END;
 
+-- 旧版本由代码查重而非数据库唯一约束保护。若历史数据库中已有重复 ready,
+-- 保留最早创建的一条,其余记录及关联覆盖/批注按外键级联清理,避免建索引失败。
+DELETE FROM materials
+WHERE status = 'ready'
+  AND EXISTS (
+      SELECT 1
+      FROM materials AS earlier
+      WHERE earlier.status = 'ready'
+        AND earlier.fingerprint = materials.fingerprint
+        AND earlier.format = materials.format
+        AND (
+            earlier.created_at < materials.created_at
+            OR (
+                earlier.created_at = materials.created_at
+                AND earlier.id < materials.id
+            )
+        )
+  );
+
 CREATE INDEX idx_materials_fingerprint_format
     ON materials(fingerprint, format);
 
