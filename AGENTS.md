@@ -16,13 +16,13 @@ AI Reader 是从零构建的独立、轻量、跨端本地阅读器。第一版�
 
 ## AGENTS.md 总索引
 
-| 文件 | 范围 |
-| --- | --- |
-| `AGENTS.md`（本文件） | 全局规则、开发命令、架构边界与总索引 |
-| `apps/reader/AGENTS.md` | 阅读器应用：应用级构建与测试命令、前后端分工 |
-| `apps/reader/src/AGENTS.md` | React + TypeScript 前端：工作台、Command Registry、Repository Adapter |
-| `apps/reader/src-tauri/AGENTS.md` | Tauri + Rust 平台核心：SQLite、迁移、typed Command 与 Capability |
-| `scripts/AGENTS.md` | 仓库级工具脚本 |
+| 文件                                | 范围                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| `AGENTS.md`（本文件）             | 全局规则、开发命令、架构边界与总索引                                  |
+| `apps/reader/AGENTS.md`           | 阅读器应用：应用级构建与测试命令、前后端分工                          |
+| `apps/reader/src/AGENTS.md`       | React + TypeScript 前端：工作台、Command Registry、Repository Adapter |
+| `apps/reader/src-tauri/AGENTS.md` | Tauri + Rust 平台核心：SQLite、迁移、typed Command 与 Capability      |
+| `scripts/AGENTS.md`               | 仓库级工具脚本                                                        |
 
 - 进入某个目录工作前，先阅读该目录的 `AGENTS.md`。
 - 子目录文件只描述本目录的内容与实现细节，不得与本文件的全局规则及 ADR 冲突；冲突时以 ADR 和本文件为准。
@@ -134,10 +134,8 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 
 - `CONTEXT.md`：领域模型与统一语言。
 - `style.md`：项目级 UI 设计风格、交互与无障碍准则；所有 UI 任务的必读路由。
-- `.scratch/reader-foundation/spec.md`：第一版完整规格和验收边界。
 - `docs/product/vision.md`：产品定位、目标与非目标。
 - `docs/architecture/overview.md`：总体架构、TS/Rust 分工、模块关系和实施顺序。
-- `docs/architecture/v1-delivery-acceptance.md`：第一版跨端交付验收矩阵、证据边界和复现命令。
 - `docs/adr/`：逐项记录已确认的架构决策及理由。
 - `docs/agents/`：工程技能使用的事项追踪器、状态标签和领域文档约定。
 - `docs/legal/third-party.md`：第三方组件许可与借鉴来源登记。
