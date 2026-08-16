@@ -2,11 +2,13 @@ import type { SearchEvent, SearchOptions } from './search';
 import type { ReadingTypography } from './typography';
 import { buildTypographyCss } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
+import type { FoliateViewOpenOptions } from './viewHost';
 
 /** 高亮覆盖层绘制函数(foliate-js Overlayer)。 */
 import { Overlayer } from 'foliate-js/overlayer.js';
 
 import { sanitizeEpubContent } from './sanitizer';
+import { openFoliateEpub } from './foliateEpubLoader';
 
 export type { FoliateViewHostFactory } from './viewHost';
 
@@ -135,31 +137,68 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.viewModule = viewModule;
   }
 
-  async open(book: unknown): Promise<void> {
+  async open(book: unknown, options: FoliateViewOpenOptions = {}): Promise<void> {
     const viewModule = await this.viewModule;
     const isFileInput =
       typeof book === 'string' ||
       (typeof book === 'object' &&
         book !== null &&
         typeof (book as { arrayBuffer?: unknown }).arrayBuffer === 'function');
-    const openedBook =
-      typeof viewModule.makeBook === 'function' && isFileInput
-        ? await viewModule.makeBook(book as string | File)
-        : book;
-    const foliateBook = asFoliateBook(openedBook);
-    if (foliateBook) {
-      installSectionFallbacks(foliateBook, this.fallbackUrls);
+    let openedBook = book;
+    let usedPrefetch = false;
+    if (isFileInput && options.epubPrefetch) {
+      try {
+        // 原生结果只作为 foliate-js loader 的机械缓存。若构造失败，整条
+        // 预取路径作废并重新从原始 File 走 foliate-js 的纯 JS loader。
+        openedBook = await openFoliateEpub(book as File, options.epubPrefetch);
+        usedPrefetch = true;
+      } catch (error) {
+        console.warn('EPUB 原生预取桥接失败,已回退到纯 JavaScript', error);
+      }
     }
-    // 先接入 Loader 的 data 事件,再让 foliate-view 创建 renderer,确保首章
-    // 和后续章节都只能以清洗后的字符串进入 iframe。
-    this.wireContentSanitization(foliateBook);
+    const makePureBook = async (): Promise<unknown> => {
+      if (typeof viewModule.makeBook === 'function' && isFileInput) {
+        return viewModule.makeBook(book as string | File);
+      }
+      return book;
+    };
+    if (openedBook === book) {
+      openedBook = await makePureBook();
+    }
+    const prepareBook = (candidate: unknown): void => {
+      const foliateBook = asFoliateBook(candidate);
+      if (foliateBook) {
+        installSectionFallbacks(foliateBook, this.fallbackUrls);
+      }
+      // 先接入 Loader 的 data 事件,再让 foliate-view 创建 renderer,确保首章
+      // 和后续章节都只能以清洗后的字符串进入 iframe。
+      this.wireContentSanitization(foliateBook);
+    };
+    prepareBook(openedBook);
     try {
       await this.element.open(openedBook);
     } catch (error) {
-      this.contentCleanup?.();
-      this.contentCleanup = null;
+      this.clearContentSanitization();
       this.revokeFallbackUrls();
-      throw error;
+      if (!usedPrefetch) {
+        throw error;
+      }
+      // 原生 EPUB 对象可能在 renderer.open 阶段才暴露兼容性问题；清掉
+      // 已经开始的尝试，再用同一个 File 构造纯 JS Book，避免半原生状态。
+      try {
+        this.element.close?.();
+      } catch {
+        // foliate-view 可能没有完成 open，close 失败不应阻止纯 JS 回退。
+      }
+      try {
+        openedBook = await makePureBook();
+        prepareBook(openedBook);
+        await this.element.open(openedBook);
+      } catch (fallbackError) {
+        this.clearContentSanitization();
+        this.revokeFallbackUrls();
+        throw fallbackError;
+      }
     }
     this.opened = true;
     this.wireInternalLinkHandling();
@@ -367,6 +406,11 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       URL.revokeObjectURL(url);
     }
     this.fallbackUrls.clear();
+  }
+
+  private clearContentSanitization(): void {
+    this.contentCleanup?.();
+    this.contentCleanup = null;
   }
 
   /** 在 foliate Loader 派发 `data` 事件时对不可信内容做清洗。 */

@@ -1,6 +1,12 @@
 import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
+import type { NativeEpubPrefetch } from './nativeEpub';
+
+/** BookDocument 传给 Foliate 宿主的可选机械预取。 */
+export interface FoliateViewOpenOptions {
+  epubPrefetch?: NativeEpubPrefetch | null;
+}
 
 /**
  * Foliate 视图宿主的窄接口。它把具体渲染器隔离在 BookDocument 的 EPUB 实现内,
@@ -8,7 +14,7 @@ import type { ReadingTypography } from './typography';
  */
 export interface FoliateViewHost {
   /** 打开文档字节。`book` 通常是 File/Blob。 */
-  open(book: unknown): Promise<void>;
+  open(book: unknown, options?: FoliateViewOpenOptions): Promise<void>;
   /** 初始化到给定位置;位置为空时跳到正文开头。 */
   init(location: unknown): Promise<void>;
   /** 下一页。 */

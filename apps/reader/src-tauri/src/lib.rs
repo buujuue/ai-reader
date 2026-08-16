@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod epub;
 mod error;
 mod fs;
 
@@ -39,6 +40,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::epub::prefetch_managed_epub,
             commands::backup::export_library_backup,
             commands::backup::restore_library_backup,
             commands::workspace::load_workspace_state,

@@ -34,6 +34,11 @@ import {
 } from './externalUrlOpener';
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
+import {
+  createUnavailableEpubNativeAccelerator,
+  type EpubNativeAccelerator,
+} from '../domain/reader/nativeEpub';
+import { createDefaultTauriEpubNativeAccelerator } from '../domain/reader/tauriEpubNative';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import { isAndroidWebView } from './platform';
@@ -88,6 +93,7 @@ export interface AppServices {
   externalUrlOpener: ExternalUrlOpener;
   windowLifecycle: WindowLifecycle | null;
   androidBackButton: AndroidBackButton | null;
+  epubNativeAccelerator: EpubNativeAccelerator;
 }
 
 export interface AppServicesOptions {
@@ -106,6 +112,7 @@ export interface AppServicesOptions {
   pdfLib?: PdfJsLib;
   /** 可注入的页面光栅化函数(测试用)。 */
   pdfRasterize?: PdfPageRasterizer;
+  epubNativeAccelerator?: EpubNativeAccelerator;
   windowLifecycle?: WindowLifecycle | null;
   androidBackButton?: AndroidBackButton | null;
 }
@@ -214,6 +221,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     options.androidBackButton !== undefined
       ? options.androidBackButton
       : createAndroidBackButton();
+  const epubNativeAccelerator =
+    options.epubNativeAccelerator ??
+    (isTauriRuntime()
+      ? createDefaultTauriEpubNativeAccelerator()
+      : createUnavailableEpubNativeAccelerator());
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
@@ -252,6 +264,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       externalUrlOpener,
       pdfLib: options.pdfLib,
       pdfRasterize: options.pdfRasterize,
+      epubNativeAccelerator,
     });
   } else {
     registerReaderCommands(commands, {
@@ -261,6 +274,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       externalUrlOpener,
       pdfLib: options.pdfLib,
       pdfRasterize: options.pdfRasterize,
+      epubNativeAccelerator,
     });
   }
   return {
@@ -277,5 +291,6 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     externalUrlOpener,
     windowLifecycle,
     androidBackButton,
+    epubNativeAccelerator,
   };
 }

@@ -44,6 +44,8 @@ pub enum AppError {
     BackupValidation(String),
     #[error("备份恢复状态无法读取:{0}")]
     BackupRecoveryState(String),
+    #[error("EPUB 原生预取失败:{0}")]
+    EpubPrefetch(String),
 }
 
 impl serde::Serialize for AppError {

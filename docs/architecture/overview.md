@@ -163,6 +163,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 13 切片**：显式主要阅读材料与材料批注面板（主要材料状态与材料操作菜单入口、单材料自动指定、材料级批注筛选、失联标识、EPUB/PDF 批注跳转）。对应工单 #23。
 - **第 14 切片**：PDF 文本批注与扫描页区域批注创建（文本选区按所属页生成 PDF 锚点、扫描页显示无文本提示并支持拖拽区域、区域锚点使用页码与归一化矩形、文本/区域创建统一经 Command 持久化）。对应工单 #24。
 - **第 15 切片**：完整书库备份导出与恢复（版本化 tar manifest、隔离解包与指纹/SQLite 校验、空间预检、当前库安全快照、可恢复文件切换、启动回滚及前端恢复入口）。对应工单 #25、#26。
+- **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 
 macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`；iPadOS 的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`；Android 平板的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS/iPadOS/Android 启动、导入、阅读与重启恢复不计入浏览器降级证据，统一由 `.github/workflows/cross-platform.yml` 承载对应平台的自动校验；未能在 CI 自动完成的移动系统交互按冒烟文档记录人工证据。
 

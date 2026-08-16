@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { UpstreamFoliateViewHost } from './foliateViewHost';
+import { openFoliateEpub } from './foliateEpubLoader';
+
+vi.mock('./foliateEpubLoader', () => ({
+  openFoliateEpub: vi.fn(),
+}));
 
 interface FakeViewElement {
   open: ReturnType<typeof vi.fn>;
@@ -72,6 +77,39 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     expect(element.open).toHaveBeenCalledWith(book);
     expect(fallbackUrl).toEqual(expect.any(String));
     expect(loadText).toHaveBeenCalledWith('chapter.xhtml');
+  });
+
+  it('原生 Book 在 renderer.open 阶段失败时重建纯 JS Book', async () => {
+    const element = createFakeElement();
+    element.open.mockRejectedValueOnce(new Error('原生 loader 不兼容'));
+    const nativeBook = {};
+    const pureJsBook = {};
+    const viewModule = {
+      makeBook: vi.fn().mockResolvedValue(pureJsBook),
+    };
+    vi.mocked(openFoliateEpub).mockResolvedValueOnce(nativeBook);
+    const host = new UpstreamFoliateViewHost(
+      element as unknown as import('foliate-js/view.js').View & HTMLElement,
+      Promise.resolve(viewModule as unknown as typeof import('foliate-js/view.js')),
+    );
+
+    await host.open(new File(['epub'], 'book.epub'), {
+      epubPrefetch: {
+        parity: {
+          protocolVersion: 1,
+          semanticSource: 'foliate-js',
+          platform: 'windows',
+          validated: true,
+          capabilities: [],
+        },
+        textCache: new Map(),
+        sizes: new Map(),
+      },
+    });
+
+    expect(viewModule.makeBook).toHaveBeenCalledOnce();
+    expect(element.open).toHaveBeenNthCalledWith(1, nativeBook);
+    expect(element.open).toHaveBeenNthCalledWith(2, pureJsBook);
   });
 
   it('打开文档后把内容清洗监听器接到 foliate 的 transformTarget(data 事件)', async () => {

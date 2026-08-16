@@ -40,6 +40,9 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 | sha2 | ^0.10 | MIT / Apache-2.0 | 完整内容指纹(SHA-256) |
 | uuid | ^1 | MIT / Apache-2.0 | 稳定 BookId 与暂存标识 |
 | base64 | ^0.22 | MIT / Apache-2.0 | 暂存文件字节传输编码 |
+| zip | ^2 | MIT | EPUB 原生路径的 ZIP 中央目录与受限条目预取 |
+| quick-xml | ^0.41 | MIT | EPUB 原生路径读取 container/OPF/NAV/NCX 的 XML 结构 |
+| percent-encoding | ^2 | MIT/Apache-2.0 | 与 foliate-js 对齐包内 href 的百分号解码 |
 
 精确版本以 `Cargo.lock` 为准。
 
@@ -57,6 +60,11 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 使用范围:通过 `foliate-view` 自定义元素渲染 EPUB;所有直接调用集中在 `apps/reader/src/domain/reader/foliateViewHost.ts`,上层只经 `BookDocument` 窄接口交互。
 - 安全边界:`Loader.allowScript` 默认关闭(参考 Readest 分支的既有加固);`domain/reader/sanitizer.ts` 在内容进入渲染器前统一清洗 XHTML/HTML、SVG、CSS 和脚本 MIME，移除脚本、iframe、对象嵌入、音视频媒体、危险 URL 与可执行 CSS，非核心资源失败时回退到清洗后的静态章节，落实 ADR-0010。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/foliate-js@1.0.1/node_modules/foliate-js/LICENSE`。
+
+## EPUB 原生预取来源记录
+
+- 本切片的 ZIP/OPF/NAV/NCX 机械预取模式参考并选择性移植 Readest `apps/readest-app/src-tauri/src/epub_parser.rs` 与 `apps/readest-app/src/utils/tauriEpubBridge.ts`；来源仓库 [readest/readest](https://github.com/readest/readest) 以 AGPL-3.0 发布，署名要求是保留 Readest 项目名称、仓库链接和 AGPL-3.0 许可说明；若来源文件含版权/许可头，移植时一并保留。移植内容仅限路径解析、条目读取、尺寸表和 typed bridge 形状，AI Reader 保持 foliate-js 为唯一 EPUB 语义来源，不复制 Readest 应用层阅读状态。
+- Rust 侧新增 `zip`、`quick-xml` 与 `percent-encoding` 仅服务上述机械预取；其许可证与精确版本以 `Cargo.lock` 为准。
 
 ## pdfjs-dist 引入记录
 

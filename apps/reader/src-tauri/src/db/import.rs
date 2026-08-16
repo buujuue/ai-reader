@@ -144,6 +144,17 @@ impl<'a> ImportRepository<'a> {
         material_id: &str,
         paths: &LibraryPaths,
     ) -> Result<Vec<u8>, AppError> {
+        let managed_path = self.managed_file_path(material_id, paths)?;
+        read_file_bytes(&managed_path)
+    }
+
+    /// 返回已提交托管文件的内部路径,只供 Rust 原生机械读取使用。
+    /// 路径不跨 typed Command 边界,前端仍只使用稳定 BookId。
+    pub fn managed_file_path(
+        &self,
+        material_id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<std::path::PathBuf, AppError> {
         if self.find_by_id(material_id)?.is_none() {
             return Err(AppError::ManagedFileMissing(material_id.to_string()));
         }
@@ -151,7 +162,7 @@ impl<'a> ImportRepository<'a> {
         if !managed_path.is_file() {
             return Err(AppError::ManagedFileMissing(material_id.to_string()));
         }
-        read_file_bytes(&managed_path)
+        Ok(managed_path)
     }
 
     /// 正式保存 Markdown 内容(ADR-0009):用托管文件原子替换、递增文档版本并更新

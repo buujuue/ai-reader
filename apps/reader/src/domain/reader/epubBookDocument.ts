@@ -6,6 +6,7 @@ import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
+import type { NativeEpubPrefetch } from './nativeEpub';
 
 export interface EpubBookDocumentOptions {
   /** EPUB 字节内容。 */
@@ -18,6 +19,8 @@ export interface EpubBookDocumentOptions {
   format?: 'epub' | 'markdown';
   /** ReadingLocation 的 kind(缺省与 format 一致;Markdown 子类传入 markdown)。 */
   locationKind?: 'epub' | 'markdown';
+  /** 已通过 parity 的原生机械预取;失败或不支持时为空并走纯 JS。 */
+  nativePrefetch?: NativeEpubPrefetch | null;
 }
 
 /**
@@ -32,6 +35,7 @@ export class EpubBookDocument implements BookDocument {
   private readonly bytes: Uint8Array;
   private readonly viewHostFactory: FoliateViewHostFactory;
   private readonly locationKind: 'epub' | 'markdown';
+  private readonly nativePrefetch: NativeEpubPrefetch | null;
   private typography: ReadingTypography = DEFAULT_READING_TYPOGRAPHY;
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
@@ -48,6 +52,7 @@ export class EpubBookDocument implements BookDocument {
     this.viewHostFactory = options.viewHostFactory;
     this.format = options.format ?? 'epub';
     this.locationKind = options.locationKind ?? this.format;
+    this.nativePrefetch = options.nativePrefetch ?? null;
   }
 
   async open(container: HTMLElement): Promise<void> {
@@ -64,7 +69,7 @@ export class EpubBookDocument implements BookDocument {
     // 必须在 view.open() 前接入安全监听器,否则 Foliate 可能在打开首章时
     // 已经消费 data 事件,导致首章绕过内容清洗。
     this.wireSecurity();
-    await view.open(file);
+    await view.open(file, { epubPrefetch: this.nativePrefetch });
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);

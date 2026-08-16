@@ -4,6 +4,7 @@ import type { ExternalUrlOpener } from '../app/externalUrlOpener';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import { EpubBookDocument } from '../domain/reader/epubBookDocument';
+import type { EpubNativeAccelerator } from '../domain/reader/nativeEpub';
 import {
   createFoliateViewHostFactory,
   type FoliateViewHostFactory,
@@ -55,6 +56,8 @@ export interface ReaderCommandDependencies {
   pdfLib?: PdfJsLib | undefined;
   /** 可注入的页面光栅化函数(测试用)。 */
   pdfRasterize?: PdfPageRasterizer | undefined;
+  /** 可选的 EPUB 原生机械预取;未通过 parity 或失败时返回 null。 */
+  epubNativeAccelerator?: EpubNativeAccelerator | undefined;
 }
 
 /**
@@ -179,10 +182,20 @@ async function createEpubDocument(
   } catch (error) {
     throw new Error(`解析 EPUB 失败：${describeDocumentOpenError(error)}`);
   }
+  let nativePrefetch = null;
+  if (dependencies.epubNativeAccelerator) {
+    try {
+      nativePrefetch = await dependencies.epubNativeAccelerator.prefetch(material.id);
+    } catch (error) {
+      // 加速器是可选旁路,不能把原生桥接故障升级成用户无法阅读。
+      console.warn('EPUB 原生预取失败,已回退到纯 JavaScript', error);
+    }
+  }
   return new EpubBookDocument({
     bytes,
     metadata,
     viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
+    nativePrefetch,
   });
 }
 

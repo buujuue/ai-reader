@@ -8,6 +8,8 @@ import {
 } from './zip';
 import { EPUB_RESOURCE_BUDGET } from './epubBudget';
 import type { SourceMetadata } from '../material';
+import { readFoliateEpubSemantics } from '../../reader/foliateEpubLoader';
+import type { NativeEpubPrefetch } from '../../reader/nativeEpub';
 
 /** 导入前整本拒绝的稳定分类。 */
 export type EpubInspectErrorKind =
@@ -191,16 +193,9 @@ async function inspectEpubInner(
   const opfXml = await readRequiredXml(bytes, opfEntry, 'OPF 清单');
   const opf = parseXml(opfXml, 'OPF 清单');
 
-  const title = firstText(opf, 'title');
-  if (!title) {
-    throw new EpubInspectError('EPUB 缺少书名(title)', 'corrupt', 'opf');
-  }
-  const metadata: SourceMetadata = {
-    title,
-    author: firstText(opf, 'creator'),
-    language: firstText(opf, 'language'),
-  };
-
+  // OPF 的元数据和封面可观察结果必须由 foliate-js 产生。这里的 DOM
+  // 只继续承担安全预检所需的 manifest/spine/资源预算扫描,不再维护第二
+  // 套 BookDocument 元数据规则。
   const manifest = parseManifest(opf, opfPath);
   const spineElement = elementsByLocalName(opf, 'spine')[0];
   if (!spineElement) {
@@ -212,6 +207,13 @@ async function inspectEpubInner(
   }
 
   await inspectEncryption(bytes, byName, manifest);
+  const foliateSemantics = await readFoliateSemantics(
+    bytes,
+    opfPath,
+    opfXml,
+    containerXml,
+  );
+  const metadata = foliateSemantics.metadata;
   const report: EpubPreflightReport = {
     unavailableChapters: [],
     degradedResources: [],
@@ -283,9 +285,93 @@ async function inspectEpubInner(
 
   return {
     metadata,
-    hasCover: coverPath !== null && coverPath !== undefined,
+    hasCover: foliateSemantics.hasCover,
     preflight: report,
   };
+}
+
+async function readFoliateSemantics(
+  bytes: Uint8Array,
+  opfPath: string,
+  opfBytes: Uint8Array,
+  containerBytes: Uint8Array,
+): Promise<{
+  metadata: SourceMetadata;
+  hasCover: boolean;
+}> {
+  try {
+    const buffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+    // 合法 EPUB 直接保留原始 container.xml；旧测试夹具没有命名空间时，
+    // 只为让 foliate-js 看到规范 XML 形状而生成等价的单 rootfile 入口。
+    const containerXml = new TextDecoder('utf-8', { fatal: true }).decode(containerBytes);
+    const foliateContainerXml = /xmlns\s*=\s*["']urn:oasis:names:tc:opendocument:xmlns:container["']/.test(
+      containerXml,
+    )
+      ? containerXml
+      : buildContainerXml(opfPath);
+    const prefetch: NativeEpubPrefetch = {
+      parity: {
+        protocolVersion: 1,
+        semanticSource: 'foliate-js',
+        platform: 'unknown',
+        validated: true,
+        capabilities: [],
+      },
+      textCache: new Map([
+        ['META-INF/container.xml', foliateContainerXml],
+        [opfPath, new TextDecoder('utf-8', { fatal: true }).decode(opfBytes)],
+      ]),
+      sizes: new Map(),
+    };
+    const semantics = await readFoliateEpubSemantics(
+      new Blob([buffer], { type: 'application/epub+zip' }),
+      prefetch,
+    );
+    if (!semantics.title) {
+      throw new EpubInspectError('EPUB 缺少书名(title)', 'corrupt', 'opf');
+    }
+    return {
+      metadata: {
+        title: semantics.title,
+        author: semantics.author,
+        language: semantics.language,
+      },
+      hasCover: semantics.hasCover,
+    };
+  } catch (error) {
+    if (error instanceof EpubInspectError) {
+      throw error;
+    }
+    throw new EpubInspectError('EPUB foliate-js 语义解析失败', 'corrupt', 'opf');
+  }
+}
+
+function buildContainerXml(opfPath: string): string {
+  const escaped = opfPath.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      default:
+        return '&apos;';
+    }
+  });
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">' +
+    '<rootfiles>' +
+    `<rootfile full-path="${escaped}" media-type="application/oebps-package+xml"/>` +
+    '</rootfiles>' +
+    '</container>'
+  );
 }
 
 async function inspectChapter(

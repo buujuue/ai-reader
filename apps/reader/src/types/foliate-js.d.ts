@@ -25,6 +25,13 @@ declare module 'foliate-js/view.js' {
   export function makeBook(file: File | string): Promise<unknown>;
 }
 
+declare module 'foliate-js/epub.js' {
+  export class EPUB {
+    constructor(loader: unknown);
+    init(): Promise<unknown>;
+  }
+}
+
 /** foliate-js 覆盖层(Overlayer)的最小类型声明,用于高亮批注绘制。 */
 declare module 'foliate-js/overlayer.js' {
   export class Overlayer {
