@@ -8,6 +8,7 @@ export interface ZipEntry {
   name: string;
   compressionMethod: number;
   compressedSize: number;
+  uncompressedSize: number;
   localHeaderOffset: number;
 }
 
@@ -55,6 +56,7 @@ export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
     }
     const compressionMethod = readU16(view, cursor + 10);
     const compressedSize = readU32(view, cursor + 20);
+    const uncompressedSize = readU32(view, cursor + 24);
     const nameLength = readU16(view, cursor + 28);
     const extraLength = readU16(view, cursor + 30);
     const commentLength = readU16(view, cursor + 32);
@@ -63,7 +65,13 @@ export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
       bytes.subarray(cursor + 46, cursor + 46 + nameLength),
     );
 
-    entries.push({ name, compressionMethod, compressedSize, localHeaderOffset });
+    entries.push({
+      name,
+      compressionMethod,
+      compressedSize,
+      uncompressedSize,
+      localHeaderOffset,
+    });
     cursor += 46 + nameLength + extraLength + commentLength;
   }
   return entries;
