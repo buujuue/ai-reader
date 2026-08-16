@@ -96,7 +96,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Import
 
-采用 `stage → inspect → commit`。Rust 暂存并计算指纹；TS 通过 BookDocument 检查格式和元数据；Rust 查重、落库、原子移动并恢复中断状态。
+采用 `stage → inspect → commit`。Rust 暂存并计算完整指纹；TS 通过 BookDocument 检查格式和元数据；Rust 按「完整指纹 + 格式」查重，使用 IMMEDIATE 事务串行化 ready 唯一提交、移动托管副本并恢复中断状态。
 
 ### BookDocument
 

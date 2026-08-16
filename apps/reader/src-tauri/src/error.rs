@@ -26,6 +26,8 @@ pub enum AppError {
     ManagedFileMissing(String),
     #[error("阅读材料不存在:{0}")]
     MaterialNotFound(String),
+    #[error("阅读材料内容与已有材料重复:{0}")]
+    DuplicateMaterial(String),
     #[error("阅读材料标识不合法:{0}")]
     InvalidMaterialId(String),
     #[error("备份 manifest 无法写入:{0}")]

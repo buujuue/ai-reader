@@ -1,10 +1,13 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{classify_io_error, AppError};
-use crate::fs::{atomic_write, fingerprint_bytes, read_file_bytes, stream_copy_with_fingerprint, LibraryPaths};
+use crate::fs::{
+    atomic_write, fingerprint_bytes, fingerprint_file, read_file_bytes,
+    stream_copy_with_fingerprint, LibraryPaths,
+};
 
 /// Rust 暂存后的导入句柄。`id` 同时作为暂存文件名,TS 端据此读取字节检查格式。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,10 +90,11 @@ impl<'a> ImportRepository<'a> {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let format = format_from_file_name(&original_file_name);
         self.connection.execute(
-            "INSERT INTO materials (id, status, fingerprint, title, author, language, source_file_name)
-             VALUES (?1, 'pending', ?2, '', NULL, NULL, ?3)",
-            params![id, fingerprint, original_file_name],
+            "INSERT INTO materials (id, status, fingerprint, format, title, author, language, source_file_name)
+             VALUES (?1, 'pending', ?2, ?3, '', NULL, NULL, ?4)",
+            params![id, fingerprint, format, original_file_name],
         )?;
         Ok(StagedImport {
             id,
@@ -115,8 +119,10 @@ impl<'a> ImportRepository<'a> {
     /// 丢弃一份不再需要的暂存导入(检查失败或用户中止时调用)。删除 pending 记录并移除暂存文件。
     /// 幂等:暂存文件或记录不存在时不报错。
     pub fn discard(&self, staged: &StagedImport, paths: &LibraryPaths) -> Result<(), AppError> {
-        self.connection
-            .execute("DELETE FROM materials WHERE id = ?1", [&staged.id])?;
+        self.connection.execute(
+            "DELETE FROM materials WHERE id = ?1 AND status = 'pending'",
+            [&staged.id],
+        )?;
         let stash_path = paths.stash_path(&staged.id);
         if stash_path.is_file() {
             std::fs::remove_file(&stash_path).map_err(classify_io_error)?;
@@ -125,7 +131,11 @@ impl<'a> ImportRepository<'a> {
     }
 
     /// 读取已提交托管文件中某一本的原始字节,交给前端打开阅读。
-    pub fn read_managed(&self, material_id: &str, paths: &LibraryPaths) -> Result<Vec<u8>, AppError> {
+    pub fn read_managed(
+        &self,
+        material_id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<Vec<u8>, AppError> {
         if self.find_by_id(material_id)?.is_none() {
             return Err(AppError::ManagedFileMissing(material_id.to_string()));
         }
@@ -139,8 +149,8 @@ impl<'a> ImportRepository<'a> {
     /// 正式保存 Markdown 内容(ADR-0009):用托管文件原子替换、递增文档版本并更新
     /// 完整内容指纹,BookId 保持不变。TS 端不直接写文件,只调用本命令。
     ///
-    /// 顺序:先原子写入托管文件,再更新指纹与版本。若原子写入失败,数据库记录与
-    /// 旧文件保持一致,不会出现半本内容。返回更新后的有效材料。
+    /// 先在 IMMEDIATE 事务内检查新指纹是否与其它材料冲突,再原子写入托管文件
+    /// 并更新指纹与版本。数据库写入失败时恢复旧文件,避免文件与记录分叉。
     pub fn save_markdown(
         &self,
         id: &str,
@@ -148,86 +158,194 @@ impl<'a> ImportRepository<'a> {
         paths: &LibraryPaths,
     ) -> Result<ReadingMaterial, AppError> {
         self.ensure_ready(id)?;
+        let current = self
+            .find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))?;
         let managed_path = paths.managed_path(id);
-        atomic_write(&managed_path, content.as_bytes())?;
         let fingerprint = fingerprint_bytes(content.as_bytes());
-        self.connection.execute(
+        let format = format_from_file_name(&current.source_file_name);
+        let previous_bytes = read_file_bytes(&managed_path)?;
+        let transaction =
+            rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)?;
+        let duplicate_id: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM materials
+                 WHERE status = 'ready' AND fingerprint = ?1 AND format = ?2 AND id <> ?3
+                 LIMIT 1",
+                params![fingerprint, format, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(duplicate_id) = duplicate_id {
+            return Err(AppError::DuplicateMaterial(duplicate_id));
+        }
+        atomic_write(&managed_path, content.as_bytes())?;
+        if let Err(error) = transaction.execute(
             "UPDATE materials
              SET fingerprint = ?1, document_version = document_version + 1, updated_at = datetime('now')
-             WHERE id = ?2",
+             WHERE id = ?2 AND status = 'ready'",
             params![fingerprint, id],
-        )?;
+        ) {
+            let _ = transaction.rollback();
+            let _ = atomic_write(&managed_path, &previous_bytes);
+            return Err(error.into());
+        }
+        if let Err(error) = transaction.commit() {
+            let _ = atomic_write(&managed_path, &previous_bytes);
+            return Err(error.into());
+        }
         self.find_by_id(id)?
             .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
     }
 
-    /// 提交导入:按 ready 状态指纹去重;去重命中则清理暂存与 pending 记录并返回既有材料;
-    /// 否则移动托管文件并把 pending 记录升级为 ready。复用暂存 id 作为稳定 BookId,保证恢复、覆盖与应用升级中身份稳定。
-    /// 顺序:先把来源元数据写入 pending 记录、再移动托管文件、最后置 ready。
-    /// 若在移动与置 ready 之间异常终止,启动恢复器会基于「存在托管文件」这一事实完成该 pending,
-    /// 且此时元数据已与暂存记录持久化,恢复出的材料不会缺失标题作者。
+    /// 提交导入:按 `完整指纹 + 格式` 查重;去重命中则在数据库事务中清理
+    /// 当前 pending 并返回既有材料;有效托管副本不会被覆盖,缺失或损坏的
+    /// 既有副本则复用原 BookId 由当前有效暂存副本修复。
+    ///
+    /// 新材料的数据库状态与文件移动由一个可恢复协议连接:
+    /// 1. 以 IMMEDIATE 事务锁住同一书库的其它提交者;
+    /// 2. 在事务内写入来源元数据,把暂存文件移动到 UUID 托管路径;
+    /// 3. 只有移动成功后才把 pending 升为 ready 并提交事务。
+    ///
+    /// SQLite 事务与文件系统不能组成一个跨系统事务。进程若在文件移动和
+    /// SQLite 提交之间中断,启动恢复会核对文件指纹;不匹配就删除 pending 和
+    /// 半成品,匹配则完成提交。因此 ready 记录不会依赖外部源文件路径。
     pub fn commit(
         &self,
         staged: &StagedImport,
         metadata: &MaterialMetadata,
         paths: &LibraryPaths,
     ) -> Result<ReadingMaterial, AppError> {
-        // 查重看 ready 材料(含回收站):活跃材料直接返回;回收站中相同指纹则恢复原 BookId,不新建。
-        if let Some((existing, trashed)) = self.find_by_fingerprint(&staged.fingerprint)? {
-            self.connection
-                .execute("DELETE FROM materials WHERE id = ?1", [&staged.id])?;
-            let _ = std::fs::remove_file(paths.stash_path(&staged.id));
-            if trashed {
-                self.connection.execute(
+        let format = format_from_file_name(&staged.original_file_name);
+        let transaction =
+            rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)?;
+
+        let staged_row: Option<(String, String, String, String, Option<String>)> = transaction
+            .query_row(
+                "SELECT status, fingerprint, format, source_file_name, deleted_at
+                 FROM materials WHERE id = ?1",
+                [&staged.id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((status, stored_fingerprint, stored_format, stored_file_name, deleted_at)) =
+            staged_row
+        else {
+            return Err(AppError::StagedFileMissing(staged.id.clone()));
+        };
+        if stored_fingerprint != staged.fingerprint
+            || stored_format != format
+            || stored_file_name != staged.original_file_name
+        {
+            return Err(AppError::StagedFileMissing(staged.id.clone()));
+        }
+        let stash_path = paths.stash_path(&staged.id);
+        if status == "ready" {
+            let managed_path = paths.managed_path(&staged.id);
+            if !managed_path.is_file() || fingerprint_file(&managed_path)? != staged.fingerprint {
+                return Err(AppError::ManagedFileMissing(staged.id.clone()));
+            }
+            if deleted_at.is_some() {
+                transaction.execute(
                     "UPDATE materials SET deleted_at = NULL, updated_at = datetime('now')
                      WHERE id = ?1",
-                    [&existing.id],
+                    [&staged.id],
                 )?;
             }
+            transaction.commit()?;
+            let _ = std::fs::remove_file(stash_path);
             return self
-                .find_by_id(&existing.id)?
-                .ok_or_else(|| AppError::MaterialNotFound(existing.id));
+                .find_by_id(&staged.id)?
+                .ok_or_else(|| AppError::MaterialNotFound(staged.id.clone()));
+        }
+        if status != "pending"
+            || !stash_path.is_file()
+            || fingerprint_file(&stash_path)? != staged.fingerprint
+        {
+            return Err(AppError::StagedFileMissing(staged.id.clone()));
         }
 
-        self.connection.execute(
-            "UPDATE materials SET title=?1, author=?2, language=?3 WHERE id = ?4",
-            params![metadata.title, metadata.author, metadata.language, staged.id],
+        // 查重包含回收站中的 ready 材料:命中回收站时恢复原 BookId,而不是新建副本。
+        let existing: Option<(String, Option<String>)> = transaction
+            .query_row(
+                "SELECT id, deleted_at
+                 FROM materials
+                 WHERE status = 'ready' AND fingerprint = ?1 AND format = ?2
+                 ORDER BY created_at LIMIT 1",
+                params![staged.fingerprint, format],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((existing_id, deleted_at)) = existing {
+            let existing_path = paths.managed_path(&existing_id);
+            let existing_is_valid = existing_path.is_file()
+                && fingerprint_file(&existing_path)? == staged.fingerprint;
+            if !existing_is_valid && existing_path.exists() {
+                std::fs::remove_file(&existing_path).map_err(classify_io_error)?;
+            }
+            if !existing_is_valid {
+                std::fs::rename(&stash_path, &existing_path).map_err(classify_io_error)?;
+            }
+            transaction.execute("DELETE FROM materials WHERE id = ?1", [&staged.id])?;
+            if deleted_at.is_some() {
+                transaction.execute(
+                    "UPDATE materials SET deleted_at = NULL, updated_at = datetime('now')
+                     WHERE id = ?1",
+                    [&existing_id],
+                )?;
+            }
+            transaction.commit()?;
+            // 暂存文件已不再需要。清理失败不把已成功的去重导入报告为失败;
+            // 下次启动恢复会删除无数据库记录的暂存孤儿。
+            if existing_is_valid {
+                let _ = std::fs::remove_file(stash_path);
+            }
+            return self
+                .find_by_id(&existing_id)?
+                .ok_or(AppError::MaterialNotFound(existing_id));
+        }
+
+        transaction.execute(
+            "UPDATE materials SET title=?1, author=?2, language=?3
+             WHERE id = ?4 AND status = 'pending'",
+            params![
+                metadata.title,
+                metadata.author,
+                metadata.language,
+                staged.id
+            ],
         )?;
 
         let managed_path = paths.managed_path(&staged.id);
-        if let Err(error) = std::fs::rename(paths.stash_path(&staged.id), &managed_path) {
-            // 移动失败说明暂存仍可回滚,清理已写入的 pending 元数据以保持一致性。
-            let _ = self
-                .connection
-                .execute("DELETE FROM materials WHERE id = ?1", [&staged.id]);
+        if let Err(error) = std::fs::rename(stash_path, &managed_path) {
             return Err(classify_io_error(error));
         }
 
-        if let Err(error) = self.connection.execute(
+        if let Err(error) = transaction.execute(
             "UPDATE materials SET status='ready', updated_at=datetime('now')
-             WHERE id = ?1",
-            params![staged.id],
+             WHERE id = ?1 AND status = 'pending'",
+            [&staged.id],
         ) {
+            let _ = transaction.rollback();
             let _ = std::fs::remove_file(&managed_path);
             return Err(error.into());
         }
 
-        Ok(ReadingMaterial {
-            id: staged.id.clone(),
-            fingerprint: staged.fingerprint.clone(),
-            source_file_name: staged.original_file_name.clone(),
-            source: SourceMetadata {
-                title: metadata.title.clone(),
-                author: metadata.author.clone(),
-                language: metadata.language.clone(),
-            },
-            user_override: MaterialOverride::default(),
-            title: metadata.title.clone(),
-            author: metadata.author.clone(),
-            language: metadata.language.clone(),
-            cover_source: None,
-            document_version: 0,
-        })
+        if let Err(error) = transaction.commit() {
+            let _ = std::fs::remove_file(&managed_path);
+            return Err(error.into());
+        }
+
+        self.find_by_id(&staged.id)?
+            .ok_or_else(|| AppError::MaterialNotFound(staged.id.clone()))
     }
 
     /// 列出活跃书库中的阅读材料(带覆盖优先、来源兜底的有效元数据)。
@@ -367,8 +485,10 @@ impl<'a> ImportRepository<'a> {
         paths: &LibraryPaths,
     ) -> Result<ReadingMaterial, AppError> {
         self.ensure_ready(id)?;
-        self.connection
-            .execute("DELETE FROM material_overrides WHERE material_id = ?1", [id])?;
+        self.connection.execute(
+            "DELETE FROM material_overrides WHERE material_id = ?1",
+            [id],
+        )?;
         let cover_path = paths.cover_path(id);
         if cover_path.is_file() {
             std::fs::remove_file(&cover_path).map_err(classify_io_error)?;
@@ -378,11 +498,7 @@ impl<'a> ImportRepository<'a> {
     }
 
     /// 读取托管封面文件的原始字节;无自定义封面时返回 None。
-    pub fn read_cover(
-        &self,
-        id: &str,
-        paths: &LibraryPaths,
-    ) -> Result<Option<Vec<u8>>, AppError> {
+    pub fn read_cover(&self, id: &str, paths: &LibraryPaths) -> Result<Option<Vec<u8>>, AppError> {
         self.ensure_ready(id)?;
         let cover_path = paths.cover_path(id);
         if !cover_path.is_file() {
@@ -394,26 +510,79 @@ impl<'a> ImportRepository<'a> {
     /// 启动恢复:处理 pending 记录,并清理确认无主的暂存与托管文件。
     ///
     /// 对每条 pending 记录:
-    /// - 若对应托管文件已存在 → 说明崩溃发生在「移动文件之后、置 ready 之前」,安全完成(置 ready)。
-    /// - 否则 → 说明崩溃发生在暂存或检查阶段,回滚(删除 pending 记录与暂存文件)。
+    /// - 若对应托管文件已存在且指纹匹配 → 说明崩溃发生在「移动文件之后、置 ready 之前」,安全完成(置 ready)。
+    /// - 若文件缺失或指纹不匹配 → 回滚(删除 pending 记录与文件)。
     ///
     /// 之后再清理没有任何数据库记录引用的孤儿暂存/托管文件。
     /// 绝不删除 ready 阅读材料或外部原文件。
     pub fn recover(&self, paths: &LibraryPaths) -> Result<(), AppError> {
-        let pending_ids = self.list_pending_ids()?;
-        for id in pending_ids {
-            if paths.managed_path(&id).is_file() {
-                self.connection.execute(
-                    "UPDATE materials SET status='ready', updated_at=datetime('now') WHERE id = ?1",
-                    [&id],
-                )?;
-                let _ = std::fs::remove_file(paths.stash_path(&id));
+        let pending_rows = self.list_pending_rows()?;
+        for (id, fingerprint, format) in pending_rows {
+            let managed_path = paths.managed_path(&id);
+            let managed_is_valid = if managed_path.is_file() {
+                fingerprint_file(&managed_path)? == fingerprint
             } else {
-                self.connection
-                    .execute("DELETE FROM materials WHERE id = ?1", [&id])?;
+                false
+            };
+
+            if managed_is_valid {
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    self.connection,
+                    TransactionBehavior::Immediate,
+                )?;
+                let duplicate: Option<(String, Option<String>)> = transaction
+                    .query_row(
+                        "SELECT id, deleted_at FROM materials
+                         WHERE status = 'ready' AND fingerprint = ?1 AND format = ?2 AND id <> ?3
+                         LIMIT 1",
+                        params![fingerprint, format, id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                if let Some((duplicate_id, deleted_at)) = duplicate {
+                    let duplicate_path = paths.managed_path(&duplicate_id);
+                    let duplicate_is_valid = duplicate_path.is_file()
+                        && fingerprint_file(&duplicate_path)? == fingerprint;
+                    if !duplicate_is_valid && duplicate_path.exists() {
+                        std::fs::remove_file(&duplicate_path).map_err(classify_io_error)?;
+                    }
+                    if !duplicate_is_valid {
+                        std::fs::rename(&managed_path, &duplicate_path)
+                            .map_err(classify_io_error)?;
+                    }
+                    transaction.execute("DELETE FROM materials WHERE id = ?1", [&id])?;
+                    if deleted_at.is_some() {
+                        transaction.execute(
+                            "UPDATE materials SET deleted_at = NULL, updated_at = datetime('now')
+                             WHERE id = ?1",
+                            [&duplicate_id],
+                        )?;
+                    }
+                    transaction.commit()?;
+                    if duplicate_is_valid {
+                        let _ = std::fs::remove_file(&managed_path);
+                    }
+                    let _ = std::fs::remove_file(paths.stash_path(&id));
+                } else {
+                    transaction.execute(
+                        "UPDATE materials SET status='ready', updated_at=datetime('now')
+                         WHERE id = ?1 AND status = 'pending'",
+                        [&id],
+                    )?;
+                    transaction.commit()?;
+                    let _ = std::fs::remove_file(paths.stash_path(&id));
+                }
+            } else {
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    self.connection,
+                    TransactionBehavior::Immediate,
+                )?;
+                transaction.execute("DELETE FROM materials WHERE id = ?1", [&id])?;
+                transaction.commit()?;
+                let _ = std::fs::remove_file(&managed_path);
                 let _ = std::fs::remove_file(paths.stash_path(&id));
+                }
             }
-        }
 
         for entry in std::fs::read_dir(&paths.stash_dir)? {
             let entry = entry?;
@@ -439,26 +608,16 @@ impl<'a> ImportRepository<'a> {
         Ok(())
     }
 
-    fn list_pending_ids(&self) -> Result<Vec<String>, AppError> {
-        let mut statement =
-            self.connection
-                .prepare("SELECT id FROM materials WHERE status = 'pending'")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    fn list_pending_rows(&self) -> Result<Vec<(String, String, String)>, AppError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, fingerprint, format FROM materials WHERE status = 'pending'")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         let mut ids = Vec::new();
         for row in rows {
             ids.push(row?);
         }
         Ok(ids)
-    }
-
-    fn find_by_fingerprint(
-        &self,
-        fingerprint: &str,
-    ) -> Result<Option<(ReadingMaterial, bool)>, AppError> {
-        Ok(self
-            .load_materials("m.fingerprint = ?1 AND m.status = 'ready'", &[&fingerprint])?
-            .into_iter()
-            .next())
     }
 
     fn find_by_id(&self, id: &str) -> Result<Option<ReadingMaterial>, AppError> {
@@ -537,9 +696,7 @@ impl<'a> ImportRepository<'a> {
     }
 }
 
-fn material_from_row(
-    row: &rusqlite::Row,
-) -> rusqlite::Result<(ReadingMaterial, bool)> {
+fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<(ReadingMaterial, bool)> {
     let id: String = row.get(0)?;
     let fingerprint: String = row.get(1)?;
     let source_file_name: String = row.get(2)?;
@@ -572,7 +729,10 @@ fn material_from_row(
                 .title
                 .clone()
                 .unwrap_or_else(|| source_title.clone()),
-            author: user_override.author.clone().or_else(|| source_author.clone()),
+            author: user_override
+                .author
+                .clone()
+                .or_else(|| source_author.clone()),
             language: source_language,
             cover_source: user_override.cover_source.clone(),
             user_override,
@@ -580,6 +740,23 @@ fn material_from_row(
         },
         deleted_at.is_some(),
     ))
+}
+
+fn format_from_file_name(file_name: &str) -> &'static str {
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".epub") {
+        "epub"
+    } else if lower.ends_with(".pdf") {
+        "pdf"
+    } else if lower.ends_with(".md")
+        || lower.ends_with(".markdown")
+        || lower.ends_with(".mkd")
+        || lower.ends_with(".mdown")
+    {
+        "markdown"
+    } else {
+        "unknown"
+    }
 }
 
 #[cfg(test)]
@@ -605,7 +782,12 @@ mod tests {
             .execute_batch(include_str!("migrations/0006_annotations.sql"))
             .unwrap();
         connection
-            .execute_batch(include_str!("migrations/0007_material_document_version.sql"))
+            .execute_batch(include_str!(
+                "migrations/0007_material_document_version.sql"
+            ))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0008_import_identity.sql"))
             .unwrap();
         connection
     }
@@ -701,6 +883,23 @@ mod tests {
     }
 
     #[test]
+    fn discard_after_successful_commit_keeps_ready_material() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"bytes");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        repository.discard(&staged, &paths).unwrap();
+
+        assert_eq!(repository.list_materials().unwrap().len(), 1);
+        assert!(paths.managed_path(&material.id).is_file());
+    }
+
+    #[test]
     fn stage_missing_source_surfaces_typed_io_error() {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
@@ -742,7 +941,11 @@ mod tests {
         assert_eq!(std::fs::read(&source).unwrap(), b"epub-content");
 
         let rows: i64 = connection
-            .query_row("SELECT COUNT(*) FROM materials WHERE id = ?1", params![material.id], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM materials WHERE id = ?1",
+                params![material.id],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(rows, 1);
     }
@@ -773,6 +976,141 @@ mod tests {
     }
 
     #[test]
+    fn commit_retry_after_success_returns_same_material() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"same-content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let metadata = MaterialMetadata {
+            title: "示例书".to_string(),
+            ..Default::default()
+        };
+
+        let first = repository.commit(&staged, &metadata, &paths).unwrap();
+        let retry = repository.commit(&staged, &metadata, &paths).unwrap();
+
+        assert_eq!(retry.id, first.id);
+        assert_eq!(repository.list_materials().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_bytes_with_different_formats_create_distinct_materials() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let epub_source = write_source(&paths, "book.epub", b"same-bytes");
+        let epub = repository.stage(&epub_source, &paths).unwrap();
+        let epub_material = repository
+            .commit(
+                &epub,
+                &MaterialMetadata {
+                    title: "EPUB".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
+            .unwrap();
+
+        let markdown_source = write_source(&paths, "book.md", b"same-bytes");
+        let markdown = repository.stage(&markdown_source, &paths).unwrap();
+        let markdown_material = repository
+            .commit(
+                &markdown,
+                &MaterialMetadata {
+                    title: "Markdown".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
+            .unwrap();
+
+        assert_ne!(markdown_material.id, epub_material.id);
+        assert_eq!(repository.list_materials().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn concurrent_same_identity_commits_leave_one_ready_material_and_copy() {
+        let dir = std::env::temp_dir().join(format!(
+            "ai-reader-concurrent-import-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = LibraryPaths::new(&dir).unwrap();
+        let db_path = paths.database_path();
+        drop(crate::db::open_database(&db_path).unwrap());
+
+        let source_a = dir.join("a.epub");
+        let source_b = dir.join("b.epub");
+        std::fs::write(&source_a, b"concurrent-content").unwrap();
+        std::fs::write(&source_b, b"concurrent-content").unwrap();
+
+        let connection_a = crate::db::open_database(&db_path).unwrap();
+        let connection_b = crate::db::open_database(&db_path).unwrap();
+        let staged_a = ImportRepository::new(&connection_a)
+            .stage(&source_a, &paths)
+            .unwrap();
+        let staged_b = ImportRepository::new(&connection_b)
+            .stage(&source_b, &paths)
+            .unwrap();
+        let staged_a_id = staged_a.id.clone();
+        let staged_b_id = staged_b.id.clone();
+        drop(connection_a);
+        drop(connection_b);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let paths_a = paths.clone();
+        let paths_b = paths.clone();
+
+        let db_path_a = db_path.clone();
+        let db_path_b = db_path.clone();
+        let (result_a, result_b) = std::thread::scope(|scope| {
+            let barrier_a = barrier.clone();
+            let barrier_b = barrier.clone();
+            let handle_a = scope.spawn(move || {
+                barrier_a.wait();
+                let connection = crate::db::open_database(&db_path_a).unwrap();
+                ImportRepository::new(&connection).commit(
+                    &staged_a,
+                    &MaterialMetadata {
+                        title: "甲".to_string(),
+                        ..Default::default()
+                    },
+                    &paths_a,
+                )
+            });
+            let handle_b = scope.spawn(move || {
+                barrier_b.wait();
+                let connection = crate::db::open_database(&db_path_b).unwrap();
+                ImportRepository::new(&connection).commit(
+                    &staged_b,
+                    &MaterialMetadata {
+                        title: "乙".to_string(),
+                        ..Default::default()
+                    },
+                    &paths_b,
+                )
+            });
+            (handle_a.join().unwrap(), handle_b.join().unwrap())
+        });
+
+        let material_a = result_a.unwrap();
+        let material_b = result_b.unwrap();
+        assert_eq!(material_a.id, material_b.id);
+        let verify = crate::db::open_database(&db_path).unwrap();
+        let repository = ImportRepository::new(&verify);
+        let materials = repository.list_materials().unwrap();
+        assert_eq!(materials.len(), 1);
+        assert_eq!(
+            std::fs::read(paths.managed_path(&material_a.id)).unwrap(),
+            b"concurrent-content"
+        );
+        assert!(!paths.stash_path(&staged_a_id).exists());
+        assert!(!paths.stash_path(&staged_b_id).exists());
+        drop(verify);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn migrate_then_commit_missing_staged_file_returns_error() {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
@@ -787,7 +1125,27 @@ mod tests {
             .commit(&staged, &MaterialMetadata::default(), &paths)
             .unwrap_err();
 
-        assert!(matches!(error, AppError::Io(_)));
+        assert!(matches!(error, AppError::StagedFileMissing(_)));
+    }
+
+    #[test]
+    fn commit_rejects_changed_staged_bytes_and_recovery_cleans_them() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"original");
+        let staged = repository.stage(&source, &paths).unwrap();
+        std::fs::write(paths.stash_path(&staged.id), b"changed").unwrap();
+
+        let error = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::StagedFileMissing(_)));
+        assert!(repository.list_materials().unwrap().is_empty());
+        repository.recover(&paths).unwrap();
+        assert!(!paths.stash_path(&staged.id).exists());
+        assert!(repository.list_materials().unwrap().is_empty());
     }
 
     #[test]
@@ -795,10 +1153,7 @@ mod tests {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
         let paths = temp_paths();
-        for (name, bytes, title) in [
-            ("a.epub", b"aaa", "甲"),
-            ("b.epub", b"bbb", "乙"),
-        ] {
+        for (name, bytes, title) in [("a.epub", b"aaa", "甲"), ("b.epub", b"bbb", "乙")] {
             let source = write_source(&paths, name, bytes);
             let staged = repository.stage(&source, &paths).unwrap();
             let metadata = MaterialMetadata {
@@ -850,7 +1205,14 @@ mod tests {
         let source = write_source(&paths, "book.md", "# title\n\nbody".as_bytes());
         let staged = repository.stage(&source, &paths).unwrap();
         let material = repository
-            .commit(&staged, &MaterialMetadata { title: "标题".to_string(), ..Default::default() }, &paths)
+            .commit(
+                &staged,
+                &MaterialMetadata {
+                    title: "标题".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
             .unwrap();
         assert_eq!(material.document_version, 0);
 
@@ -873,6 +1235,31 @@ mod tests {
     }
 
     #[test]
+    fn save_markdown_rejects_duplicate_content_without_replacing_file() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let first_source = write_source(&paths, "first.md", b"first");
+        let first_staged = repository.stage(&first_source, &paths).unwrap();
+        let first = repository
+            .commit(&first_staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+        let second_source = write_source(&paths, "second.md", b"second");
+        let second_staged = repository.stage(&second_source, &paths).unwrap();
+        repository
+            .commit(&second_staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        let error = repository
+            .save_markdown(&first.id, "second", &paths)
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::DuplicateMaterial(_)));
+        assert_eq!(std::fs::read(paths.managed_path(&first.id)).unwrap(), b"first");
+        assert_eq!(repository.find_by_id(&first.id).unwrap().unwrap().document_version, 0);
+    }
+
+    #[test]
     fn save_markdown_increments_version_on_each_save() {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
@@ -883,8 +1270,12 @@ mod tests {
             .commit(&staged, &MaterialMetadata::default(), &paths)
             .unwrap();
 
-        let v1 = repository.save_markdown(&material.id, "v1", &paths).unwrap();
-        let v2 = repository.save_markdown(&material.id, "v2", &paths).unwrap();
+        let v1 = repository
+            .save_markdown(&material.id, "v1", &paths)
+            .unwrap();
+        let v2 = repository
+            .save_markdown(&material.id, "v2", &paths)
+            .unwrap();
 
         assert_eq!(v1.document_version, 1);
         assert_eq!(v2.document_version, 2);
@@ -897,7 +1288,9 @@ mod tests {
         let repository = ImportRepository::new(&connection);
         let paths = temp_paths();
 
-        let error = repository.save_markdown("no-such", "content", &paths).unwrap_err();
+        let error = repository
+            .save_markdown("no-such", "content", &paths)
+            .unwrap_err();
 
         assert!(matches!(error, AppError::MaterialNotFound(_)));
     }
@@ -932,6 +1325,27 @@ mod tests {
 
         assert!(paths.managed_path(&material.id).is_file());
         assert!(!paths.stash_path("orphan").exists());
+    }
+
+    #[test]
+    fn recover_keeps_ready_record_when_managed_file_is_missing() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+        std::fs::remove_file(paths.managed_path(&material.id)).unwrap();
+
+        repository.recover(&paths).unwrap();
+
+        assert_eq!(repository.list_materials().unwrap().len(), 1);
+        assert!(matches!(
+            repository.read_managed(&material.id, &paths),
+            Err(AppError::ManagedFileMissing(_))
+        ));
     }
 
     #[test]
@@ -983,11 +1397,7 @@ mod tests {
         let source = write_source(&paths, "book.epub", b"crash-content");
         let staged = repository.stage(&source, &paths).unwrap();
         // 模拟崩溃发生在「移动文件之后、置 ready 之前」:托管文件已存在、元数据已写入 pending 记录。
-        std::fs::rename(
-            paths.stash_path(&staged.id),
-            paths.managed_path(&staged.id),
-        )
-        .unwrap();
+        std::fs::rename(paths.stash_path(&staged.id), paths.managed_path(&staged.id)).unwrap();
         connection
             .execute(
                 "UPDATE materials SET title='崩溃书', author='作者', language='zh' WHERE id = ?1",
@@ -1003,6 +1413,52 @@ mod tests {
         assert_eq!(row.author.as_deref(), Some("作者"));
         assert!(paths.managed_path(&staged.id).is_file());
         assert!(!paths.stash_path(&staged.id).exists());
+    }
+
+    #[test]
+    fn recover_removes_pending_record_when_managed_copy_fingerprint_is_wrong() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"original");
+        let staged = repository.stage(&source, &paths).unwrap();
+        std::fs::rename(paths.stash_path(&staged.id), paths.managed_path(&staged.id)).unwrap();
+        std::fs::write(paths.managed_path(&staged.id), b"corrupted").unwrap();
+
+        repository.recover(&paths).unwrap();
+
+        assert!(repository.list_materials().unwrap().is_empty());
+        assert!(!paths.managed_path(&staged.id).exists());
+    }
+
+    #[test]
+    fn recover_repairs_duplicate_record_when_existing_managed_copy_is_missing() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+        std::fs::remove_file(paths.managed_path(&material.id)).unwrap();
+
+        let duplicate_source = write_source(&paths, "copy.epub", b"content");
+        let duplicate_staged = repository.stage(&duplicate_source, &paths).unwrap();
+        std::fs::rename(
+            paths.stash_path(&duplicate_staged.id),
+            paths.managed_path(&duplicate_staged.id),
+        )
+        .unwrap();
+
+        repository.recover(&paths).unwrap();
+
+        assert_eq!(repository.list_materials().unwrap().len(), 1);
+        assert_eq!(
+            std::fs::read(paths.managed_path(&material.id)).unwrap(),
+            b"content"
+        );
+        assert!(!paths.managed_path(&duplicate_staged.id).exists());
     }
 
     #[test]
@@ -1100,9 +1556,7 @@ mod tests {
             .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
             .unwrap();
 
-        let restored = repository
-            .apply_metadata(&material.id, None, None)
-            .unwrap();
+        let restored = repository.apply_metadata(&material.id, None, None).unwrap();
 
         assert_eq!(restored.title, "来源标题");
         assert_eq!(restored.author.as_deref(), Some("来源作者"));
@@ -1119,11 +1573,16 @@ mod tests {
         let external_cover = paths.stash_dir.join("cover.png");
         std::fs::write(&external_cover, b"png-bytes").unwrap();
 
-        let updated = repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        let updated = repository
+            .set_cover(&material.id, &external_cover, &paths)
+            .unwrap();
 
         assert_eq!(updated.cover_source.as_deref(), Some(material.id.as_str()));
         assert!(paths.cover_path(&material.id).is_file());
-        assert_eq!(std::fs::read(paths.cover_path(&material.id)).unwrap(), b"png-bytes");
+        assert_eq!(
+            std::fs::read(paths.cover_path(&material.id)).unwrap(),
+            b"png-bytes"
+        );
         // 外部原文件不被修改或删除。
         assert_eq!(std::fs::read(&external_cover).unwrap(), b"png-bytes");
         // 内容身份稳定。
@@ -1139,7 +1598,9 @@ mod tests {
         let material = ready_material(&connection, &paths, "来源标题", None);
         let external_cover = paths.stash_dir.join("cover.png");
         std::fs::write(&external_cover, b"png-bytes").unwrap();
-        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository
+            .set_cover(&material.id, &external_cover, &paths)
+            .unwrap();
         repository
             .apply_metadata(&material.id, Some("整理标题"), None)
             .unwrap();
@@ -1163,7 +1624,9 @@ mod tests {
             .unwrap();
         let external_cover = paths.stash_dir.join("cover.png");
         std::fs::write(&external_cover, b"png-bytes").unwrap();
-        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository
+            .set_cover(&material.id, &external_cover, &paths)
+            .unwrap();
 
         let restored = repository.restore_source(&material.id, &paths).unwrap();
 
@@ -1181,14 +1644,22 @@ mod tests {
         let paths = temp_paths();
         let material = ready_material(&connection, &paths, "来源标题", None);
 
-        assert!(repository.read_cover(&material.id, &paths).unwrap().is_none());
+        assert!(repository
+            .read_cover(&material.id, &paths)
+            .unwrap()
+            .is_none());
 
         let external_cover = paths.stash_dir.join("cover.png");
         std::fs::write(&external_cover, b"png-bytes").unwrap();
-        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository
+            .set_cover(&material.id, &external_cover, &paths)
+            .unwrap();
 
         assert_eq!(
-            repository.read_cover(&material.id, &paths).unwrap().unwrap(),
+            repository
+                .read_cover(&material.id, &paths)
+                .unwrap()
+                .unwrap(),
             b"png-bytes"
         );
     }
@@ -1208,7 +1679,14 @@ mod tests {
             let source = write_source(&paths, "book.epub", b"persist-content");
             let staged = repository.stage(&source, &paths).unwrap();
             let material = repository
-                .commit(&staged, &MaterialMetadata { title: "来源标题".to_string(), ..Default::default() }, &paths)
+                .commit(
+                    &staged,
+                    &MaterialMetadata {
+                        title: "来源标题".to_string(),
+                        ..Default::default()
+                    },
+                    &paths,
+                )
                 .unwrap();
             repository
                 .apply_metadata(&material.id, Some("整理标题"), Some("整理作者"))
@@ -1254,7 +1732,9 @@ mod tests {
             .unwrap();
         let external_cover = paths.stash_dir.join("trash-cover.png");
         std::fs::write(&external_cover, b"png-bytes").unwrap();
-        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository
+            .set_cover(&material.id, &external_cover, &paths)
+            .unwrap();
 
         let trashed = repository.trash(&material.id).unwrap();
 
@@ -1263,7 +1743,10 @@ mod tests {
         assert_eq!(trashed_list.len(), 1);
         assert_eq!(trashed_list[0].id, material.id);
         assert_eq!(trashed_list[0].title, "整理标题");
-        assert_eq!(trashed_list[0].cover_source.as_deref(), Some(material.id.as_str()));
+        assert_eq!(
+            trashed_list[0].cover_source.as_deref(),
+            Some(material.id.as_str())
+        );
         assert_eq!(trashed.id, material.id);
         // 托管文件与封面保留。
         assert!(paths.managed_path(&material.id).is_file());
@@ -1330,7 +1813,9 @@ mod tests {
         let material = ready_material(&connection, &paths, "来源标题", None);
         let external_cover = paths.stash_dir.join("purge-cover.png");
         std::fs::write(&external_cover, b"png-bytes").unwrap();
-        repository.set_cover(&material.id, &external_cover, &paths).unwrap();
+        repository
+            .set_cover(&material.id, &external_cover, &paths)
+            .unwrap();
         repository.trash(&material.id).unwrap();
         assert!(paths.managed_path(&material.id).is_file());
         std::fs::write(paths.recovery_path(&material.id).unwrap(), b"snapshot").unwrap();
@@ -1343,7 +1828,11 @@ mod tests {
         assert!(!paths.cover_path(&material.id).exists());
         assert!(!paths.recovery_path(&material.id).unwrap().exists());
         let rows: i64 = connection
-            .query_row("SELECT COUNT(*) FROM materials WHERE id=?1", params![material.id], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM materials WHERE id=?1",
+                params![material.id],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(rows, 0);
     }
@@ -1369,7 +1858,14 @@ mod tests {
         let source = write_source(&paths, "book.epub", b"same-content");
         let staged = repository.stage(&source, &paths).unwrap();
         let material = repository
-            .commit(&staged, &MaterialMetadata { title: "甲".to_string(), ..Default::default() }, &paths)
+            .commit(
+                &staged,
+                &MaterialMetadata {
+                    title: "甲".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
             .unwrap();
         repository.trash(&material.id).unwrap();
 
@@ -1377,7 +1873,14 @@ mod tests {
         let source2 = write_source(&paths, "copy.epub", b"same-content");
         let staged2 = repository.stage(&source2, &paths).unwrap();
         let recomitted = repository
-            .commit(&staged2, &MaterialMetadata { title: "乙".to_string(), ..Default::default() }, &paths)
+            .commit(
+                &staged2,
+                &MaterialMetadata {
+                    title: "乙".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
             .unwrap();
 
         assert_eq!(recomitted.id, material.id);
@@ -1389,21 +1892,35 @@ mod tests {
     }
 
     #[test]
-    fn reimport_different_fingerprint_creates_new_material_after_trash() {
+    fn different_content_with_same_metadata_creates_new_material_after_trash() {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
         let paths = temp_paths();
         let source = write_source(&paths, "a.epub", b"content-a");
         let staged = repository.stage(&source, &paths).unwrap();
         let material = repository
-            .commit(&staged, &MaterialMetadata { title: "甲".to_string(), ..Default::default() }, &paths)
+            .commit(
+                &staged,
+                &MaterialMetadata {
+                    title: "甲".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
             .unwrap();
         repository.trash(&material.id).unwrap();
 
         let source2 = write_source(&paths, "b.epub", b"content-b");
         let staged2 = repository.stage(&source2, &paths).unwrap();
         let second = repository
-            .commit(&staged2, &MaterialMetadata { title: "乙".to_string(), ..Default::default() }, &paths)
+            .commit(
+                &staged2,
+                &MaterialMetadata {
+                    title: "甲".to_string(),
+                    ..Default::default()
+                },
+                &paths,
+            )
             .unwrap();
 
         assert_ne!(second.id, material.id);

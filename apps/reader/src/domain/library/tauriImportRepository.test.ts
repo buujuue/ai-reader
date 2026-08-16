@@ -12,6 +12,7 @@ import type { TauriInvoke } from '../tauriInvoke';
 import type { ReadingMaterial, StagedImport } from './material';
 import type { MarkdownRecoverySnapshot } from './importRepository';
 import type { FilePicker } from '../../app/filePicker';
+import { formatFromSourceFileName } from './materialFormat';
 
 interface FakeStaged {
   bytes: Uint8Array;
@@ -27,7 +28,7 @@ function createFakeTauriBackend(): {
   const files = new Map<string, Uint8Array>();
   const stashed = new Map<string, FakeStaged>();
   const materials = new Map<string, ReadingMaterial>();
-  const byFingerprint = new Map<string, ReadingMaterial>();
+  const byIdentity = new Map<string, ReadingMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
   const covers = new Map<string, Uint8Array>();
   const trashed = new Set<string>();
@@ -81,7 +82,9 @@ function createFakeTauriBackend(): {
       case IMPORT_COMMAND_NAMES.commit: {
         const staged = (args as { staged?: unknown }).staged as StagedImport;
         const metadata = (args as { metadata: { title: string; author: string | null; language: string | null } }).metadata;
-        const existing = byFingerprint.get(staged.fingerprint);
+        const existing = byIdentity.get(
+          `${formatFromSourceFileName(staged.originalFileName)}:${staged.fingerprint}`,
+        );
         if (existing) {
           stashed.delete(staged.id);
           trashed.delete(existing.id);
@@ -96,7 +99,10 @@ function createFakeTauriBackend(): {
           staged.originalFileName,
         );
         materials.set(material.id, material);
-        byFingerprint.set(material.fingerprint, material);
+        byIdentity.set(
+          `${formatFromSourceFileName(material.sourceFileName)}:${material.fingerprint}`,
+          material,
+        );
         const bytes = stashed.get(staged.id)?.bytes;
         if (bytes) {
           managedBytes.set(material.id, bytes);
@@ -141,7 +147,9 @@ function createFakeTauriBackend(): {
           throw new Error('material missing');
         }
         materials.delete(materialId);
-        byFingerprint.delete(current.fingerprint);
+        byIdentity.delete(
+          `${formatFromSourceFileName(current.sourceFileName)}:${current.fingerprint}`,
+        );
         managedBytes.delete(materialId);
         covers.delete(materialId);
         markdownRecoveries.delete(materialId);
@@ -243,8 +251,13 @@ function createFakeTauriBackend(): {
           documentVersion: (current.documentVersion ?? 0) + 1,
         };
         materials.set(materialId, effective);
-        byFingerprint.delete(current.fingerprint);
-        byFingerprint.set(fingerprint, effective);
+        byIdentity.delete(
+          `${formatFromSourceFileName(current.sourceFileName)}:${current.fingerprint}`,
+        );
+        byIdentity.set(
+          `${formatFromSourceFileName(effective.sourceFileName)}:${fingerprint}`,
+          effective,
+        );
         return effective;
       }
       case IMPORT_COMMAND_NAMES.writeMarkdownRecovery: {

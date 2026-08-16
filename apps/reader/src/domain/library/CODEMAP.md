@@ -10,7 +10,7 @@
 - `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、正式 Markdown 保存，以及 `writeMarkdownRecovery` / `listMarkdownRecoveries` / `discardMarkdownRecovery` 恢复快照协议；是前端调用平台能力的窄边界。
 - `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、元数据、`save_markdown` 与三个 `*_markdown_recovery` typed 命令。
 - `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。
-- `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并模拟 pending/ready 状态机、「来源快照 + 覆盖值」的有效元数据合并与回收站（普通删除只隐藏、恢复/永久删除）。
+- `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并按「完整指纹 + 格式」模拟 pending/ready 查重、来源快照/覆盖值合并与回收站（普通删除只隐藏、恢复/永久删除）。
 - `importRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的导入、正式 Markdown 保存与恢复快照契约测试。
 - `metadataRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的元数据覆盖契约测试。
 - `recycleBinRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的回收站契约测试。

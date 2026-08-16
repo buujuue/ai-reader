@@ -5,6 +5,7 @@ pub mod markdown_recovery;
 pub mod workspace;
 
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::Connection;
 
@@ -21,12 +22,14 @@ const MIGRATIONS: &[(i64, &str)] = &[
         7,
         include_str!("migrations/0007_material_document_version.sql"),
     ),
+    (8, include_str!("migrations/0008_import_identity.sql")),
 ];
 
 /// 打开数据库连接并应用全部迁移。
 /// SQLite 连接、迁移与 pragma 规则由 Rust 独占,TS 不接触数据库路径与 SQL。
 pub fn open_database(path: &Path) -> Result<Connection, AppError> {
     let mut connection = Connection::open(path)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -193,7 +196,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 
     #[test]

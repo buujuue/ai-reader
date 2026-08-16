@@ -45,6 +45,26 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     expect(await repository.listMaterials()).toHaveLength(1);
   });
 
+  it('相同字节但不同格式不会合并', async () => {
+    const repository = harness.createRepository();
+    const epub = await harness.stage('book.epub', encodeUtf8('same-bytes'));
+    const markdown = await harness.stage('book.md', encodeUtf8('same-bytes'));
+
+    const epubMaterial = await repository.commitImport(epub, {
+      title: 'EPUB',
+      author: null,
+      language: null,
+    });
+    const markdownMaterial = await repository.commitImport(markdown, {
+      title: 'Markdown',
+      author: null,
+      language: null,
+    });
+
+    expect(markdownMaterial.id).not.toBe(epubMaterial.id);
+    expect(await repository.listMaterials()).toHaveLength(2);
+  });
+
   it('读取暂存文件返回暂存的原始字节', async () => {
     const repository = harness.createRepository();
     const staged = await harness.stage('book.epub', encodeUtf8('staged-bytes'));

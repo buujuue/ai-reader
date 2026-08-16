@@ -79,9 +79,30 @@ pub fn stream_copy_with_fingerprint(source: &Path, destination: &Path) -> Result
             break;
         }
         hasher.update(&buffer[..read]);
-        writer.write_all(&buffer[..read]).map_err(classify_io_error)?;
+        writer
+            .write_all(&buffer[..read])
+            .map_err(classify_io_error)?;
     }
     writer.flush().map_err(classify_io_error)?;
+    writer.sync_all().map_err(classify_io_error)?;
+
+    Ok(hex(&hasher.finalize()))
+}
+
+/// 流式计算已有文件的完整内容指纹,不把文件整体载入内存。
+/// 启动恢复用它核对「文件已移动、数据库尚未置 ready」这一中断窗口。
+pub fn fingerprint_file(path: &Path) -> Result<String, AppError> {
+    let mut reader = File::open(path).map_err(classify_io_error)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+
+    loop {
+        let read = reader.read(&mut buffer).map_err(classify_io_error)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
 
     Ok(hex(&hasher.finalize()))
 }
@@ -111,9 +132,7 @@ pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>, AppError> {
 /// 用于正式保存 Markdown(ADR-0009):先用临时文件写全内容,替换成功后
 /// 目标文件要么是旧的完整版本、要么是新的完整版本,不会出现半本内容。
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -262,6 +281,9 @@ mod tests {
         atomic_write_export_file(&path, "旧内容".as_bytes()).unwrap();
         atomic_write_export_file(&path, "# 新内容\n\n中文批注".as_bytes()).unwrap();
 
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "# 新内容\n\n中文批注");
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "# 新内容\n\n中文批注"
+        );
     }
 }

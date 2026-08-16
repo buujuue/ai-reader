@@ -6,6 +6,7 @@ import type {
   StagedImport,
 } from './material';
 import { emptyMaterialOverride } from './material';
+import { formatFromSourceFileName } from './materialFormat';
 
 /** 内部存储:材料身份与来源快照(不可编辑)分开保存,覆盖值独立保存。 */
 interface InternalMaterial {
@@ -26,7 +27,7 @@ export function createInMemoryImportRepository(
   sources: Map<string, Uint8Array> = new Map(),
 ): ImportRepository {
   const materials = new Map<string, InternalMaterial>();
-  const byFingerprint = new Map<string, InternalMaterial>();
+  const byIdentity = new Map<string, InternalMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
   const stagedBytes = new Map<string, Uint8Array>();
   const overrides = new Map<string, MaterialOverride>();
@@ -84,7 +85,9 @@ export function createInMemoryImportRepository(
     },
 
     async commitImport(stagedImport, metadata): Promise<ReadingMaterial> {
-      const existing = byFingerprint.get(stagedImport.fingerprint);
+      const existing = byIdentity.get(
+        materialIdentityKey(stagedImport.fingerprint, stagedImport.originalFileName),
+      );
       if (existing) {
         stagedBytes.delete(stagedImport.id);
         pending.delete(stagedImport.id);
@@ -96,7 +99,7 @@ export function createInMemoryImportRepository(
       }
       // 材料身份内容寻址:由内容指纹派生,跨会话稳定。这是浏览器降级模式
       // localStorage 批注能跨 reload 关联到同一材料的前提(演示书字节确定性)。
-      const id = materialIdFromFingerprint(stagedImport.fingerprint);
+      const id = materialIdFromFingerprint(stagedImport.fingerprint, stagedImport.originalFileName);
       const internal: InternalMaterial = {
         id,
         fingerprint: stagedImport.fingerprint,
@@ -105,7 +108,10 @@ export function createInMemoryImportRepository(
         documentVersion: 0,
       };
       materials.set(internal.id, internal);
-      byFingerprint.set(internal.fingerprint, internal);
+      byIdentity.set(
+        materialIdentityKey(internal.fingerprint, internal.sourceFileName),
+        internal,
+      );
       const bytes = stagedBytes.get(stagedImport.id);
       if (bytes) {
         managedBytes.set(internal.id, bytes);
@@ -151,7 +157,7 @@ export function createInMemoryImportRepository(
         throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
       }
       materials.delete(materialId);
-      byFingerprint.delete(internal.fingerprint);
+      byIdentity.delete(materialIdentityKey(internal.fingerprint, internal.sourceFileName));
       managedBytes.delete(materialId);
       covers.delete(materialId);
       overrides.delete(materialId);
@@ -221,9 +227,10 @@ export function createInMemoryImportRepository(
       const bytes = new TextEncoder().encode(content);
       const fingerprint = await sha256Hex(bytes);
       managedBytes.set(materialId, bytes);
+      byIdentity.delete(materialIdentityKey(internal.fingerprint, internal.sourceFileName));
       internal.fingerprint = fingerprint;
       internal.documentVersion += 1;
-      byFingerprint.set(fingerprint, internal);
+      byIdentity.set(materialIdentityKey(internal.fingerprint, internal.sourceFileName), internal);
       return toMaterial(internal);
     },
 
@@ -267,8 +274,12 @@ function requireInternal(
 }
 
 /** 由内容指纹派生稳定的材料身份(内容寻址)。 */
-function materialIdFromFingerprint(fingerprint: string): string {
-  return `mat-${fingerprint}`;
+function materialIdFromFingerprint(fingerprint: string, sourceFileName: string): string {
+  return `mat-${formatFromSourceFileName(sourceFileName)}-${fingerprint}`;
+}
+
+function materialIdentityKey(fingerprint: string, sourceFileName: string): string {
+  return `${formatFromSourceFileName(sourceFileName)}:${fingerprint}`;
 }
 
 function findSource(
