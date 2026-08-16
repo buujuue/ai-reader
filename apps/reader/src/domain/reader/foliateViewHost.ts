@@ -6,6 +6,8 @@ import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 /** 高亮覆盖层绘制函数(foliate-js Overlayer)。 */
 import { Overlayer } from 'foliate-js/overlayer.js';
 
+import { sanitizeEpubContent } from './sanitizer';
+
 export type { FoliateViewHostFactory } from './viewHost';
 
 /**
@@ -65,6 +67,18 @@ interface ExtendedRenderer {
   getContents?(): Array<{ doc?: Document; index?: number }>;
 }
 
+interface FoliateSection {
+  id?: string;
+  load: () => Promise<unknown>;
+  loadText?: () => Promise<string | null>;
+}
+
+interface FoliateBook {
+  sections?: FoliateSection[];
+  loadText?: (href: string) => Promise<string | null>;
+  transformTarget?: EventTarget;
+}
+
 /** foliate 目录节点到项目 TocItem 的映射。 */
 interface FoliateTocNode {
   label?: string;
@@ -107,6 +121,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private readonly element: ExtendedFoliateView;
   private readonly viewModule: Promise<typeof import('foliate-js/view.js')>;
   private opened = false;
+  private readonly fallbackUrls = new Set<string>();
   private contentListeners = new Set<(type: string, data: string) => string>();
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
@@ -121,10 +136,32 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   async open(book: unknown): Promise<void> {
-    await this.viewModule;
-    await this.element.open(book);
+    const viewModule = await this.viewModule;
+    const isFileInput =
+      typeof book === 'string' ||
+      (typeof book === 'object' &&
+        book !== null &&
+        typeof (book as { arrayBuffer?: unknown }).arrayBuffer === 'function');
+    const openedBook =
+      typeof viewModule.makeBook === 'function' && isFileInput
+        ? await viewModule.makeBook(book as string | File)
+        : book;
+    const foliateBook = asFoliateBook(openedBook);
+    if (foliateBook) {
+      installSectionFallbacks(foliateBook, this.fallbackUrls);
+    }
+    // 先接入 Loader 的 data 事件,再让 foliate-view 创建 renderer,确保首章
+    // 和后续章节都只能以清洗后的字符串进入 iframe。
+    this.wireContentSanitization(foliateBook);
+    try {
+      await this.element.open(openedBook);
+    } catch (error) {
+      this.contentCleanup?.();
+      this.contentCleanup = null;
+      this.revokeFallbackUrls();
+      throw error;
+    }
     this.opened = true;
-    this.wireContentSanitization();
     this.wireInternalLinkHandling();
     this.wireExternalLinkBlocking();
     this.wireAnnotationDrawing();
@@ -300,22 +337,41 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   close(): void {
-    if (this.opened) {
-      this.element.close?.();
+    try {
+      if (this.opened) {
+        this.element.close?.();
+      }
+    } finally {
+      this.contentCleanup?.();
+      this.internalLinkCleanup?.();
+      this.externalLinkCleanup?.();
+      this.element.remove();
+      this.contentListeners.clear();
+      this.internalLinkListeners.clear();
+      this.externalLinkListeners.clear();
+      this.showAnnotationListeners.clear();
+      this.drawAnnotationCleanup?.();
+      this.showAnnotationCleanup?.();
+      this.contentCleanup = null;
+      this.internalLinkCleanup = null;
+      this.externalLinkCleanup = null;
+      this.drawAnnotationCleanup = null;
+      this.showAnnotationCleanup = null;
+      this.revokeFallbackUrls();
+      this.opened = false;
     }
-    this.element.remove();
-    this.contentListeners.clear();
-    this.internalLinkListeners.clear();
-    this.externalLinkListeners.clear();
-    this.showAnnotationListeners.clear();
-    this.drawAnnotationCleanup?.();
-    this.showAnnotationCleanup?.();
-    this.opened = false;
+  }
+
+  private revokeFallbackUrls(): void {
+    for (const url of this.fallbackUrls) {
+      URL.revokeObjectURL(url);
+    }
+    this.fallbackUrls.clear();
   }
 
   /** 在 foliate Loader 派发 `data` 事件时对不可信内容做清洗。 */
-  private wireContentSanitization(): void {
-    const target = this.element.book?.transformTarget;
+  private wireContentSanitization(book: FoliateBook | null): void {
+    const target = book?.transformTarget ?? this.element.book?.transformTarget;
     if (!target) {
       return;
     }
@@ -325,7 +381,14 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
         return;
       }
       for (const listener of this.contentListeners) {
-        detail.data = listener(detail.type, detail.data);
+        try {
+          const transformed = listener(detail.type, detail.data);
+          detail.data = typeof transformed === 'string' ? transformed : '';
+        } catch (error) {
+          // 清洗异常必须失效关闭,不能把原始主动内容继续交给 renderer。
+          console.warn('EPUB 内容清洗失败,已丢弃该资源', error);
+          detail.data = '';
+        }
       }
     };
     target.addEventListener('data', handler);
@@ -409,5 +472,61 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.element.addEventListener('show-annotation', handler);
     this.showAnnotationCleanup = () =>
       this.element.removeEventListener('show-annotation', handler);
+  }
+}
+
+function asFoliateBook(value: unknown): FoliateBook | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return value as FoliateBook;
+}
+
+/**
+ * Foliate 的默认 Loader 在包内图片/字体损坏时会让整段 XHTML load reject。
+ * 非核心资源失败时回退到只含已清洗静态内容的章节 URL,保住正文阅读；
+ * 若章节文本本身也不可读,继续抛出原错误,由上层按整章失败展示。
+ */
+function installSectionFallbacks(book: FoliateBook, fallbackUrls: Set<string>): void {
+  for (const section of book.sections ?? []) {
+    const sectionId = section.id;
+    const loadText = section.loadText
+      ? section.loadText.bind(section)
+      : sectionId && book.loadText
+        ? () => book.loadText?.(sectionId) ?? Promise.resolve(null)
+        : null;
+    if (typeof section.load !== 'function' || !loadText) {
+      continue;
+    }
+    const originalLoad = section.load;
+    let fallbackUrl: string | null = null;
+    section.load = async () => {
+      try {
+        return await originalLoad.call(section);
+      } catch (error) {
+        if (fallbackUrl) {
+          return fallbackUrl;
+        }
+        let source: string | null;
+        try {
+          source = await loadText();
+        } catch {
+          throw error;
+        }
+        if (typeof source !== 'string') {
+          throw error;
+        }
+        const safeSource = sanitizeEpubContent(source);
+        if (typeof URL.createObjectURL !== 'function') {
+          throw error;
+        }
+        fallbackUrl = URL.createObjectURL(
+          new Blob([safeSource], { type: 'application/xhtml+xml' }),
+        );
+        fallbackUrls.add(fallbackUrl);
+        console.warn('EPUB 非核心资源加载失败,已降级为静态章节', error);
+        return fallbackUrl;
+      }
+    };
   }
 }

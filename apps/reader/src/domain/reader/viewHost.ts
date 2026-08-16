@@ -37,7 +37,7 @@ export interface FoliateViewHost {
   /** 订阅书内点击的外部链接,收到目标 URL。返回取消订阅函数。 */
   onExternalLink(listener: (href: string) => void): () => void;
   /**
-   * 订阅文档内容加载(如 XHTML/CSS),可改写内容后再交给渲染器。
+   * 订阅文档内容加载(如 XHTML/SVG/CSS),可改写内容后再交给渲染器。
    * 用于清洗不可信 EPUB 内容。返回取消订阅函数。
    */
   onContentData(listener: (type: string, data: string) => string): () => void;

@@ -13,6 +13,7 @@ interface FakeHost extends FoliateViewHost {
   emitInternalLink: (href: string) => void;
   emitExternalLink: (href: string) => void;
   closed: boolean;
+  emitContentDuringOpen: boolean;
 }
 
 function createFakeHost(): FakeHost {
@@ -26,8 +27,15 @@ function createFakeHost(): FakeHost {
     cfis: [] as string[],
     contentData: [] as Array<{ type: string; data: string }>,
     closed: false,
+    emitContentDuringOpen: false,
     async open(book: unknown) {
       this.openedBytes = book;
+      if (this.emitContentDuringOpen) {
+        this.emitContentData(
+          'application/xhtml+xml',
+          '<html xmlns="http://www.w3.org/1999/xhtml"><body><script>alert(1)</script><p>首章</p></body></html>',
+        );
+      }
     },
     async init(location: unknown) {
       this.initLocation = location;
@@ -259,7 +267,7 @@ describe('EpubBookDocument', () => {
     expect(book.getLocation()).toBeNull();
   });
 
-  it('清洗 XHTML 内容,移除脚本与危险链接', async () => {
+  it('清洗 XHTML、SVG、CSS 与媒体内容,移除主动内容和远程资源', async () => {
     const host = createFakeHost();
     const book = createDocument(() => host);
     await book.open(document.createElement('div'));
@@ -273,26 +281,33 @@ describe('EpubBookDocument', () => {
     expect(xhtml?.data).not.toContain('<script');
     expect(xhtml?.data).not.toContain('javascript:');
     expect(xhtml?.data).toContain('正文');
-  });
-
-  it('关闭清洗开关时不注册内容清洗监听(仅测试用,生产默认开启)', async () => {
-    const host = createFakeHost();
-    const container = document.createElement('div');
-    const book = new EpubBookDocument({
-      bytes: new Uint8Array([1, 2, 3]),
-      metadata: { title: '示例书', author: '作者', language: 'zh' },
-      viewHostFactory: () => host,
-      sanitize: false,
-    });
-    await book.open(container);
 
     host.emitContentData(
-      'application/xhtml+xml',
-      `<html xmlns="http://www.w3.org/1999/xhtml"><body><script>alert(1)</script></body></html>`,
+      'image/svg+xml',
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script><text>图形</text></svg>',
+    );
+    host.emitContentData(
+      'text/css',
+      '.cover { background: url("https://evil.example/track.png") }',
     );
 
-    // 未开启清洗时没有内容处理监听器,内容原样透传(既不改写也不拦截)。
-    expect(host.contentData).toHaveLength(0);
+    const svg = host.contentData.find((item) => item.type === 'image/svg+xml');
+    const css = host.contentData.find((item) => item.type === 'text/css');
+    expect(svg?.data).not.toContain('<script');
+    expect(svg?.data).not.toContain('onload');
+    expect(svg?.data).toContain('图形');
+    expect(css?.data).not.toContain('evil.example');
+  });
+
+  it('在 view.open 消费首章前就接入内容清洗器', async () => {
+    const host = createFakeHost();
+    host.emitContentDuringOpen = true;
+    const book = createDocument(() => host);
+
+    await book.open(document.createElement('div'));
+
+    expect(host.contentData[0]?.data).not.toContain('<script');
+    expect(host.contentData[0]?.data).toContain('首章');
   });
 
   it('在 host 就绪前订阅的内容创建监听会在打开后转发给 host', async () => {

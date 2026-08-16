@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeEpubContent, sanitizeHtmlFragment } from './sanitizer';
+import {
+  sanitizeEpubContent,
+  sanitizeEpubResource,
+  sanitizeEpubStylesheet,
+  sanitizeHtmlFragment,
+} from './sanitizer';
 import {
   MALICIOUS_EPUB_XHTML,
   MALICIOUS_MARKDOWN,
@@ -13,10 +18,13 @@ describe('恶意阅读材料夹具', () => {
 
     expect(output).not.toContain('__bookPayload');
     expect(output).not.toMatch(/<(?:iframe|object|embed)\b/i);
+    expect(output).not.toMatch(/<(?:audio|video|source|track)\b/i);
+    expect(output).not.toMatch(/<script\b/i);
     expect(output).not.toMatch(/\bon(?:load|error)=/i);
     expect(output).not.toContain('javascript:');
     expect(output).not.toContain('//evil.example');
     expect(output).not.toContain('https://evil.example/remote');
+    expect(output).not.toContain('evil.example/import');
     expect(output).toContain('应保留的 EPUB 正文');
   });
 
@@ -36,6 +44,11 @@ describe('恶意阅读材料夹具', () => {
 });
 
 describe('sanitizeEpubContent', () => {
+  it('已知脚本 MIME 直接清空,不把主动资源回传给渲染器', () => {
+    expect(sanitizeEpubResource('application/javascript', 'window.bookPayload = 1')).toBe('');
+    expect(sanitizeEpubResource('text/javascript; charset=utf-8', 'alert(1)')).toBe('');
+  });
+
   it('移除 script 元素及其内容', () => {
     const input = `<html xmlns="http://www.w3.org/1999/xhtml"><head></head><body><p>正文</p><script>alert(1)</script></body></html>`;
 
@@ -75,7 +88,7 @@ describe('sanitizeEpubContent', () => {
   });
 
   it('移除远程图片和外部样式表,但保留交给系统浏览器的外链', () => {
-    const input = `<link rel="stylesheet" href="https://evil.example/book.css"><img src="https://evil.example/book.png"><a href="https://safe.example">安全</a>`;
+    const input = `<link rel="stylesheet" href="https://evil.example/book.css"><img src="https://evil.example/book.png"><area href="https://evil.example/map"><a href="https://safe.example">安全</a>`;
 
     const output = sanitizeHtmlFragment(input);
 
@@ -107,6 +120,59 @@ describe('sanitizeEpubContent', () => {
     expect(output).not.toContain('srcdoc');
     expect(output).not.toContain('data:text/html');
     expect(output).toContain('data:image/png');
+  });
+
+  it('保留包内样式与图片 blob,但移除 CSS 远程资源和危险声明', () => {
+    const output = sanitizeEpubStylesheet(`
+      @import "https://evil.example/import.css";
+      @import url("blob:https://app.test/local.css");
+      @font-face { src: url("https://evil.example/font.woff") }
+      .cover { background-image: url("blob:https://app.test/local.png") }
+      .bad { background-image: url("//evil.example/track") }
+      .legacy { behavior: url("https://evil.example/behavior.htc"); }
+    `);
+
+    expect(output).toContain('blob:https://app.test/local.css');
+    expect(output).toContain('blob:https://app.test/local.png');
+    expect(output).not.toContain('evil.example');
+    expect(output).not.toMatch(/\bbehavior\s*:/i);
+  });
+
+  it('只允许 EPUB 生成的样式表 blob,不会保留 link 的远程地址', () => {
+    const output = sanitizeEpubContent(`
+      <html xmlns="http://www.w3.org/1999/xhtml"><head>
+        <link rel="stylesheet" href="blob:https://app.test/local.css" />
+        <link rel="stylesheet" href="https://evil.example/remote.css" />
+      </head><body><p>正文</p></body></html>
+    `);
+
+    expect(output).toContain('blob:https://app.test/local.css');
+    expect(output).not.toContain('evil.example');
+  });
+
+  it('清洗 SVG 文档中的脚本、事件处理器与远程图片', () => {
+    const output = sanitizeEpubContent(`
+      <svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
+        <script>alert(2)</script>
+        <image href="https://evil.example/image.png" />
+        <text>静态图形</text>
+      </svg>
+    `);
+
+    expect(output).not.toMatch(/<script\b/i);
+    expect(output).not.toMatch(/\bonload=/i);
+    expect(output).not.toContain('evil.example');
+    expect(output).toContain('静态图形');
+  });
+
+  it('移除可触发导航的 meta refresh', () => {
+    const output = sanitizeEpubContent(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="refresh" content="0;url=https://evil.example" /></head><body>正文</body></html>',
+    );
+
+    expect(output).not.toContain('refresh');
+    expect(output).not.toContain('evil.example');
+    expect(output).toContain('正文');
   });
 
   it('保留 Foliate 为 EPUB 包内图片生成的 blob URL', () => {
@@ -159,5 +225,15 @@ describe('sanitizeHtmlFragment', () => {
     const output = sanitizeHtmlFragment(input);
 
     expect(output).not.toContain('//evil.example');
+  });
+
+  it('拒绝带控制空白的伪装脚本协议与绝对路径资源', () => {
+    const input = `<a href="java&#x0a;script:alert(1)">坏</a><img src="/private/image.png"><p>好</p>`;
+
+    const output = sanitizeHtmlFragment(input);
+
+    expect(output).not.toContain('alert(1)');
+    expect(output).not.toContain('/private/image.png');
+    expect(output).toContain('好');
   });
 });

@@ -1,25 +1,79 @@
 /**
- * EPUB 内容清洗器:把进入渲染器的 XHTML 内容当作不可信输入处理。
+ * EPUB 内容清洗器:把进入渲染器的文本资源当作不可信输入处理。
  * 永久移除脚本、iframe、对象嵌入、表单、可执行属性与危险 URL,阻止主动远程
  * 资源在阅读 WebView 中执行或取得 Tauri IPC。
  *
  * 这是 ADR-0010 的实现承载:不提供"信任此书"开关,清洗是打开 EPUB 的必经步骤。
  */
 
-/** 明确禁止的 URL 协议(大小写不敏感)。这些方案可执行脚本或访问本地文件。 */
-const BLOCKED_URL_PROTOCOLS = /^(?:javascript|vbscript|file|cid|jar)/i;
+/** 明确禁止的 URL 协议(大小写不敏感)。其余未列出的协议也一律拒绝。 */
+const BLOCKED_URL_PROTOCOLS = /^(?:javascript|vbscript|file|cid|jar):/i;
 
-/** 允许的显式 URL 协议。其余未列出的方案一律拒绝。 */
-const ALLOWED_URL_PROTOCOLS = /^(?:https?|ftp|mailto|tel|callto|sms|blob):/i;
+/** 允许的 data: URI(仅安全的栅格图片),避免把 SVG 当作主动内容载荷。 */
+const ALLOWED_DATA_IMAGE_URI =
+  /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp|x-icon)(?:;[a-z0-9=.-]+)*,/i;
 
-/** 允许的 data: URI(仅图片),满足"必要的 blob/data 图片"边界。 */
-const ALLOWED_DATA_URI = /^data:image\/[a-z0-9.+-]+(?:;base64)?,/i;
-
-const FORBIDDEN_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'base', 'form', 'frame']);
+const FORBIDDEN_TAGS = new Set([
+  'script',
+  'iframe',
+  'object',
+  'embed',
+  'base',
+  'form',
+  'frame',
+  'audio',
+  'video',
+  'source',
+  'track',
+  'portal',
+]);
 
 /** 危险属性:事件处理器与可注入脚本载荷的属性。 */
 const FORBIDDEN_ATTR_PREFIX = /^on/i;
-const FORBIDDEN_ATTRS = new Set(['srcdoc', 'formaction', 'srcset']);
+const FORBIDDEN_ATTRS = new Set([
+  'srcdoc',
+  'formaction',
+  'srcset',
+  'imagesrcset',
+  'ping',
+]);
+
+const SCRIPT_MEDIA_TYPES = new Set([
+  'application/ecmascript',
+  'application/javascript',
+  'application/x-ecmascript',
+  'application/x-javascript',
+  'text/ecmascript',
+  'text/javascript',
+]);
+
+/**
+ * 按资源 MIME 类型执行统一的失效安全清洗。
+ * 未知二进制资源不经过此文本接口;已知的主动 MIME 类型则返回空内容,
+ * 绝不在清洗失败时把原始脚本交回渲染器。
+ */
+export function sanitizeEpubResource(type: string, input: string): string {
+  const mediaType = type.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  if (SCRIPT_MEDIA_TYPES.has(mediaType)) {
+    return '';
+  }
+  try {
+    if (mediaType === 'text/css') {
+      return sanitizeEpubStylesheet(input);
+    }
+    if (
+      mediaType === 'application/xhtml+xml' ||
+      mediaType === 'text/html' ||
+      mediaType === 'image/svg+xml'
+    ) {
+      return sanitizeEpubContent(input);
+    }
+  } catch {
+    // 已知可执行/可解析文本资源清洗失败时必须丢弃,不能回传原文。
+    return '';
+  }
+  return input;
+}
 
 /**
  * 清洗一段 XHTML/HTML 内容,返回清洗后的完整文档字符串。
@@ -30,7 +84,10 @@ const FORBIDDEN_ATTRS = new Set(['srcdoc', 'formaction', 'srcset']);
  */
 export function sanitizeEpubContent(input: string): string {
   const doc = parseDocument(input);
-  sanitizeElementTree(doc.documentElement ?? doc.createElement('body'));
+  const root = doc.documentElement;
+  if (root) {
+    sanitizeElementTree(root);
+  }
   return new XMLSerializer().serializeToString(doc);
 }
 
@@ -45,6 +102,35 @@ export function sanitizeHtmlFragment(input: string): string {
   return doc.body.innerHTML;
 }
 
+/**
+ * 清洗 EPUB 包内 CSS。Foliate 已经把包内资源替换成 blob URL,所以这里
+ * 只允许 blob、片段、data 图片和非绝对相对路径;所有网络、文件和未知协议
+ * 的资源都被替换为无副作用的 `none`。
+ */
+export function sanitizeEpubStylesheet(input: string): string {
+  let output = input;
+  output = output.replace(
+    /@import\s+url\(\s*(['"]?)([^'"\)\r\n]*)\1\s*\)\s*;?/gi,
+    (_match, _quote: string, value: string) =>
+      isAllowedCssUrl(value) ? `@import url("${value.trim()}");` : '',
+  );
+  output = output.replace(
+    /@import\s+(['"])([^'"\r\n]*)\1\s*;?/gi,
+    (_match, _quote: string, value: string) =>
+      isAllowedCssUrl(value) ? `@import url("${value.trim()}");` : '',
+  );
+  output = output.replace(
+    /url\(\s*(['"]?)([^'"\)\r\n]*)\1\s*\)/gi,
+    (_match, _quote: string, value: string) =>
+      isAllowedCssUrl(value) ? `url("${value.trim()}")` : 'none',
+  );
+  // 这些旧式 CSS 执行入口在部分 WebView/兼容模式中可能重新获得行为语义。
+  return output.replace(
+    /(?:expression|behavior|-moz-binding)\s*:[^;{}]*(?:;|(?=}))/gi,
+    '',
+  );
+}
+
 function parseDocument(input: string): Document {
   const xhtml = new DOMParser().parseFromString(input, 'application/xhtml+xml');
   if (!xhtml.documentElement || xhtml.getElementsByTagName('parsererror').length > 0) {
@@ -54,11 +140,25 @@ function parseDocument(input: string): Document {
 }
 
 function sanitizeElementTree(root: Element): void {
-  const elements = Array.from(root.getElementsByTagName('*'));
+  if (FORBIDDEN_TAGS.has(root.localName.toLowerCase())) {
+    root.remove();
+    return;
+  }
+  const elements = [root, ...Array.from(root.getElementsByTagName('*'))];
   for (const element of elements) {
     if (FORBIDDEN_TAGS.has(element.localName.toLowerCase())) {
       element.remove();
       continue;
+    }
+    if (
+      element.localName.toLowerCase() === 'meta' &&
+      element.getAttribute('http-equiv')?.trim().toLowerCase() === 'refresh'
+    ) {
+      element.remove();
+      continue;
+    }
+    if (element.localName.toLowerCase() === 'style') {
+      element.textContent = sanitizeEpubStylesheet(element.textContent ?? '');
     }
     sanitizeAttributes(element);
   }
@@ -79,6 +179,8 @@ function sanitizeAttributes(element: Element): void {
       if (!isAllowedUrl(value, element, lower)) {
         element.removeAttribute(attr.name);
       }
+    } else if (lower === 'style') {
+      element.setAttribute(attr.name, sanitizeEpubStylesheet(attr.value));
     }
   }
 }
@@ -97,39 +199,85 @@ function isAllowedUrl(value: string, element: Element, attribute: string): boole
   if (!value) {
     return true;
   }
-  if (BLOCKED_URL_PROTOCOLS.test(value)) {
+  const normalized = normalizeUrlForProtocolCheck(value);
+  if (BLOCKED_URL_PROTOCOLS.test(normalized)) {
     return false;
   }
   // 协议相对 URL(以 // 开头)是网络路径引用,会解析到当前协议下的远程主机,
   // 不是真正安全的相对路径。阅读内容一律视为不可信,予以拒绝。
-  if (/^\/\//.test(value)) {
+  if (/^\/\//.test(normalized)) {
     return false;
   }
-  if (value.startsWith('data:')) {
-    return ALLOWED_DATA_URI.test(value);
+  if (/^data:/i.test(normalized)) {
+    return isImageResourceAttribute(element, attribute) && ALLOWED_DATA_IMAGE_URI.test(normalized);
   }
-  if (value.startsWith('#')) {
+  if (normalized.startsWith('#')) {
     return true;
   }
   // 书内外链由宿主拦截后交给系统浏览器；其它元素上的显式远程 URL 都是
-  // 资源加载请求，不能让阅读内容借此访问网络。相对路径仍可引用 EPUB
-  // 自带的图片、样式和字体。
-  if (ALLOWED_URL_PROTOCOLS.test(value)) {
-    if (value.startsWith('blob:')) {
-      return isBlobImageAttribute(element, attribute);
-    }
-    const tagName = element.localName.toLowerCase();
-    return attribute === 'href' && (tagName === 'a' || tagName === 'area');
+  // 资源加载请求，不能让阅读内容借此访问网络。包内图片、样式和字体在
+  // Foliate Loader 中会先替换成 blob URL,因此这里不保留资源相对路径。
+  if (/^blob:/i.test(normalized)) {
+    return isLocalBlobAttribute(element, attribute);
   }
-  // 走完协议判断后:允许相对路径(不以 ":" 开头的非协议串)。
-  return !/^[a-z][a-z0-9+.-]*:/i.test(value);
+  if (/^https?:/i.test(normalized)) {
+    const tagName = element.localName.toLowerCase();
+    // Foliate 的外链接管只覆盖 a[href],其它元素不能绕过统一确认流程。
+    return attribute === 'href' && tagName === 'a';
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(normalized)) {
+    return false;
+  }
+  // 绝对路径会从宿主应用 origin 解析,不是 EPUB 包内资源。
+  if (/^[\\/]/.test(normalized)) {
+    return false;
+  }
+  const tagName = element.localName.toLowerCase();
+  // 仅保留书内导航的相对链接;包内图片/样式应已由 Foliate 替换为 blob。
+  return attribute === 'href' && tagName === 'a';
 }
 
-/** Foliate 将 EPUB 包内资源替换成 blob URL,仅允许它们作为图片载荷进入内容文档。 */
-function isBlobImageAttribute(element: Element, attribute: string): boolean {
-  const tagName = element.localName.toLowerCase();
-  if (attribute === 'src') {
-    return tagName === 'img' || tagName === 'image';
+function isAllowedCssUrl(value: string): boolean {
+  const normalized = normalizeUrlForProtocolCheck(value.trim());
+  if (!normalized || normalized.startsWith('#')) {
+    return true;
   }
-  return (attribute === 'href' || attribute === 'xlink:href') && tagName === 'image';
+  if (/^data:/i.test(normalized)) {
+    return ALLOWED_DATA_IMAGE_URI.test(normalized);
+  }
+  if (/^blob:/i.test(normalized)) {
+    return true;
+  }
+  if (/^[\\/]/.test(normalized) || /^[a-z][a-z0-9+.-]*:/i.test(normalized)) {
+    return false;
+  }
+  return true;
+}
+
+function normalizeUrlForProtocolCheck(value: string): string {
+  return value.replace(/[\u0000-\u0020]+/g, '');
+}
+
+function isImageResourceAttribute(element: Element, attribute: string): boolean {
+  const tagName = element.localName.toLowerCase();
+  return (
+    (attribute === 'src' && tagName === 'img') ||
+    ((attribute === 'href' || attribute === 'xlink:href') && tagName === 'image') ||
+    attribute === 'background'
+  );
+}
+
+function isLocalBlobAttribute(element: Element, attribute: string): boolean {
+  const tagName = element.localName.toLowerCase();
+  if (attribute === 'src' && tagName === 'img') {
+    return true;
+  }
+  if ((attribute === 'href' || attribute === 'xlink:href') && tagName === 'image') {
+    return true;
+  }
+  if (attribute === 'href' && tagName === 'link') {
+    const rel = element.getAttribute('rel')?.toLowerCase().split(/\s+/) ?? [];
+    return rel.includes('stylesheet') || rel.includes('alternate stylesheet');
+  }
+  return false;
 }

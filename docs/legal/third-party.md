@@ -55,7 +55,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 
 - 已于第 3 个切片(安全打开 EPUB 并重启续读)经 npm 引入上游 `foliate-js@1.0.1`(MIT),来源 [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js)。
 - 使用范围:通过 `foliate-view` 自定义元素渲染 EPUB;所有直接调用集中在 `apps/reader/src/domain/reader/foliateViewHost.ts`,上层只经 `BookDocument` 窄接口交互。
-- 安全边界:`Loader.allowScript` 默认关闭(参考 Readest 分支的既有加固);`domain/reader/sanitizer.ts` 在内容进入渲染器前移除脚本、iframe、对象嵌入与危险 URL,落实 ADR-0010。
+- 安全边界:`Loader.allowScript` 默认关闭(参考 Readest 分支的既有加固);`domain/reader/sanitizer.ts` 在内容进入渲染器前统一清洗 XHTML/HTML、SVG、CSS 和脚本 MIME，移除脚本、iframe、对象嵌入、音视频媒体、危险 URL 与可执行 CSS，非核心资源失败时回退到清洗后的静态章节，落实 ADR-0010。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/foliate-js@1.0.1/node_modules/foliate-js/LICENSE`。
 
 ## pdfjs-dist 引入记录

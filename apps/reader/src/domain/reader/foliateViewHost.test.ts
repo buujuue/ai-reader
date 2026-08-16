@@ -48,6 +48,32 @@ function createHost(element: FakeViewElement) {
 }
 
 describe('UpstreamFoliateViewHost 安全接线', () => {
+  it('非核心资源失败时回退到清洗后的静态章节,不让整章空白', async () => {
+    const element = createFakeElement();
+    const transformTarget = new EventTarget();
+    const section = {
+      id: 'chapter.xhtml',
+      load: vi.fn().mockRejectedValue(new Error('图片损坏')),
+    };
+    const loadText = vi.fn().mockResolvedValue(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><script>alert(1)</script><p>正文仍可读</p></body></html>',
+    );
+    const book = { sections: [section], loadText, transformTarget };
+    const viewModule = { makeBook: vi.fn().mockResolvedValue(book) };
+    const host = new UpstreamFoliateViewHost(
+      element as unknown as import('foliate-js/view.js').View & HTMLElement,
+      Promise.resolve(viewModule as unknown as typeof import('foliate-js/view.js')),
+    );
+
+    await host.open(new File(['epub'], 'book.epub'));
+    const fallbackUrl = await section.load();
+
+    expect(viewModule.makeBook).toHaveBeenCalledOnce();
+    expect(element.open).toHaveBeenCalledWith(book);
+    expect(fallbackUrl).toEqual(expect.any(String));
+    expect(loadText).toHaveBeenCalledWith('chapter.xhtml');
+  });
+
   it('打开文档后把内容清洗监听器接到 foliate 的 transformTarget(data 事件)', async () => {
     const element = createFakeElement();
     const transformTarget = new EventTarget();
@@ -63,6 +89,22 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     transformTarget.dispatchEvent(new CustomEvent('data', { detail }));
 
     expect(listener).toHaveBeenCalledWith('application/xhtml+xml', '<p>正文</p>');
+  });
+
+  it('内容清洗器异常时丢弃资源,不会把原始内容回传给 renderer', async () => {
+    const element = createFakeElement();
+    const transformTarget = new EventTarget();
+    element.book = { transformTarget };
+    const host = createHost(element);
+    host.onContentData(() => {
+      throw new Error('清洗器故障');
+    });
+    await host.open({});
+
+    const detail = { data: '<script>危险</script>', type: 'application/xhtml+xml' };
+    transformTarget.dispatchEvent(new CustomEvent('data', { detail }));
+
+    expect(detail.data).toBe('');
   });
 
   it('拦截外部链接,阻止阅读帧导航到远程资源', async () => {
