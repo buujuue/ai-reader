@@ -7,7 +7,7 @@ import {
 } from '../domain/library/inMemoryImportRepository';
 import type { ImportRepository } from '../domain/library/importRepository';
 import type { StagedImport } from '../domain/library/material';
-import { buildEpub } from '../domain/library/epub/zipWriter';
+import { buildEpub, buildStoredZip, encode } from '../domain/library/epub/zipWriter';
 import { importBooks, classifyImportError } from './importBook';
 
 function makeIo(overrides?: { sourcePaths?: string[]; bytes?: Record<string, Uint8Array> }) {
@@ -23,6 +23,28 @@ function makeIo(overrides?: { sourcePaths?: string[]; bytes?: Record<string, Uin
     importRepository: createInMemoryImportRepository(sources),
     filePicker: createInMemoryFilePicker(sourcePaths),
   };
+}
+
+function buildBudgetOverflowEpub(): Uint8Array {
+  return buildStoredZip([
+    {
+      name: 'META-INF/container.xml',
+      data: encode(
+        '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+      ),
+    },
+    {
+      name: 'OEBPS/content.opf',
+      data: encode(
+        '<package xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>超限书</dc:title></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+      ),
+    },
+    {
+      name: 'OEBPS/chapter.xhtml',
+      data: encode('<html><body><p>正文</p></body></html>'),
+      declaredUncompressedSize: 8 * 1024 * 1024 + 1,
+    },
+  ]);
 }
 
 describe('importBooks 批量编排', () => {
@@ -86,6 +108,32 @@ describe('importBooks 批量编排', () => {
     expect(outcomes[0]?.kind).toBe('failure');
     expect(outcomes[1]?.kind).toBe('success');
     expect(await io.importRepository.listMaterials()).toHaveLength(1);
+  });
+
+  it('EPUB 预检在 commit 前拒绝首章预算超限并返回 budget 分类', async () => {
+    const sourcePath = 'over-budget.epub';
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, sourcePath, buildBudgetOverflowEpub());
+    const repository = createInMemoryImportRepository(sources);
+    let commitCalled = false;
+    const originalCommit = repository.commitImport.bind(repository);
+    repository.commitImport = async (...args) => {
+      commitCalled = true;
+      return originalCommit(...args);
+    };
+    const filePicker: FilePicker = {
+      pickBooks: async () => [sourcePath],
+      pickImage: async () => null,
+    };
+
+    const outcomes = (await importBooks({ importRepository: repository, filePicker }))!;
+
+    expect(outcomes[0]).toMatchObject({
+      kind: 'failure',
+      failure: { kind: 'budget' },
+    });
+    expect(commitCalled).toBe(false);
+    expect(await repository.listMaterials()).toHaveLength(0);
   });
 });
 

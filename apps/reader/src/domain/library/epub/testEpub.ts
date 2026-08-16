@@ -6,20 +6,24 @@ export type { TestZipEntry } from './zipWriter';
 
 /** 构造一个把 container.xml 以 deflate 压缩的 EPUB,验证解压路径。 */
 export async function buildDeflatedEpub(): Promise<Uint8Array> {
+  const container = encode(
+    '<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+  );
   return buildZipWithMethod([
     {
       name: 'META-INF/container.xml',
-      data: await deflate(
-        encode(
-          '<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
-        ),
-      ),
+      data: await deflate(container),
+      uncompressedSize: container.length,
     },
     {
       name: 'OEBPS/content.opf',
       data: encode(
-        '<package xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>压缩书</dc:title></metadata></package>',
+        '<package xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>压缩书</dc:title></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
       ),
+    },
+    {
+      name: 'OEBPS/chapter.xhtml',
+      data: encode('<html><body><p>正文</p></body></html>'),
     },
   ]);
 }
@@ -57,7 +61,9 @@ function encode(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-function buildZipWithMethod(entries: Array<{ name: string; data: Uint8Array }>): Uint8Array {
+function buildZipWithMethod(
+  entries: Array<{ name: string; data: Uint8Array; uncompressedSize?: number }>,
+): Uint8Array {
   const chunks: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
@@ -72,7 +78,7 @@ function buildZipWithMethod(entries: Array<{ name: string; data: Uint8Array }>):
     localView.setUint16(4, 20, true);
     localView.setUint16(8, method, true);
     localView.setUint32(18, entry.data.length, true);
-    localView.setUint32(22, entry.data.length, true);
+    localView.setUint32(22, entry.uncompressedSize ?? entry.data.length, true);
     localView.setUint16(26, nameBytes.length, true);
     local.set(nameBytes, 30);
     local.set(entry.data, 30 + nameBytes.length);
@@ -83,7 +89,7 @@ function buildZipWithMethod(entries: Array<{ name: string; data: Uint8Array }>):
     centralView.setUint32(0, 0x02014b50, true);
     centralView.setUint16(10, method, true);
     centralView.setUint32(20, entry.data.length, true);
-    centralView.setUint32(24, entry.data.length, true);
+    centralView.setUint32(24, entry.uncompressedSize ?? entry.data.length, true);
     centralView.setUint16(28, nameBytes.length, true);
     centralView.setUint32(42, offset, true);
     centralEntry.set(nameBytes, 46);

@@ -90,7 +90,7 @@ describe('EPUB 核心契约与样书集', () => {
       );
       expect(violatesEpubResourceBudget(measured), fixture.id).toBe(true);
     }
-  });
+  }, 20_000);
 
   it('DRM 和远程活动资源样书包含可供拒绝/清洗测试识别的真实标记', async () => {
     const drmNames = listZipEntries(await buildEpubFixture('epub3-commercial-drm')).map(

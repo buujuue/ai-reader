@@ -266,8 +266,8 @@ async function buildZip(entries: FixtureZipEntry[]): Promise<Uint8Array> {
     const localView = new DataView(local.buffer);
     localView.setUint32(0, 0x04034b50, true);
     localView.setUint16(4, 20, true);
-    localView.setUint16(8, 0, true);
-    localView.setUint16(10, method, true);
+    localView.setUint16(6, 0, true);
+    localView.setUint16(8, method, true);
     localView.setUint32(14, crc, true);
     localView.setUint32(18, compressed.length, true);
     localView.setUint32(

@@ -5,6 +5,11 @@
  * 后续 EPUB 解析/导入实现必须以本契约的 outcome 与用户可见结果为准。
  */
 
+import { EPUB_RESOURCE_BUDGET } from '../../../domain/library/epub/epubBudget';
+
+export { EPUB_RESOURCE_BUDGET };
+export type { EpubResourceBudget } from '../../../domain/library/epub/epubBudget';
+
 export type EpubAcceptanceOutcome = 'supported' | 'degraded' | 'rejected';
 
 export type EpubFixtureFeature =
@@ -33,36 +38,6 @@ export type EpubFixtureFeature =
   | 'chapter-size-limit'
   | 'entry-count-limit'
   | 'xml-depth-limit';
-
-export interface EpubResourceBudget {
-  /** 单个 ZIP 条目的最大解压后字节数。 */
-  maxEntryUncompressedBytes: number;
-  /** 全部条目的最大解压后字节数。 */
-  maxTotalUncompressedBytes: number;
-  /** 解压后字节数 / 压缩后字节数的最大允许值。 */
-  maxCompressionRatio: number;
-  /** 单个 spine 章节的最大解压后字节数。 */
-  maxChapterUncompressedBytes: number;
-  /** ZIP 中允许出现的最大条目数。 */
-  maxEntryCount: number;
-  /** XML/HTML 单条文档允许的最大元素嵌套深度。 */
-  maxXmlNestingDepth: number;
-}
-
-/**
- * 第一版冻结的安全预算。
- *
- * 这些数值是跨 Windows/macOS/iPadOS/Android 的共同上限，不是设备性能
- * 目标。解析器必须在实际解压前检查中央目录信息，避免先分配再拒绝。
- */
-export const EPUB_RESOURCE_BUDGET: Readonly<EpubResourceBudget> = Object.freeze({
-  maxEntryUncompressedBytes: 64 * 1024 * 1024,
-  maxTotalUncompressedBytes: 256 * 1024 * 1024,
-  maxCompressionRatio: 100,
-  maxChapterUncompressedBytes: 8 * 1024 * 1024,
-  maxEntryCount: 10_000,
-  maxXmlNestingDepth: 64,
-});
 
 export interface EpubResourceProfile {
   singleEntryUncompressedBytes: number;

@@ -1,5 +1,9 @@
 import type { FilePicker } from '../app/filePicker';
-import { EpubInspectError, inspectEpub } from '../domain/library/epub/epubInspector';
+import {
+  EpubInspectError,
+  inspectEpub,
+  type EpubPreflightReport,
+} from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
 import type { ReadingMaterial, SourceMetadata } from '../domain/library/material';
 import { formatFromSourceFileName } from '../domain/library/materialFormat';
@@ -16,7 +20,14 @@ export interface ImportBookDependencies {
 
 /** 单个文件导入结果。失败时保留可行动的简体中文文案与分类,便于 UI 逐文件汇报。 */
 export type ImportOutcome =
-  | { kind: 'success'; sourcePath: string; fileName: string; material: ReadingMaterial }
+  | {
+      kind: 'success';
+      sourcePath: string;
+      fileName: string;
+      material: ReadingMaterial;
+      /** EPUB 局部降级报告；在 commit 前生成，供 UI 展示可行动提示。 */
+      preflight?: EpubPreflightReport;
+    }
   | { kind: 'failure'; sourcePath: string; fileName: string; failure: ImportFailure };
 
 /** 失败分类,UI 据此选择针对性的操作提示。 */
@@ -24,6 +35,8 @@ export type ImportFailureKind =
   | 'empty'
   | 'unsupported'
   | 'corrupt'
+  | 'drm'
+  | 'budget'
   | 'permission'
   | 'space'
   | 'other';
@@ -62,13 +75,14 @@ async function importOneFile(
   try {
     staged = await dependencies.importRepository.stageImport(sourcePath);
     const bytes = await dependencies.importRepository.readStagedFile(staged);
-    const metadata = await inspectFile(bytes, staged.originalFileName, dependencies.pdfLib);
-    const material = await dependencies.importRepository.commitImport(staged, metadata);
+    const inspected = await inspectFile(bytes, staged.originalFileName, dependencies.pdfLib);
+    const material = await dependencies.importRepository.commitImport(staged, inspected.metadata);
     return {
       kind: 'success',
       sourcePath,
       fileName: staged.originalFileName,
       material,
+      ...(inspected.preflight ? { preflight: inspected.preflight } : {}),
     };
   } catch (error) {
     if (staged) {
@@ -92,30 +106,29 @@ async function inspectFile(
   bytes: Uint8Array,
   originalFileName: string,
   pdfLib?: PdfJsLib,
-): Promise<SourceMetadata> {
+): Promise<{ metadata: SourceMetadata; preflight?: EpubPreflightReport }> {
   const format = formatFromSourceFileName(originalFileName);
   if (format === 'pdf') {
     const result = await inspectPdf(bytes, pdfLib);
-    return result.metadata;
+    return { metadata: result.metadata };
   }
   if (format === 'epub') {
     const result = await inspectEpub(bytes);
-    return result.metadata;
+    return { metadata: result.metadata, preflight: result.preflight };
   }
   if (format === 'markdown') {
     const result = await inspectMarkdown(bytes, originalFileName);
-    return result.metadata;
+    return { metadata: result.metadata };
   }
   throw new MarkdownInspectError('不支持的文件格式:仅支持 EPUB、PDF 与 Markdown', 'unsupported');
 }
 
 /** 把任意导入阶段的错误归类为带行动提示的领域化失败。 */
 export function classifyImportError(error: unknown): ImportFailure {
-  if (
-    error instanceof EpubInspectError ||
-    error instanceof PdfInspectError ||
-    error instanceof MarkdownInspectError
-  ) {
+  if (error instanceof EpubInspectError) {
+    return { kind: error.kind, message: error.message };
+  }
+  if (error instanceof PdfInspectError || error instanceof MarkdownInspectError) {
     return { kind: error.kind, message: error.message };
   }
   const text = error instanceof Error ? error.message : String(error);

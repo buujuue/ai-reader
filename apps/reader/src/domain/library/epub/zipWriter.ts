@@ -5,6 +5,11 @@
 export interface TestZipEntry {
   name: string;
   data: Uint8Array;
+  /** 测试恶意中央目录声明；不会改变实际写入的 data。 */
+  declaredUncompressedSize?: number;
+  /** 测试 ZIP 加密标志或其它通用位。 */
+  flags?: number;
+  compressionMethod?: 0 | 8;
 }
 
 export function buildStoredZip(entries: TestZipEntry[]): Uint8Array {
@@ -14,14 +19,17 @@ export function buildStoredZip(entries: TestZipEntry[]): Uint8Array {
 
   for (const entry of entries) {
     const nameBytes = new TextEncoder().encode(entry.name);
+    const method = entry.compressionMethod ?? 0;
+    const flags = entry.flags ?? 0;
 
     const local = new Uint8Array(30 + nameBytes.length + entry.data.length);
     const localView = new DataView(local.buffer);
     localView.setUint32(0, 0x04034b50, true);
     localView.setUint16(4, 20, true);
-    localView.setUint16(8, 0, true);
+    localView.setUint16(6, flags, true);
+    localView.setUint16(8, method, true);
     localView.setUint32(18, entry.data.length, true);
-    localView.setUint32(22, entry.data.length, true);
+    localView.setUint32(22, entry.declaredUncompressedSize ?? entry.data.length, true);
     localView.setUint16(26, nameBytes.length, true);
     local.set(nameBytes, 30);
     local.set(entry.data, 30 + nameBytes.length);
@@ -30,9 +38,10 @@ export function buildStoredZip(entries: TestZipEntry[]): Uint8Array {
     const centralEntry = new Uint8Array(46 + nameBytes.length);
     const centralView = new DataView(centralEntry.buffer);
     centralView.setUint32(0, 0x02014b50, true);
-    centralView.setUint16(10, 0, true);
+    centralView.setUint16(8, flags, true);
+    centralView.setUint16(10, method, true);
     centralView.setUint32(20, entry.data.length, true);
-    centralView.setUint32(24, entry.data.length, true);
+    centralView.setUint32(24, entry.declaredUncompressedSize ?? entry.data.length, true);
     centralView.setUint16(28, nameBytes.length, true);
     centralView.setUint32(42, offset, true);
     centralEntry.set(nameBytes, 46);

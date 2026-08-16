@@ -16,12 +16,12 @@
 - `recycleBinRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的回收站契约测试。
 - `backupRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的备份导出契约测试。
 - `importBatch.contract.ts`：内存与 Tauri 两个 Adapter 共享的批量导入契约测试。
-- `epub/`：最小 ZIP 解析器（`zip.ts`）、`EpubInspector`（`epubInspector.ts`，BookDocument 雏形，解析 container.xml → OPF → 元数据/封面）、演示/测试夹具构造器（`zipWriter.ts`、`testEpub.ts`）。
+- `epub/`：EPUB 预检与读取边界。`epubBudget.ts` 持有不可覆盖的 ZIP/章节/XML 硬预算；`zip.ts` 做中央目录、本地头、路径、加密、边界和有上限解压；`epubInspector.ts` 在 commit 前验证 container.xml → OPF → manifest/spine/首章，并返回章节、非核心资源与 NAV/NCX 局部降级报告；`zipWriter.ts`、`testEpub.ts` 为演示与测试夹具构造器。
 - 对应 `*.test.ts`：Adapter 契约、Inspector 与编排测试。
 
 ## 依赖其它文件夹（树）
 
-无（`domain/library/` 不依赖其它 `src/` 文件夹；`epubInspector` 复用平台 `DecompressionStream`）。
+无（`domain/library/` 不依赖其它 `src/` 文件夹；`epub/` 只复用平台 `DOMParser`、`DecompressionStream` 与本目录的预算契约）。
 
 ## 被谁依赖（树）
 
@@ -32,6 +32,7 @@ domain/library/
 │   └── filePicker.ts     选择文件后交给导入编排
 └── workbench/
     ├── importBook.ts     批量编排 importBooks(多选、顺序 stage → inspect → commit)
+    ├── readerCommands.ts 打开托管材料前复用 EPUB 预检
     └── libraryCommands.ts 经 ImportRepository 执行 `library.import` / `library.refresh` / 元数据覆盖与回收站命令
 
 backupRepository ──► workbench/backupCommands.ts 经 typed 命令编排备份
@@ -39,7 +40,7 @@ backupRepository ──► workbench/backupCommands.ts 经 typed 命令编排备
 
 ## 依赖方向
 
-该子域是导入与备份契约的家：内存 Adapter 与 Tauri Adapter 必须分别运行同一份 `importRepository.contract.ts` 与 `backupRepository.contract.ts` 契约测试；接口变化时同步更新契约与两个 Adapter。Rust 侧 `ImportRepository` 在真实 SQLite 与托管文件系统上运行镜像契约。
+该子域是导入与备份契约的家：内存 Adapter 与 Tauri Adapter 必须分别运行同一份 `importRepository.contract.ts` 与 `backupRepository.contract.ts` 契约测试；接口变化时同步更新契约与两个 Adapter。`epub/` 是导入前的只读格式/安全边界，不依赖 Repository 或 UI；Rust 侧 `ImportRepository` 在真实 SQLite 与托管文件系统上运行镜像契约。
 ## 完整书库备份恢复
 
 `backupRepository.ts` 定义完整备份导出与恢复的窄接口；`tauriBackupRepository.ts` 将恢复请求映射到 typed Tauri command，`inMemoryBackupRepository.ts` 为浏览器降级运行时提供契约测试适配。恢复由 Rust 校验、暂存、快照和原子切换，前端只负责选择备份文件、确认整库替换并刷新工作台。
