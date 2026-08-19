@@ -2,6 +2,7 @@ import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
+import type { ReadingProgress } from './readingProgress';
 
 /** BookDocument 对外暴露的书籍来源元数据。 */
 export interface BookDocumentMetadata {
@@ -53,6 +54,12 @@ export interface BookDocument {
 
   /** 读取当前阅读位置(可序列化)。 */
   getLocation(): ReadingLocation | null;
+
+  /** 读取当前可展示的章节/总进度；不进入可恢复工作区状态。 */
+  getReadingProgress?(): ReadingProgress | null;
+
+  /** 订阅当前可展示的位置反馈。 */
+  onProgressChange?(listener: (progress: ReadingProgress) => void): () => void;
 
   /** 恢复到指定阅读位置。 */
   goToLocation(location: ReadingLocation): Promise<void>;

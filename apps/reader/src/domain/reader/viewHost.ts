@@ -2,6 +2,7 @@ import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
 import type { NativeEpubPrefetch } from './nativeEpub';
+import type { ReadingProgress } from './readingProgress';
 
 /** BookDocument 传给 Foliate 宿主的可选机械预取。 */
 export interface FoliateViewOpenOptions {
@@ -27,6 +28,10 @@ export interface FoliateViewHost {
   goToHref(href: string): Promise<void>;
   /** 读取当前 CFI(阅读位置)。 */
   getCurrentCFI(): string | null;
+  /** 读取当前可展示的章节/总进度；固定版式也尽力提供章节进度。 */
+  getReadingProgress?(): ReadingProgress | null;
+  /** 订阅可展示的位置反馈，不携带 Range 等运行时对象。 */
+  onProgressChange?(listener: (progress: ReadingProgress) => void): () => void;
   /** 读取分层目录。 */
   getTOC(): Toc;
   /**

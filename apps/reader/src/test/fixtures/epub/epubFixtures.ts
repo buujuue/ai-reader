@@ -163,6 +163,9 @@ function chapterXhtml(
   const style = features.has('vertical')
     ? '<style>body { writing-mode: vertical-rl; }</style>'
     : '';
+  const embeddedFont = features.has('obfuscated-font')
+    ? '<style>@font-face { font-family: obfuscated; src: url("fonts/obfuscated.woff") format("woff"); } body { font-family: obfuscated, sans-serif; }</style>'
+    : '';
   const image = features.has('image')
     ? '<img src="images/pixel.png" alt="测试图片" />'
     : '';
@@ -193,7 +196,7 @@ function chapterXhtml(
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-  <head><title>${escapeXml(definition.label)}</title>${style}</head>
+  <head><title>${escapeXml(definition.label)}</title>${style}${embeddedFont}</head>
   <body><h1>${escapeXml(definition.label)}</h1><p>这是由项目生成器创建的最小验收正文。</p>
     ${image}${svg}${footnote}${mathml}${media}${script}${remote}${depth}${large}
   </body>

@@ -7,6 +7,7 @@ import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 import type { NativeEpubPrefetch } from './nativeEpub';
+import type { ReadingProgress } from './readingProgress';
 
 export interface EpubBookDocumentOptions {
   /** EPUB 字节内容。 */
@@ -40,8 +41,10 @@ export class EpubBookDocument implements BookDocument {
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
   private currentLocation: ReadingLocation | null = null;
+  private currentProgress: ReadingProgress | null = null;
   // 位置变化、书内/外部链接监听器在 host 就绪前也可能被订阅,统一缓冲后接线。
   private locationListeners = new Set<(location: ReadingLocation) => void>();
+  private progressListeners = new Set<(progress: ReadingProgress) => void>();
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
   private contentCreateListeners = new Set<(doc: Document) => void>();
@@ -73,6 +76,7 @@ export class EpubBookDocument implements BookDocument {
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);
+    this.currentProgress = view.getReadingProgress?.() ?? null;
     // host 就绪后,把此前缓冲的内容创建订阅转发给 host,并补发已存在的文档。
     for (const listener of this.contentCreateListeners) {
       view.onContentCreate(listener);
@@ -84,6 +88,16 @@ export class EpubBookDocument implements BookDocument {
 
   getLocation(): ReadingLocation | null {
     return this.currentLocation;
+  }
+
+  getReadingProgress(): ReadingProgress | null {
+    return this.currentProgress ?? this.host?.getReadingProgress?.() ?? null;
+  }
+
+  onProgressChange(listener: (progress: ReadingProgress) => void): () => void {
+    this.progressListeners.add(listener);
+    if (this.currentProgress) listener(this.currentProgress);
+    return () => this.progressListeners.delete(listener);
   }
 
   async goToLocation(location: ReadingLocation): Promise<void> {
@@ -188,10 +202,12 @@ export class EpubBookDocument implements BookDocument {
     this.host = null;
     this.container = null;
     this.currentLocation = null;
+    this.currentProgress = null;
     this.locationListeners.clear();
     this.internalLinkListeners.clear();
     this.externalLinkListeners.clear();
     this.contentCreateListeners.clear();
+    this.progressListeners.clear();
   }
 
   private wireSecurity(): void {
@@ -206,6 +222,12 @@ export class EpubBookDocument implements BookDocument {
       this.currentLocation = location;
       for (const listener of this.locationListeners) {
         listener(location);
+      }
+    });
+    this.host.onProgressChange?.((progress) => {
+      this.currentProgress = progress;
+      for (const listener of this.progressListeners) {
+        listener(progress);
       }
     });
     // 书内链接:把 href 面向上层,由上层统一导航(压入历史)。

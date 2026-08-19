@@ -14,6 +14,10 @@ import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS, type CommandId } from '../commands/commandRegistry';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import { ReadingInputController } from '../domain/reader/readingInput';
+import {
+  formatReadingProgress,
+  type ReadingProgress,
+} from '../domain/reader/readingProgress';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 import { mountViewDocument } from '../workbench/readerCommands';
 import { useLibraryStore } from '../workbench/libraryStore';
@@ -34,6 +38,12 @@ export function ReadingView({ viewId }: { viewId: string }) {
   const { commands, importRepository, workspaceRepository, annotationRepository } = useAppServices();
   const document = useReaderRuntime((state) => state.documents.get(viewId));
   const documentState = useReaderRuntime((state) => state.documentStates.get(viewId));
+  const supportsReadingProgress = Boolean(
+    document?.getReadingProgress || document?.onProgressChange,
+  );
+  const [readingProgress, setReadingProgress] = useState<ReadingProgress | null>(
+    () => document?.getReadingProgress?.() ?? null,
+  );
   const groupId = useWorkspaceStore((state) =>
     state.editorGroups.find((group) => group.views.some((view) => view.id === viewId))?.id ?? null,
   );
@@ -48,6 +58,12 @@ export function ReadingView({ viewId }: { viewId: string }) {
     }
     return false;
   });
+
+  useEffect(() => {
+    setReadingProgress(document?.getReadingProgress?.() ?? null);
+    if (!document?.onProgressChange) return;
+    return document.onProgressChange(setReadingProgress);
+  }, [document]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -187,6 +203,8 @@ export function ReadingView({ viewId }: { viewId: string }) {
           isMarkdown={document?.format === 'markdown'}
           isSourceMode={isMarkdownSourceMode}
           hasSplit={hasSplit}
+          readingProgress={readingProgress}
+          supportsReadingProgress={supportsReadingProgress}
         />
       ) : null}
       {isMarkdownSourceMode ? (
@@ -231,6 +249,8 @@ function MaterialReadingToolbar({
   isMarkdown,
   isSourceMode,
   hasSplit,
+  readingProgress,
+  supportsReadingProgress,
 }: {
   materialId: string;
   viewId: string;
@@ -238,6 +258,8 @@ function MaterialReadingToolbar({
   isMarkdown: boolean;
   isSourceMode: boolean;
   hasSplit: boolean;
+  readingProgress: ReadingProgress | null;
+  supportsReadingProgress: boolean;
 }) {
   const { commands } = useAppServices();
   const material = useLibraryStore((state) =>
@@ -342,6 +364,7 @@ function MaterialReadingToolbar({
       <div className="app-reading-toolbar-title" title={material?.title ?? '阅读材料'}>
         <span>{material?.title ?? '阅读材料'}</span>
       </div>
+      {supportsReadingProgress ? <ReadingProgressIndicator progress={readingProgress} /> : null}
       <div className="app-reading-toolbar-end">
         {hasSplit ? (
           <button
@@ -415,6 +438,45 @@ function MaterialReadingToolbar({
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ReadingProgressIndicator({ progress }: { progress: ReadingProgress | null }) {
+  const percent = progress?.fraction === null || progress?.fraction === undefined
+    ? null
+    : Math.round(progress.fraction * 100);
+  const label = formatReadingProgress(progress);
+
+  return (
+    <div
+      className="flex min-w-0 max-w-[min(28vw,220px)] items-center gap-2 px-2 text-[11px]"
+      role="status"
+      aria-live="polite"
+      aria-label={`阅读位置：${label}`}
+      title={`阅读位置：${label}`}
+      style={{ color: 'var(--prototype-text-secondary)' }}
+    >
+      <span className="truncate whitespace-nowrap">{label}</span>
+      {percent !== null ? (
+        <span
+          role="progressbar"
+          aria-label="全书阅读进度"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          className="h-1 w-12 shrink-0 overflow-hidden rounded-full"
+          style={{ background: 'var(--prototype-border)' }}
+        >
+          <span
+            className="block h-full rounded-full"
+            style={{
+              width: `${percent}%`,
+              background: 'var(--prototype-accent-strong)',
+            }}
+          />
+        </span>
+      ) : null}
     </div>
   );
 }

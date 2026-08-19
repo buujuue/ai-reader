@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { EpubBookDocument } from './epubBookDocument';
+import type { ReadingProgress } from './readingProgress';
 import type { FoliateViewHost } from './viewHost';
 
 interface FakeHost extends FoliateViewHost {
@@ -9,6 +10,7 @@ interface FakeHost extends FoliateViewHost {
   cfis: string[];
   contentData: Array<{ type: string; data: string }>;
   emitRelocate: (cfi: string) => void;
+  emitProgress: (progress: ReadingProgress) => void;
   emitContentData: (type: string, data: string) => void;
   emitInternalLink: (href: string) => void;
   emitExternalLink: (href: string) => void;
@@ -18,6 +20,7 @@ interface FakeHost extends FoliateViewHost {
 
 function createFakeHost(): FakeHost {
   const relocateListeners: Array<(cfi: string) => void> = [];
+  const progressListeners: Array<(progress: ReadingProgress) => void> = [];
   const contentListeners: Array<(type: string, data: string) => string> = [];
   const internalLinkListeners: Array<(href: string) => void> = [];
   const externalLinkListeners: Array<(href: string) => void> = [];
@@ -28,6 +31,9 @@ function createFakeHost(): FakeHost {
     contentData: [] as Array<{ type: string; data: string }>,
     closed: false,
     emitContentDuringOpen: false,
+    getReadingProgress() {
+      return null;
+    },
     async open(book: unknown) {
       this.openedBytes = book;
       if (this.emitContentDuringOpen) {
@@ -75,6 +81,13 @@ function createFakeHost(): FakeHost {
         if (index >= 0) relocateListeners.splice(index, 1);
       };
     },
+    onProgressChange(listener: (progress: ReadingProgress) => void) {
+      progressListeners.push(listener);
+      return () => {
+        const index = progressListeners.indexOf(listener);
+        if (index >= 0) progressListeners.splice(index, 1);
+      };
+    },
     onInternalLink(listener: (href: string) => void) {
       internalLinkListeners.push(listener);
       return () => {
@@ -113,6 +126,9 @@ function createFakeHost(): FakeHost {
     },
     emitRelocate(cfi: string) {
       for (const listener of relocateListeners) listener(cfi);
+    },
+    emitProgress(progress: ReadingProgress) {
+      for (const listener of progressListeners) listener(progress);
     },
     emitContentData(type: string, data: string) {
       for (const listener of contentListeners) {
@@ -175,6 +191,26 @@ describe('EpubBookDocument', () => {
 
     expect(host.cfis).toEqual(['epubcfi(/6/4)']);
     expect(book.getLocation()).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/4)' });
+  });
+
+  it('打开前订阅的位置反馈会在宿主就绪后继续转发', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    const listener = vi.fn();
+    book.onProgressChange?.(listener);
+    await book.open(document.createElement('div'));
+
+    const progress: ReadingProgress = {
+      fraction: 0.5,
+      section: { current: 1, total: 2 },
+      location: { current: 4, next: 5, total: 10 },
+      tocLabel: '第二章',
+      pageLabel: null,
+    };
+    host.emitProgress(progress);
+
+    expect(book.getReadingProgress()).toEqual(progress);
+    expect(listener).toHaveBeenCalledWith(progress);
   });
 
   it('next 与 prev 委托宿主翻页', async () => {

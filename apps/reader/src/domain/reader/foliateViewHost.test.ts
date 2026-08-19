@@ -19,9 +19,21 @@ interface FakeViewElement {
   getCFI: ReturnType<typeof vi.fn>;
   resolveNavigation?: ReturnType<typeof vi.fn>;
   addAnnotation: ReturnType<typeof vi.fn>;
-  lastLocation?: { cfi?: string };
+  lastLocation?: {
+    cfi?: string;
+    fraction?: number;
+    section?: { current?: number; total?: number };
+    location?: { current?: number; next?: number; total?: number };
+    tocItem?: { label?: string };
+    pageItem?: { label?: string };
+  };
   book?: { transformTarget?: EventTarget; toc?: Array<{ label?: string; href?: string; subitems?: unknown }> };
-  renderer?: { getContents?: ReturnType<typeof vi.fn> };
+  renderer?: {
+    getContents?: ReturnType<typeof vi.fn>;
+    setAttribute?: ReturnType<typeof vi.fn>;
+    setStyles?: ReturnType<typeof vi.fn>;
+    index?: number;
+  };
   addEventListener: ReturnType<typeof vi.fn>;
   removeEventListener: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
@@ -327,6 +339,70 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     const host = createHost(element);
 
     expect(host.getCurrentIndex()).toBeNull();
+  });
+
+  it('固定版式渲染器没有 setStyles 时仍可打开并应用通用视口属性', async () => {
+    const element = createFakeElement();
+    const setAttribute = vi.fn();
+    element.renderer = { setAttribute, getContents: vi.fn().mockReturnValue([]) };
+    const host = createHost(element);
+
+    await host.open({});
+    expect(() => host.applyTypography({
+      fontFamily: 'serif',
+      fontSize: 18,
+      lineHeight: 1.6,
+      margin: 48,
+      gap: 7,
+      flow: 'paginated',
+      theme: 'light',
+    })).not.toThrow();
+    expect(setAttribute).toHaveBeenCalledWith('flow', 'paginated');
+  });
+
+  it('从 foliate relocate 事件暴露章节、总进度和目录页标签', async () => {
+    const element = createFakeElement();
+    element.lastLocation = {
+      cfi: 'epubcfi(/6/2)',
+      fraction: 0.25,
+      section: { current: 1, total: 4 },
+      location: { current: 10, next: 11, total: 80 },
+      tocItem: { label: '第二章' },
+      pageItem: { label: '第 11 页' },
+    };
+    const host = createHost(element);
+    await host.open({});
+
+    expect(host.getReadingProgress()).toEqual({
+      fraction: 0.25,
+      section: { current: 1, total: 4 },
+      location: { current: 10, next: 11, total: 80 },
+      tocLabel: '第二章',
+      pageLabel: '第 11 页',
+    });
+
+    const listener = vi.fn();
+    host.onProgressChange(listener);
+    const relocateHandler = element.addEventListener.mock.calls.find(
+      ([type]) => type === 'relocate',
+    )?.[1] as EventListener | undefined;
+    relocateHandler?.(new CustomEvent('relocate', { detail: element.lastLocation }));
+    expect(listener).toHaveBeenCalledWith({
+      fraction: 0.25,
+      section: { current: 1, total: 4 },
+      location: { current: 10, next: 11, total: 80 },
+      tocLabel: '第二章',
+      pageLabel: '第 11 页',
+    });
+  });
+
+  it('固定版式渲染器没有内容 index 时使用当前 spread 的章节序号', async () => {
+    const element = createFakeElement();
+    element.renderer = { index: 3, getContents: vi.fn().mockReturnValue([{}]) };
+    const host = createHost(element);
+    await host.open({});
+
+    expect(host.getCurrentIndex()).toBe(3);
   });
 
   it('addAnnotation 委托给 foliate 绘制高亮', async () => {

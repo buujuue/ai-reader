@@ -3,12 +3,15 @@ import type { ReadingTypography } from './typography';
 import { buildTypographyCss } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 import type { FoliateViewOpenOptions } from './viewHost';
+import type { ReadingProgress } from './readingProgress';
+import { normalizeReadingProgress } from './readingProgress';
 
 /** 高亮覆盖层绘制函数(foliate-js Overlayer)。 */
 import { Overlayer } from 'foliate-js/overlayer.js';
 
 import { sanitizeEpubContent } from './sanitizer';
 import { openFoliateEpub } from './foliateEpubLoader';
+import { degradeUnsupportedMathMl } from './mathmlFallback';
 
 export type { FoliateViewHostFactory } from './viewHost';
 
@@ -51,7 +54,14 @@ interface ExtendedFoliateView extends HTMLElement {
   close(): void;
   getCFI(index: number, range: Range): string;
   addAnnotation(annotation: { value: string; color?: string }, remove?: boolean): unknown;
-  lastLocation?: { cfi?: string };
+  lastLocation?: {
+    cfi?: string;
+    fraction?: number;
+    section?: { current?: number; total?: number };
+    location?: { current?: number; next?: number; total?: number };
+    tocItem?: { label?: string };
+    pageItem?: { label?: string };
+  };
   book?: {
     transformTarget?: EventTarget;
     toc?: Array<{ label?: string; href?: string; subitems?: unknown }>;
@@ -64,9 +74,11 @@ interface ExtendedFoliateView extends HTMLElement {
 interface ExtendedRenderer {
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
-  setStyles(styles: string): void;
+  setStyles?(styles: string): void;
   /** 读取当前已排布的内容文档。 */
   getContents?(): Array<{ doc?: Document; index?: number }>;
+  /** 固定版式渲染器提供当前 spread 对应的章节序号。 */
+  index?: number;
 }
 
 interface FoliateSection {
@@ -98,6 +110,13 @@ interface FoliateSearchYield {
 
 function emptyExcerpt(): import('./search').SearchExcerpt {
   return { pre: '', match: '', post: '' };
+}
+
+function readRelocateDetail(event: Event): ExtendedFoliateView['lastLocation'] | null {
+  const detail = (event as CustomEvent<unknown>).detail;
+  return detail && typeof detail === 'object'
+    ? detail as ExtendedFoliateView['lastLocation']
+    : null;
 }
 
 function toToc(items: unknown): import('./toc').Toc {
@@ -240,6 +259,19 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     return this.element.lastLocation?.cfi ?? null;
   }
 
+  getReadingProgress(): ReadingProgress | null {
+    return normalizeReadingProgress(this.element.lastLocation);
+  }
+
+  onProgressChange(listener: (progress: ReadingProgress) => void): () => void {
+    const handler: EventListener = (event) => {
+      const progress = normalizeReadingProgress(readRelocateDetail(event));
+      if (progress) listener(progress);
+    };
+    this.element.addEventListener('relocate', handler);
+    return () => this.element.removeEventListener('relocate', handler);
+  }
+
   applyTypography(settings: ReadingTypography): void {
     const renderer = this.element.renderer;
     if (!renderer) {
@@ -253,7 +285,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     renderer.setAttribute('max-block-size', '1440px');
     renderer.setAttribute('max-column-count', '2');
     // 字体、字号、行距与主题经 setStyles 注入文档 CSS。
-    renderer.setStyles(buildTypographyCss(settings));
+    // `foliate-paginator` exposes setStyles; `foliate-fxl` is an HTMLElement
+    // and intentionally keeps the book's viewport/style instead of reflowing it.
+    renderer.setStyles?.(buildTypographyCss(settings));
   }
 
   async *search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
@@ -288,7 +322,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
 
   onRelocate(listener: (cfi: string) => void): () => void {
     const handler: EventListener = (event) => {
-      const detail = (event as CustomEvent<{ cfi?: string }>).detail;
+      const detail = readRelocateDetail(event);
       if (detail?.cfi) {
         listener(detail.cfi);
       }
@@ -316,13 +350,18 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     const contents = this.element.renderer?.getContents?.() ?? [];
     return contents
       .map((content: { doc?: Document }) => content.doc)
-      .filter((doc: Document | undefined): doc is Document => !!doc);
+      .filter((doc: Document | undefined): doc is Document => !!doc)
+      .map((doc) => {
+        degradeUnsupportedMathMl(doc);
+        return doc;
+      });
   }
 
   onContentCreate(listener: (doc: Document) => void): () => void {
     const handler: EventListener = (event) => {
       const detail = (event as CustomEvent<{ doc?: Document }>).detail;
       if (detail?.doc) {
+        degradeUnsupportedMathMl(detail.doc);
         listener(detail.doc);
       }
     };
@@ -359,7 +398,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     }
     const contents = this.element.renderer?.getContents?.() ?? [];
     const first = contents[0] as { index?: number } | undefined;
-    return typeof first?.index === 'number' ? first.index : null;
+    if (typeof first?.index === 'number') return first.index;
+    const rendererIndex = this.element.renderer?.index;
+    return typeof rendererIndex === 'number' ? rendererIndex : null;
   }
 
   addAnnotation(annotation: { value: string; color: string }): void {

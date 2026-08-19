@@ -6,6 +6,7 @@
 - `epubFixtures.ts`：只用标准 API 确定性生成最小 EPUB/ZIP 样书，不含第三方电子书正文。
 - `epubBenchmark.ts`：把导入、首次打开、章节切换和内存读数统一为可序列化基准记录。
 - `epubCoreContract.test.ts`：自动检查覆盖矩阵、预算边界、ZIP 结构和基准阶段。
+- `epubP0SemanticMatrix.test.ts`：通过 Foliate loader 验证 EPUB 2/3 的目录、固定版式与 RTL/竖排语义入口；图片、脚注、MathML 等真实渲染断言由浏览器矩阵脚本负责。
 
 ## 依赖其它文件夹
 
