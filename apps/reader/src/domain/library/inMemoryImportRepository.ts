@@ -66,7 +66,7 @@ export function createInMemoryImportRepository(
       const fingerprint = await sha256Hex(bytes);
       const id = crypto.randomUUID();
       const originalFileName = basename(sourcePath);
-      stagedBytes.set(id, bytes);
+      stagedBytes.set(id, new Uint8Array(bytes));
       pending.set(id, { originalFileName, fingerprint });
       return { id, originalFileName, fingerprint };
     },
@@ -114,7 +114,7 @@ export function createInMemoryImportRepository(
       );
       const bytes = stagedBytes.get(stagedImport.id);
       if (bytes) {
-        managedBytes.set(internal.id, bytes);
+        managedBytes.set(internal.id, new Uint8Array(bytes));
       }
       stagedBytes.delete(stagedImport.id);
       pending.delete(stagedImport.id);

@@ -98,16 +98,36 @@ describe('文本锚点构建', () => {
     expect(
       recoverTextAnchor(anchor, 'new-version', [
         {
-          cfi: 'epubcfi(/6/2)!/4/4:0',
+          cfi: 'epubcfi(/6/1)!/4/4:0',
           excerpt: { pre: '新的前文', match: '引文', post: '后文内容' },
         },
       ]),
     ).toEqual({
       ...anchor,
-      cfi: 'epubcfi(/6/2)!/4/4:0',
+      cfi: 'epubcfi(/6/1)!/4/4:0',
       documentVersion: 'new-version',
       recoveryState: 'resolved',
     });
+  });
+
+  it('唯一引文位于其它 spine 章节时保留为失联', () => {
+    const anchor = {
+      cfi: 'epubcfi(/6/1)!/4/2:0',
+      quote: '引文',
+      before: '前文',
+      after: '后文',
+      documentVersion: 'old-version',
+      recoveryState: 'resolved' as const,
+    };
+
+    expect(
+      recoverTextAnchor(anchor, 'new-version', [
+        {
+          cfi: 'epubcfi(/6/2)!/4/4:0',
+          excerpt: { pre: '新的前文', match: '引文', post: '后文内容' },
+        },
+      ]),
+    ).toEqual({ ...anchor, recoveryState: 'orphaned' });
   });
 
   it('搜索命中不唯一时保留旧锚点并标记为失联', () => {

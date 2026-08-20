@@ -114,6 +114,24 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     expect(new TextDecoder().decode(bytes)).toBe('managed-bytes');
   });
 
+  it('读取托管文件返回独立副本,运行时修改不会改写原书', async () => {
+    const repository = harness.createRepository();
+    const original = encodeUtf8('immutable-source');
+    const staged = await harness.stage('book.epub', original);
+    const material = await repository.commitImport(staged, {
+      title: '甲',
+      author: null,
+      language: null,
+    });
+
+    const returned = await repository.readManagedFile(material.id);
+    returned[0] = 'X'.charCodeAt(0);
+
+    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
+      'immutable-source',
+    );
+  });
+
   it('读取不存在的托管文件抛出错误', async () => {
     const repository = harness.createRepository();
 

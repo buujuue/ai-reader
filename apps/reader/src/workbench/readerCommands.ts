@@ -4,6 +4,10 @@ import type { ExternalUrlOpener } from '../app/externalUrlOpener';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import { EpubBookDocument } from '../domain/reader/epubBookDocument';
+import {
+  createEpubDerivedCache,
+  type EpubDerivedCache,
+} from '../domain/reader/epubCanonical';
 import type { EpubNativeAccelerator } from '../domain/reader/nativeEpub';
 import {
   createFoliateViewHostFactory,
@@ -58,6 +62,8 @@ export interface ReaderCommandDependencies {
   pdfRasterize?: PdfPageRasterizer | undefined;
   /** 可选的 EPUB 原生机械预取;未通过 parity 或失败时返回 null。 */
   epubNativeAccelerator?: EpubNativeAccelerator | undefined;
+  /** 可选的 EPUB 规范转换缓存;生产默认在当前进程内按版本共享。 */
+  epubDerivedCache?: EpubDerivedCache<string>;
 }
 
 /**
@@ -73,6 +79,7 @@ interface ActiveViewMount {
 }
 
 const activeMounts = new Map<string, ActiveViewMount>();
+const defaultEpubDerivedCache = createEpubDerivedCache<string>();
 
 function describeDocumentOpenError(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -196,6 +203,8 @@ async function createEpubDocument(
     metadata,
     viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
     nativePrefetch,
+    sourceFingerprint: material.fingerprint,
+    derivedCache: dependencies.epubDerivedCache ?? defaultEpubDerivedCache,
   });
 }
 

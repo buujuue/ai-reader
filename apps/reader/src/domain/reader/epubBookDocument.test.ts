@@ -169,6 +169,23 @@ describe('EpubBookDocument', () => {
     expect(book.getLocation()).toBeNull();
   });
 
+  it('打开时使用原书字节副本,后续修改调用方缓冲区不会改变导出来源', async () => {
+    const host = createFakeHost();
+    const bytes = new Uint8Array([1, 2, 3]);
+    const book = new EpubBookDocument({
+      bytes,
+      metadata: { title: '示例书', author: '作者', language: 'zh' },
+      viewHostFactory: () => host,
+    });
+
+    bytes[0] = 99;
+    await book.open(document.createElement('div'));
+
+    expect(new Uint8Array(await (host.openedBytes as File).arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
   it('relocate 事件把 CFI 转成可序列化的 ReadingLocation 并通知订阅者', async () => {
     const host = createFakeHost();
     const book = createDocument(() => host);

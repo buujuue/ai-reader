@@ -9,6 +9,8 @@
 - `readingProgress.ts`：把 Foliate 的当前位置投影为可序列化的章节、页码、目录标签与百分比，并提供阅读位置反馈的格式化文本；不把 Range 或渲染器对象带入 Workspace State。
 - `typography.ts`：阅读排版设置（字体、字号、行距、页边距、主题、分页/滚动）。定义完整设置 `ReadingTypography`、全局默认 `DEFAULT_READING_TYPOGRAPHY`、材料级覆盖与全局默认的合并规则 `resolveTypography`，以及把排版注入文档的 `buildTypographyCss`。字体与颜色全部来自固定映射，不拼接不可信字符串，落实 ADR-0010 不放开安全边界。
 - `sanitizer.ts`：不可信阅读资源清洗器。`sanitizeEpubResource` 统一处理 XHTML/HTML、SVG、CSS 与脚本 MIME；永久移除脚本、iframe、object、embed、表单、音视频媒体、事件处理器属性、远程/危险 URL 和可执行 CSS，落实 ADR-0010。清洗是打开 EPUB 的必经步骤，无"信任此书"开关。
+- `epubCanonical.ts`：规范 EPUB 转换入口与版本化派生缓存键。原书完整指纹和转换版本进入缓存键；清洗结果只作为阅读、搜索与 CFI 所见 DOM 的派生数据，排版设置不参与转换。
+- `epubCfi.ts`：EPUB CFI 的 spine 前缀解析与同章判断，供文本锚点回退限制在原章节内。
 - `epubBookDocument.ts`：`EpubBookDocument` 实现。把不可信内容清洗、Foliate 渲染器挂载、位置读取/恢复、目录读取、href 导航与书内/外部链接事件封装在窄接口后；`wireSecurity` 在文本资源进入渲染器前清洗各已知 MIME，把 relocate 事件转成 `ReadingLocation` 和可序列化进度反馈，并把书内/外部链接事件面向上层。
 - `foliateEpubLoader.ts`：把受预算的项目 ZIP loader 适配为 foliate-js EPUB loader；可选原生预取只覆盖已校验的 container/OPF/NAV/NCX 文本和资源尺寸，其余章节与资源继续由同一份 JS ZIP loader 按需读取。
 - `nativeEpub.ts` / `tauriEpubNative.ts`：定义原生 EPUB 预取协议、平台/能力/语义来源门控、错误分类与 Tauri Adapter；任意不支持、协议不匹配或 IPC 失败均返回纯 JS 路径。
@@ -23,13 +25,14 @@
 
 ## 依赖其它文件夹（树）
 
-`domain/reader` 只从 `domain/library/epub/zip.ts` 复用有界 ZIP 读取器；运行时经 `foliate-js` 依赖渲染，原生预取只通过本目录的 typed 协议进入。
+`domain/reader` 只从 `domain/library/epub/zip.ts` 复用有界 ZIP 读取器；运行时经 `foliate-js` 依赖渲染，原生预取只通过本目录的 typed 协议进入。`domain/annotation/textAnchor.ts` 复用本目录的 `epubCfi.ts` 做同 spine 判断，不反向依赖渲染器实现。
 
 ## 被谁依赖（树）
 
 ```
 domain/reader/
 ├── domain/workspace/     ReadingLocation 与 NavigationHistory 进入 WorkspaceState 的阅读视图
+├── domain/annotation/    textAnchor 复用 epubCfi 的同 spine CFI 规则
 └── workbench/
     ├── readerCommands.ts 创建 EpubBookDocument/PdfBookDocument/MarkdownBookDocument 并执行打开/翻页/跳转/关闭与历史接线
     ├── readerRuntime.ts  持有活 BookDocument 对象

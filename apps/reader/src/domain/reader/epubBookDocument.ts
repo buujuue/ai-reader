@@ -1,13 +1,19 @@
 import type { BookDocument, BookDocumentMetadata } from './bookDocument';
 import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
-import { sanitizeEpubContent, sanitizeEpubResource } from './sanitizer';
+import { sanitizeEpubContent } from './sanitizer';
 import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 import type { NativeEpubPrefetch } from './nativeEpub';
 import type { ReadingProgress } from './readingProgress';
+import {
+  createEpubCanonicalTransform,
+  removeEpubDisplayOnlyNodes,
+  type EpubCanonicalTransform,
+  type EpubDerivedCache,
+} from './epubCanonical';
 
 export interface EpubBookDocumentOptions {
   /** EPUB 字节内容。 */
@@ -22,6 +28,12 @@ export interface EpubBookDocumentOptions {
   locationKind?: 'epub' | 'markdown';
   /** 已通过 parity 的原生机械预取;失败或不支持时为空并走纯 JS。 */
   nativePrefetch?: NativeEpubPrefetch | null;
+  /** 完整内容指纹,用于隔离规范转换派生缓存。 */
+  sourceFingerprint?: string;
+  /** 规范转换版本;升级后旧派生结果不会复用。 */
+  canonicalTransformVersion?: string;
+  /** 可注入的规范转换派生缓存;默认使用当前文档的内存缓存。 */
+  derivedCache?: EpubDerivedCache<string>;
 }
 
 /**
@@ -34,6 +46,7 @@ export class EpubBookDocument implements BookDocument {
   readonly metadata: BookDocumentMetadata;
 
   private readonly bytes: Uint8Array;
+  private readonly canonicalTransform: EpubCanonicalTransform;
   private readonly viewHostFactory: FoliateViewHostFactory;
   private readonly locationKind: 'epub' | 'markdown';
   private readonly nativePrefetch: NativeEpubPrefetch | null;
@@ -50,12 +63,22 @@ export class EpubBookDocument implements BookDocument {
   private contentCreateListeners = new Set<(doc: Document) => void>();
 
   constructor(options: EpubBookDocumentOptions) {
-    this.bytes = options.bytes;
+    // BookDocument 只拥有原书的副本;清洗器与 renderer 后续只能处理派生字符串,
+    // 不能通过调用方缓冲区回写托管原书。
+    this.bytes = new Uint8Array(options.bytes);
     this.metadata = options.metadata;
     this.viewHostFactory = options.viewHostFactory;
     this.format = options.format ?? 'epub';
     this.locationKind = options.locationKind ?? this.format;
     this.nativePrefetch = options.nativePrefetch ?? null;
+    const canonicalOptions = {
+      sourceFingerprint: options.sourceFingerprint ?? 'unknown-source',
+      ...(options.derivedCache ? { cache: options.derivedCache } : {}),
+      ...(options.canonicalTransformVersion
+        ? { transformVersion: options.canonicalTransformVersion }
+        : {}),
+    };
+    this.canonicalTransform = createEpubCanonicalTransform(canonicalOptions);
   }
 
   async open(container: HTMLElement): Promise<void> {
@@ -79,8 +102,12 @@ export class EpubBookDocument implements BookDocument {
     this.currentProgress = view.getReadingProgress?.() ?? null;
     // host 就绪后,把此前缓冲的内容创建订阅转发给 host,并补发已存在的文档。
     for (const listener of this.contentCreateListeners) {
-      view.onContentCreate(listener);
+      view.onContentCreate((doc) => {
+        removeEpubDisplayOnlyNodes(doc);
+        listener(doc);
+      });
       for (const doc of view.getContentDocs()) {
+        removeEpubDisplayOnlyNodes(doc);
         listener(doc);
       }
     }
@@ -177,15 +204,22 @@ export class EpubBookDocument implements BookDocument {
   }
 
   getContentDocs(): readonly Document[] {
-    return this.host?.getContentDocs() ?? [];
+    return (this.host?.getContentDocs() ?? []).map((doc) => {
+      removeEpubDisplayOnlyNodes(doc);
+      return doc;
+    });
   }
 
   onContentCreate(listener: (doc: Document) => void): () => void {
     // host 可能尚未就绪(组件在 open() 完成前订阅),先缓冲,待 host 就绪后统一转发。
     this.contentCreateListeners.add(listener);
     if (this.host) {
-      this.host.onContentCreate(listener);
+      this.host.onContentCreate((doc) => {
+        removeEpubDisplayOnlyNodes(doc);
+        listener(doc);
+      });
       for (const doc of this.host.getContentDocs()) {
+        removeEpubDisplayOnlyNodes(doc);
         listener(doc);
       }
     }
@@ -215,7 +249,7 @@ export class EpubBookDocument implements BookDocument {
       return;
     }
     // 内容清洗:在文本资源进入渲染器前移除脚本、嵌入、媒体与危险 URL。
-    this.host.onContentData((type, data) => sanitizeEpubResource(type, data));
+    this.host.onContentData((type, data) => this.canonicalTransform.transform(type, data));
     // 位置变化事件:把渲染器 CFI 转成可序列化的 ReadingLocation。
     this.host.onRelocate((cfi) => {
       const location: ReadingLocation = { kind: this.locationKind, cfi };

@@ -218,7 +218,7 @@ describe('Annotation 命令', () => {
     const document = createFakeDocument();
     document.search.mockReturnValue(
       (async function* () {
-        yield { kind: 'match', match: { cfi: 'epubcfi(/6/2)!/4/4:0', excerpt: { pre: '新的前文', match: '被选中的文字', post: '后文内容' } } } as const;
+        yield { kind: 'match', match: { cfi: 'epubcfi(/6/4)!/4/4:0', excerpt: { pre: '新的前文', match: '被选中的文字', post: '后文内容' } } } as const;
       })(),
     );
     useReaderRuntime.setState({ documents: new Map([['view-1', document as never]]) });
@@ -228,13 +228,13 @@ describe('Annotation 命令', () => {
     const [saved] = await repository.listByMaterial('material-1');
     expect(saved?.anchor).toEqual({
       ...annotation.anchor,
-      cfi: 'epubcfi(/6/2)!/4/4:0',
+      cfi: 'epubcfi(/6/4)!/4/4:0',
       documentVersion: 'new-fingerprint',
       recoveryState: 'resolved',
     });
     expect(document.clearSearch).toHaveBeenCalledOnce();
     expect(document.addAnnotation).toHaveBeenCalledWith({
-      value: 'epubcfi(/6/2)!/4/4:0',
+      value: 'epubcfi(/6/4)!/4/4:0',
       color: '#ffd54f',
     });
   });

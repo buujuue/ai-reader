@@ -3,7 +3,7 @@
 ## 功能
 
 - `annotation.ts`：领域类型。`Annotation`（`id` + `materialId` 归属 + `anchor` + `style` + `color` + `note` + 时间戳 + `deletedAt`）、`TextAnchor`（`cfi` + `quote` 引文 + `before`/`after` 前后文 + `documentVersion` 文档版本 + `recoveryState` 恢复状态）、`AnnotationStyle`。批注是材料级实体,不归属某个 ReadingView(ADR-0008)。
-- `textAnchor.ts`：文本锚点构建与恢复逻辑。`buildTextAnchor` 从 DOM Range 与 CFI 构建已解析锚点;`extractQuote`/`extractContext` 提取引文与前后文;`findUniqueQuoteMatch` 在文档文本中做唯一引文 + 上下文匹配,用于文档变化后的锚点恢复。
+- `textAnchor.ts`：文本锚点构建与恢复逻辑。`buildTextAnchor` 从 DOM Range 与 CFI 构建已解析锚点;`extractQuote`/`extractContext` 提取引文与前后文;`findUniqueQuoteMatch` 在文档文本中做唯一引文 + 上下文匹配,用于文档变化后的锚点恢复；`recoverTextAnchor` 通过 `domain/reader/epubCfi.ts` 把回退限制在原 spine 章节。
 - `annotationRepository.ts`：typed Repository 接口(`listByMaterial` / `saveAnnotation` / `deleteAnnotation`),前端调用平台能力的窄边界。
 - `tauriAnnotationRepository.ts`：Tauri Adapter,经 `invoke` 调用 `list_annotations` / `save_annotation` / `delete_annotation` 命令,附 `assertAnnotationShape` 载荷校验。
 - `inMemoryAnnotationRepository.ts`：内存 Adapter,浏览器降级开发用;按 materialId 归属并逻辑删除。
@@ -15,7 +15,7 @@
 
 ## 依赖其它文件夹（树）
 
-`annotationMarkdown.ts` 复用 `domain/reader/pdf/pdfTextAnchor.ts` 解码扫描 PDF 区域锚点；其余批注持久化类型与 Adapter 不依赖 UI 或工作台。
+`annotationMarkdown.ts` 复用 `domain/reader/pdf/pdfTextAnchor.ts` 解码扫描 PDF 区域锚点，`textAnchor.ts` 复用 `domain/reader/epubCfi.ts` 的同 spine CFI 规则；其余批注持久化类型与 Adapter 不依赖 UI 或工作台。
 
 ## 被谁依赖（树）
 

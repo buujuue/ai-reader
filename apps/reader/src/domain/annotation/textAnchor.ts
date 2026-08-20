@@ -1,4 +1,5 @@
 import type { TextAnchor } from './annotation';
+import { isSameEpubCfiSpine } from '../reader/epubCfi';
 
 /**
  * 从 DOM Range 构建文本锚点所需的引文与前后文。
@@ -160,7 +161,9 @@ export function recoverTextAnchor(
 ): TextAnchor {
   const normalizedQuote = normalizeWhitespace(anchor.quote).trim();
   const quoteMatches = matches.filter(
-    (match) => normalizeWhitespace(match.excerpt.match).trim() === normalizedQuote,
+    (match) =>
+      isSameEpubCfiSpine(anchor.cfi, match.cfi) &&
+      normalizeWhitespace(match.excerpt.match).trim() === normalizedQuote,
   );
 
   if (quoteMatches.length !== 1 || !contextMatches(anchor, quoteMatches[0]!)) {
