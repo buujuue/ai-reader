@@ -7,8 +7,8 @@
 - `material.ts`：`ReadingMaterial`（稳定 BookId，含 `source` 来源快照、`override` 覆盖值与 `title/author/language/coverSource` 有效元数据）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
 - `materialFormat.ts`：`formatFromSourceFileName` 从源文件扩展名推断材料格式（epub/pdf/markdown/unknown），`formatLabel` 输出简体中文标签；不依赖跨 TS/Rust 契约新增字段。
 - `libraryFilter.ts`：`filterMaterialsByQuery` 基于有效元数据（title/author）即时筛选书库的纯函数。
-- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、正式 Markdown 保存，以及 `writeMarkdownRecovery` / `listMarkdownRecoveries` / `discardMarkdownRecovery` 恢复快照协议；是前端调用平台能力的窄边界。
-- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、元数据、`save_markdown` 与三个 `*_markdown_recovery` typed 命令。
+- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。
+- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、元数据、`save_markdown`、Markdown 恢复命令和版本迁移命令，并校验跨端 DTO 形状。
 - `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。
 - `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并按「完整指纹 + 格式」模拟 pending/ready 查重、来源快照/覆盖值合并与回收站（普通删除只隐藏、恢复/永久删除）。
 - `importRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的导入、正式 Markdown 保存与恢复快照契约测试。
@@ -16,6 +16,8 @@
 - `recycleBinRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的回收站契约测试。
 - `backupRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的备份导出契约测试。
 - `importBatch.contract.ts`：内存与 Tauri 两个 Adapter 共享的批量导入契约测试。
+- `versionMigration.ts`：显式版本迁移候选筛选、EPUB 新版本预览、同 spine 唯一引文重锚与进度/批注结果汇总；只读 Repository 数据，不执行提交。
+- `versionMigrationPersistence.ts`：版本迁移提交、恢复快照和恢复结果的 typed 载荷。
 - `epub/`：EPUB 预检与读取边界。`epubBudget.ts` 持有不可覆盖的 ZIP/章节/XML 硬预算；`zip.ts` 做中央目录、本地头、路径、加密、边界和有上限解压；`epubInspector.ts` 在 commit 前验证 container.xml → OPF → manifest/spine/首章，并返回章节、非核心资源与 NAV/NCX 局部降级报告；`zipWriter.ts`、`testEpub.ts` 为演示与测试夹具构造器。
 - 对应 `*.test.ts`：Adapter 契约、Inspector 与编排测试。
 

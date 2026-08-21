@@ -28,7 +28,11 @@ function matchesQuery(annotation: Annotation, query: string): boolean {
     annotation.anchor.before,
     annotation.anchor.after,
     annotationLabel(annotation),
-    annotation.anchor.recoveryState === 'orphaned' ? '失联' : '高亮',
+    annotation.anchor.recoveryState === 'orphaned'
+      ? '失联'
+      : annotation.anchor.recoveryState === 'reanchored'
+        ? '已重锚'
+        : '正常',
     annotation.note.trim() ? '带文字笔记' : '仅高亮',
   ]
     .join('\n')
@@ -191,6 +195,7 @@ export function AnnotationPanel({ materialId, onClose }: AnnotationPanelProps) {
           <ul className="app-annotation-list">
             {filtered.map((annotation) => {
               const orphaned = annotation.anchor.recoveryState === 'orphaned';
+              const reanchored = annotation.anchor.recoveryState === 'reanchored';
               const label = annotationLabel(annotation);
               const kindLabel = annotation.note.trim() ? '带文字笔记' : '仅高亮';
               return (
@@ -202,7 +207,11 @@ export function AnnotationPanel({ materialId, onClose }: AnnotationPanelProps) {
                         <FileWarning size={12} aria-hidden />
                         失联批注
                       </span>
-                    ) : null}
+                    ) : reanchored ? (
+                      <span className="app-annotation-reanchored">已重锚</span>
+                    ) : (
+                      <span className="app-annotation-resolved">正常</span>
+                    )}
                   </div>
                   <div className="app-annotation-card-row">
                     <button

@@ -1,4 +1,10 @@
 import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
+import type {
+  VersionMigrationCommitRequest,
+  VersionMigrationCommitResult,
+  VersionMigrationRestoreResult,
+  VersionMigrationSnapshot,
+} from './versionMigrationPersistence';
 
 export type MarkdownRecoveryStatus = 'available' | 'conflict' | 'corrupt';
 
@@ -49,6 +55,19 @@ export interface ImportRepository {
   restoreSourceMetadata(materialId: string): Promise<ReadingMaterial>;
   /** 读取托管封面文件的原始字节供界面渲染;无自定义封面时返回 null。 */
   readCover(materialId: string): Promise<Uint8Array | null>;
+  /**
+   * 显式提交一份 EPUB 版本迁移。Rust 在同一可恢复操作中校验旧/新指纹,
+   * 创建本地快照,替换托管文件并提交材料、批注和工作区状态。
+   */
+  commitVersionMigration(
+    request: VersionMigrationCommitRequest,
+  ): Promise<VersionMigrationCommitResult>;
+  /** 列出持续保留的本地迁移恢复快照。 */
+  listVersionMigrationSnapshots(): Promise<VersionMigrationSnapshot[]>;
+  /** 完整恢复一份迁移前快照,返回恢复后的材料、批注和工作区状态。 */
+  restoreVersionMigrationSnapshot(snapshotId: string): Promise<VersionMigrationRestoreResult>;
+  /** 用户明确清除一份恢复快照;不存在时幂等。 */
+  clearVersionMigrationSnapshot(snapshotId: string): Promise<void>;
   /** 正式保存 Markdown 内容:由 Rust 原子替换托管文件、递增文档版本并更新完整内容指纹,BookId 保持不变。 */
   saveMarkdown(materialId: string, content: string): Promise<ReadingMaterial>;
   /** 原子写入 Markdown 恢复快照;不修改正式文件、指纹或文档版本。 */

@@ -3,6 +3,7 @@ import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import {
+  clampActivityPanelWidth,
   WORKSPACE_STATE_SCHEMA_VERSION,
   type WorkspaceState,
 } from '../domain/workspace/workspaceState';
@@ -22,7 +23,9 @@ type DismissibleShellDialog =
   | 'externalLink'
   | 'typography'
   | 'note'
-  | 'annotationPanel';
+  | 'annotationPanel'
+  | 'versionMigration'
+  | 'versionMigrationSnapshots';
 
 /** 从当前 Serialized Store 组装可持久化的工作区状态。 */
 export function serializeWorkspaceState(): WorkspaceState {
@@ -31,6 +34,7 @@ export function serializeWorkspaceState(): WorkspaceState {
     schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
     primarySidebarVisible: store.primarySidebarVisible,
     tocVisible: store.tocVisible,
+    activityPanelWidth: store.activityPanelWidth,
     primaryMaterialId: store.primaryMaterialId,
     splitDirection: store.splitDirection,
     activeEditorGroupId: store.activeEditorGroupId,
@@ -75,6 +79,12 @@ export function registerWorkbenchCommands(
         break;
       case 'annotationPanel':
         useShellUiStore.getState().closeAnnotationPanel();
+        break;
+      case 'versionMigration':
+        void registry.execute(COMMAND_IDS.libraryCancelVersionMigration).catch(console.error);
+        break;
+      case 'versionMigrationSnapshots':
+        useShellUiStore.getState().closeVersionMigrationSnapshots();
         break;
     }
   });
@@ -162,6 +172,21 @@ export function registerWorkbenchCommands(
     if (nextVisible) useWorkspaceStore.getState().setPrimarySidebarVisible(false);
     useWorkspaceStore.getState().setTocVisible(nextVisible);
     if (nextVisible) useShellUiStore.getState().restoreCompactActivityPanel();
+  });
+
+  registry.register(COMMAND_IDS.workbenchSetActivityPanelWidth, async (...args: unknown[]) => {
+    const width = args[0];
+    if (typeof width !== 'number' || !Number.isFinite(width)) return;
+    const nextWidth = clampActivityPanelWidth(width);
+    const shouldPersist = args[1] === true;
+
+    if (shouldPersist) {
+      await dependencies.workspaceRepository.saveState({
+        ...serializeWorkspaceState(),
+        activityPanelWidth: nextWidth,
+      });
+    }
+    useWorkspaceStore.getState().setActivityPanelWidth(nextWidth);
   });
 
   registry.register(COMMAND_IDS.workbenchOpenAnnotationPanel, async (...args: unknown[]) => {

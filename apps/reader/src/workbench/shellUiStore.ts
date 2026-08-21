@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import type { MarkdownRecoverySnapshot } from '../domain/library/importRepository';
+import type { VersionMigrationPreview } from '../domain/library/versionMigration';
+import type { VersionMigrationCandidate } from '../domain/library/versionMigration';
+import type { VersionMigrationSnapshot } from '../domain/library/versionMigrationPersistence';
 
 /** 外壳运行时反馈(状态栏文案等),不参与持久化。 */
 export interface ShellUiStoreState {
@@ -14,6 +17,8 @@ export interface ShellUiStoreState {
   typographyEditorViewId: string | null;
   /** 正在编辑笔记的批注(materialId + annotationId);null 表示未打开笔记编辑器。 */
   noteEditorTarget: { materialId: string; annotationId: string } | null;
+  /** 最近一次成功软删除的批注,供状态栏提供一次性撤销入口。 */
+  annotationUndoTarget: { materialId: string; annotationId: string } | null;
   /** 当前打开的材料批注面板归属;面板状态只属于运行时外壳。 */
   annotationPanelMaterialId: string | null;
   annotationPanelReturnFocus: HTMLElement | null;
@@ -28,6 +33,11 @@ export interface ShellUiStoreState {
   markdownDirtyCloseAction: 'close' | 'exitSource' | null;
   /** 启动时待用户处理的 Markdown 恢复快照队列。 */
   markdownRecoverySnapshots: MarkdownRecoverySnapshot[];
+  /** 等待用户明确选择的 EPUB 版本迁移候选。暂存文件在确认或取消前保留。 */
+  versionMigrationCandidates: VersionMigrationCandidate[];
+  versionMigrationPreview: VersionMigrationPreview | null;
+  versionMigrationSnapshots: VersionMigrationSnapshot[];
+  versionMigrationSnapshotDialogOpen: boolean;
   setStatusMessage: (message: string) => void;
   clearStatusMessage: () => void;
   openMetadataEditor: (materialId: string) => void;
@@ -40,6 +50,7 @@ export interface ShellUiStoreState {
   closeTypographyEditor: () => void;
   openNoteEditor: (materialId: string, annotationId: string) => void;
   closeNoteEditor: () => void;
+  setAnnotationUndoTarget: (target: { materialId: string; annotationId: string } | null) => void;
   openAnnotationPanel: (materialId: string, returnFocusTarget?: HTMLElement | null) => void;
   closeAnnotationPanel: () => void;
   dismissCompactActivityPanel: () => void;
@@ -50,6 +61,11 @@ export interface ShellUiStoreState {
   closeMarkdownDirtyClose: () => void;
   setMarkdownRecoverySnapshots: (snapshots: MarkdownRecoverySnapshot[]) => void;
   removeMarkdownRecoverySnapshot: (materialId: string) => void;
+  setVersionMigrationCandidates: (candidates: VersionMigrationCandidate[]) => void;
+  setVersionMigrationPreview: (preview: VersionMigrationPreview | null) => void;
+  setVersionMigrationSnapshots: (snapshots: VersionMigrationSnapshot[]) => void;
+  openVersionMigrationSnapshots: () => void;
+  closeVersionMigrationSnapshots: () => void;
 }
 
 export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
@@ -59,6 +75,7 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   externalLinkUrl: null,
   typographyEditorViewId: null,
   noteEditorTarget: null,
+  annotationUndoTarget: null,
   annotationPanelMaterialId: null,
   annotationPanelReturnFocus: null,
   compactActivityPanelDismissed: false,
@@ -67,6 +84,10 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   markdownDirtyCloseViewId: null,
   markdownDirtyCloseAction: null,
   markdownRecoverySnapshots: [],
+  versionMigrationCandidates: [],
+  versionMigrationPreview: null,
+  versionMigrationSnapshots: [],
+  versionMigrationSnapshotDialogOpen: false,
   setStatusMessage: (message) => set({ statusMessage: message }),
   clearStatusMessage: () => set({ statusMessage: '' }),
   openMetadataEditor: (materialId) => set({ metadataEditorMaterialId: materialId }),
@@ -80,6 +101,7 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   openNoteEditor: (materialId, annotationId) =>
     set({ noteEditorTarget: { materialId, annotationId } }),
   closeNoteEditor: () => set({ noteEditorTarget: null }),
+  setAnnotationUndoTarget: (annotationUndoTarget) => set({ annotationUndoTarget }),
   openAnnotationPanel: (materialId, returnFocusTarget) =>
     set({
       annotationPanelMaterialId: materialId,
@@ -110,4 +132,10 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
         (snapshot) => snapshot.materialId !== materialId,
       ),
     })),
+  setVersionMigrationCandidates: (versionMigrationCandidates) =>
+    set({ versionMigrationCandidates }),
+  setVersionMigrationPreview: (versionMigrationPreview) => set({ versionMigrationPreview }),
+  setVersionMigrationSnapshots: (versionMigrationSnapshots) => set({ versionMigrationSnapshots }),
+  openVersionMigrationSnapshots: () => set({ versionMigrationSnapshotDialogOpen: true }),
+  closeVersionMigrationSnapshots: () => set({ versionMigrationSnapshotDialogOpen: false }),
 }));

@@ -1,11 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
+use crate::db::annotations::{Annotation, AnnotationRepository};
 use crate::error::{classify_io_error, AppError};
 use crate::fs::{
-    atomic_write, fingerprint_bytes, fingerprint_file, read_file_bytes,
+    atomic_copy, atomic_write, fingerprint_bytes, fingerprint_file, read_file_bytes,
     stream_copy_with_fingerprint, LibraryPaths,
 };
 
@@ -25,6 +26,56 @@ pub struct MaterialMetadata {
     pub title: String,
     pub author: Option<String>,
     pub language: Option<String>,
+}
+
+/// 用户确认后的显式 EPUB 版本迁移载荷。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionMigrationCommitRequest {
+    pub material_id: String,
+    pub staged: StagedImport,
+    pub metadata: MaterialMetadata,
+    pub expected_source_fingerprint: String,
+    pub expected_target_fingerprint: String,
+    pub annotations: Vec<Annotation>,
+    pub workspace_state: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionMigrationCommitResult {
+    pub material: ReadingMaterial,
+    pub snapshot_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionMigrationSnapshot {
+    pub id: String,
+    pub material_id: String,
+    pub source_fingerprint: String,
+    pub target_fingerprint: String,
+    pub created_at: i64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionMigrationRestoreResult {
+    pub material: ReadingMaterial,
+    pub annotations: Vec<Annotation>,
+    pub workspace_state: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionMigrationManifest {
+    id: String,
+    material_id: String,
+    source_fingerprint: String,
+    target_fingerprint: String,
+    created_at: i64,
+    phase: String,
 }
 
 /// 不可编辑来源元数据快照(取自 materials 表列,整理操作永不改写)。
@@ -229,6 +280,242 @@ impl<'a> ImportRepository<'a> {
         }
         self.find_by_id(id)?
             .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
+    /// 显式提交 EPUB 版本迁移。
+    ///
+    /// 快照先用 SQLite Online Backup 生成一致数据库副本并复制旧 EPUB。随后在
+    /// IMMEDIATE 事务中校验旧/新完整指纹、原子替换托管文件、更新材料来源元数据、
+    /// 批注和工作区状态。文件替换失败或事务失败都会把旧文件写回;快照目录持续保留,
+    /// 供用户显式恢复或清除。
+    pub fn commit_version_migration(
+        &self,
+        request: &VersionMigrationCommitRequest,
+        paths: &LibraryPaths,
+    ) -> Result<VersionMigrationCommitResult, AppError> {
+        if format_from_file_name(&request.staged.original_file_name) != "epub" {
+            return Err(AppError::BackupValidation(
+                "只有 EPUB 支持显式版本迁移".to_string(),
+            ));
+        }
+        let current = self
+            .find_by_id(&request.material_id)?
+            .ok_or_else(|| AppError::MaterialNotFound(request.material_id.clone()))?;
+        if current.fingerprint != request.expected_source_fingerprint {
+            return Err(AppError::BackupSourceChanged(request.material_id.clone()));
+        }
+        if request.staged.fingerprint != request.expected_target_fingerprint {
+            return Err(AppError::StagedFileMissing(request.staged.id.clone()));
+        }
+
+        let staged_path = paths.stash_path(&request.staged.id);
+        if !staged_path.is_file() || fingerprint_file(&staged_path)? != request.expected_target_fingerprint {
+            return Err(AppError::StagedFileMissing(request.staged.id.clone()));
+        }
+        let pending = self
+            .connection
+            .query_row(
+                "SELECT status, fingerprint, format, source_file_name
+                 FROM materials WHERE id = ?1",
+                [&request.staged.id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((status, fingerprint, format, source_file_name)) = pending else {
+            return Err(AppError::StagedFileMissing(request.staged.id.clone()));
+        };
+        if status != "pending"
+            || fingerprint != request.expected_target_fingerprint
+            || format != "epub"
+            || source_file_name != request.staged.original_file_name
+        {
+            return Err(AppError::StagedFileMissing(request.staged.id.clone()));
+        }
+
+        let duplicate: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT id FROM materials
+                 WHERE status = 'ready' AND fingerprint = ?1 AND format = 'epub'
+                   AND id <> ?2 LIMIT 1",
+                params![request.expected_target_fingerprint, request.material_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = duplicate {
+            return Err(AppError::DuplicateMaterial(id));
+        }
+
+        let snapshot_id = self.create_version_migration_snapshot(
+            &request.material_id,
+            &request.expected_source_fingerprint,
+            &request.expected_target_fingerprint,
+            paths,
+        )?;
+        let snapshot_path = paths.version_migration_path(&snapshot_id)?;
+        let managed_path = paths.managed_path(&request.material_id);
+        let transaction = match rusqlite::Transaction::new_unchecked(
+            self.connection,
+            TransactionBehavior::Immediate,
+        ) {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&snapshot_path);
+                return Err(error.into());
+            }
+        };
+
+        if let Err(error) = atomic_copy(&staged_path, &managed_path)
+            .and_then(|_| {
+                transaction.execute(
+                    "UPDATE materials
+                     SET fingerprint = ?1, title = ?2, author = ?3, language = ?4,
+                         source_file_name = ?5,
+                         updated_at = datetime('now')
+                     WHERE id = ?6 AND status = 'ready' AND fingerprint = ?7",
+                    params![
+                        request.expected_target_fingerprint,
+                        request.metadata.title,
+                        request.metadata.author,
+                        request.metadata.language,
+                        request.staged.original_file_name,
+                        request.material_id,
+                        request.expected_source_fingerprint,
+                    ],
+                )?;
+                transaction.execute(
+                    "DELETE FROM annotations WHERE material_id = ?1",
+                    [&request.material_id],
+                )?;
+                AnnotationRepository::new(&transaction)
+                    .save_many_in_transaction(&request.annotations)?;
+                let workspace_json = serde_json::to_string(&request.workspace_state)
+                    .map_err(AppError::WorkspaceStateSerialize)?;
+                transaction.execute(
+                    "INSERT INTO workspace_state (id, json, updated_at)
+                     VALUES (1, ?1, datetime('now'))
+                     ON CONFLICT(id) DO UPDATE SET
+                        json = excluded.json, updated_at = excluded.updated_at",
+                    [&workspace_json],
+                )?;
+                transaction.execute(
+                    "DELETE FROM materials WHERE id = ?1 AND status = 'pending'",
+                    [&request.staged.id],
+                )?;
+                transaction.commit().map_err(AppError::from)
+            })
+        {
+            let _ = atomic_copy(&snapshot_path.join("material.epub"), &managed_path);
+            let _ = std::fs::remove_dir_all(&snapshot_path);
+            return Err(error);
+        }
+
+        let mut manifest = read_version_migration_manifest(&snapshot_path)?;
+        manifest.phase = "completed".to_string();
+        write_version_migration_manifest(&snapshot_path, &manifest)?;
+        let _ = std::fs::remove_file(staged_path);
+        let material = self
+            .find_by_id(&request.material_id)?
+            .ok_or_else(|| AppError::MaterialNotFound(request.material_id.clone()))?;
+        Ok(VersionMigrationCommitResult { material, snapshot_id })
+    }
+
+    /// 列出仍保留在应用私有目录中的迁移快照;损坏目录不被静默删除。
+    pub fn list_version_migration_snapshots(
+        &self,
+        paths: &LibraryPaths,
+    ) -> Result<Vec<VersionMigrationSnapshot>, AppError> {
+        let mut snapshots = Vec::new();
+        for entry in std::fs::read_dir(&paths.version_migration_dir).map_err(classify_io_error)? {
+            let entry = entry.map_err(classify_io_error)?;
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let id = entry.file_name().to_string_lossy().into_owned();
+            let snapshot = match read_version_migration_manifest(&entry.path()) {
+                Ok(manifest) => VersionMigrationSnapshot {
+                    id: manifest.id,
+                    material_id: manifest.material_id,
+                    source_fingerprint: manifest.source_fingerprint,
+                    target_fingerprint: manifest.target_fingerprint,
+                    created_at: manifest.created_at,
+                    status: if manifest.phase == "completed" {
+                        "available".to_string()
+                    } else {
+                        "corrupt".to_string()
+                    },
+                },
+                Err(_) => VersionMigrationSnapshot {
+                    id,
+                    material_id: String::new(),
+                    source_fingerprint: String::new(),
+                    target_fingerprint: String::new(),
+                    created_at: 0,
+                    status: "corrupt".to_string(),
+                },
+            };
+            snapshots.push(snapshot);
+        }
+        snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at));
+        Ok(snapshots)
+    }
+
+    /// 用户明确清除一份迁移恢复快照;不会影响当前材料。
+    pub fn clear_version_migration_snapshot(
+        &self,
+        snapshot_id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<(), AppError> {
+        let path = paths.version_migration_path(snapshot_id)?;
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(classify_io_error(error)),
+        }
+    }
+
+    fn create_version_migration_snapshot(
+        &self,
+        material_id: &str,
+        source_fingerprint: &str,
+        target_fingerprint: &str,
+        paths: &LibraryPaths,
+    ) -> Result<String, AppError> {
+        let managed_path = paths.managed_path(material_id);
+        if !managed_path.is_file() || fingerprint_file(&managed_path)? != source_fingerprint {
+            return Err(AppError::ManagedFileMissing(material_id.to_string()));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let temp_path = paths.version_migration_dir.join(format!(".{id}.tmp"));
+        let final_path = paths.version_migration_path(&id)?;
+        std::fs::create_dir_all(&temp_path).map_err(classify_io_error)?;
+        let result = (|| {
+            self.connection
+                .backup("main", temp_path.join("database.sqlite"), None)?;
+            atomic_copy(&managed_path, &temp_path.join("material.epub"))?;
+            let manifest = VersionMigrationManifest {
+                id: id.clone(),
+                material_id: material_id.to_string(),
+                source_fingerprint: source_fingerprint.to_string(),
+                target_fingerprint: target_fingerprint.to_string(),
+                created_at: now_millis(),
+                phase: "prepared".to_string(),
+            };
+            write_version_migration_manifest(&temp_path, &manifest)?;
+            std::fs::rename(&temp_path, &final_path).map_err(classify_io_error)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&temp_path);
+        }
+        result.map(|_| id)
     }
 
     /// 提交导入:按 `完整指纹 + 格式` 查重;去重命中则在数据库事务中清理
@@ -795,6 +1082,75 @@ fn format_from_file_name(file_name: &str) -> &'static str {
     }
 }
 
+fn version_migration_manifest_path(root: &Path) -> PathBuf {
+    root.join("manifest.json")
+}
+
+fn read_version_migration_manifest(
+    root: &Path,
+) -> Result<VersionMigrationManifest, AppError> {
+    let bytes = std::fs::read(version_migration_manifest_path(root)).map_err(classify_io_error)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| AppError::BackupValidation(format!("迁移快照 manifest 无法解析:{error}")))
+}
+
+pub fn read_version_migration_material_id(root: &Path) -> Result<String, AppError> {
+    let manifest = read_version_migration_manifest(root)?;
+    if manifest.phase != "completed" {
+        return Err(AppError::BackupValidation(
+            "迁移恢复快照尚未完成,不能作为用户恢复源".to_string(),
+        ));
+    }
+    Ok(manifest.material_id)
+}
+
+/// 在打开 SQLite 前回滚崩溃时尚未标记 completed 的迁移操作。
+/// 已完成快照持续保留,不在启动阶段自动清理。
+pub fn recover_version_migrations(paths: &LibraryPaths) -> Result<(), AppError> {
+    for entry in std::fs::read_dir(&paths.version_migration_dir).map_err(classify_io_error)? {
+        let entry = entry.map_err(classify_io_error)?;
+        let root = entry.path();
+        if root.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        if file_name.starts_with('.') {
+            let _ = std::fs::remove_dir_all(root);
+            continue;
+        }
+        let manifest = match read_version_migration_manifest(&root) {
+            Ok(manifest) => manifest,
+            Err(_) => continue,
+        };
+        if manifest.phase == "completed" {
+            continue;
+        }
+        let database = root.join("database.sqlite");
+        let material = root.join("material.epub");
+        if database.is_file() && material.is_file() {
+            atomic_copy(&database, &paths.database_path())?;
+            atomic_copy(&material, &paths.managed_path(&manifest.material_id))?;
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+    Ok(())
+}
+
+fn write_version_migration_manifest(
+    root: &Path,
+    manifest: &VersionMigrationManifest,
+) -> Result<(), AppError> {
+    let bytes = serde_json::to_vec_pretty(manifest).map_err(AppError::BackupManifestSerialize)?;
+    atomic_write(&version_migration_manifest_path(root), &bytes)
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,6 +1158,9 @@ mod tests {
 
     fn migrated_connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0001_workspace.sql"))
+            .unwrap();
         connection
             .execute_batch(include_str!("migrations/0002_materials.sql"))
             .unwrap();
@@ -824,6 +1183,11 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(include_str!("migrations/0008_import_identity.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "migrations/0009_annotation_recovery_state.sql"
+            ))
             .unwrap();
         connection
     }
@@ -984,6 +1348,109 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn explicit_version_migration_commits_data_atomically_and_recovery_rolls_back_prepared_snapshot() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let old_source = write_source(&paths, "old.epub", b"old-epub");
+        let old_staged = repository.stage(&old_source, &paths).unwrap();
+        let old_material = repository
+            .commit(
+                &old_staged,
+                &MaterialMetadata {
+                    title: "同一本书".to_string(),
+                    author: Some("作者".to_string()),
+                    language: Some("zh".to_string()),
+                },
+                &paths,
+            )
+            .unwrap();
+        let annotation = Annotation {
+            id: "annotation-1".to_string(),
+            material_id: old_material.id.clone(),
+            anchor: crate::db::annotations::TextAnchor {
+                cfi: "epubcfi(/6/2[chapter]!/4/2)".to_string(),
+                quote: "旧引文".to_string(),
+                before: "前".to_string(),
+                after: "后".to_string(),
+                document_version: old_material.fingerprint.clone(),
+                recovery_state: crate::db::annotations::AnnotationRecoveryState::Resolved,
+            },
+            style: "highlight".to_string(),
+            color: "#ffd54f".to_string(),
+            note: "旧笔记".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            deleted_at: None,
+        };
+        crate::db::annotations::AnnotationRepository::new(&connection)
+            .save(&annotation)
+            .unwrap();
+        let old_workspace = crate::db::workspace::WorkspaceState::default();
+        crate::db::workspace::WorkspaceRepository::new(&connection)
+            .save_state(&old_workspace)
+            .unwrap();
+
+        let new_source = write_source(&paths, "new.epub", b"new-epub");
+        let new_staged = repository.stage(&new_source, &paths).unwrap();
+        let migrated = repository
+            .commit_version_migration(
+                &VersionMigrationCommitRequest {
+                    material_id: old_material.id.clone(),
+                    staged: new_staged.clone(),
+                    metadata: MaterialMetadata {
+                        title: "同一本书".to_string(),
+                        author: Some("作者".to_string()),
+                        language: Some("zh".to_string()),
+                    },
+                    expected_source_fingerprint: old_material.fingerprint.clone(),
+                    expected_target_fingerprint: new_staged.fingerprint.clone(),
+                    annotations: vec![annotation.clone()],
+                    workspace_state: serde_json::to_value(&old_workspace).unwrap(),
+                },
+                &paths,
+            )
+            .unwrap();
+
+        assert_eq!(migrated.material.id, old_material.id);
+        assert_eq!(migrated.material.fingerprint, new_staged.fingerprint);
+        assert_eq!(migrated.material.document_version, 0);
+        assert_eq!(
+            std::fs::read(paths.managed_path(&old_material.id)).unwrap(),
+            b"new-epub"
+        );
+        assert!(matches!(
+            repository.list_version_migration_snapshots(&paths).unwrap()[0].status.as_str(),
+            "available"
+        ));
+
+        let snapshot_path = paths.version_migration_path(&migrated.snapshot_id).unwrap();
+        let mut manifest = read_version_migration_manifest(&snapshot_path).unwrap();
+        manifest.phase = "prepared".to_string();
+        write_version_migration_manifest(&snapshot_path, &manifest).unwrap();
+        recover_version_migrations(&paths).unwrap();
+
+        let recovered_connection = Connection::open(paths.database_path()).unwrap();
+        let recovered_repository = ImportRepository::new(&recovered_connection);
+        let recovered = recovered_repository
+            .find_by_id(&old_material.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.fingerprint, old_material.fingerprint);
+        assert_eq!(
+            std::fs::read(paths.managed_path(&old_material.id)).unwrap(),
+            b"old-epub"
+        );
+        assert_eq!(
+            crate::db::annotations::AnnotationRepository::new(&recovered_connection)
+                .list_by_material(&old_material.id)
+                .unwrap(),
+            vec![annotation]
+        );
+        assert!(!snapshot_path.exists());
     }
 
     #[test]

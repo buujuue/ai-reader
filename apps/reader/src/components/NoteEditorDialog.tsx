@@ -49,10 +49,12 @@ export function NoteEditorDialog() {
   };
 
   const handleDelete = async () => {
-    await commands
-      .execute(COMMAND_IDS.annotationDelete, target.materialId, target.annotationId)
-      .catch((error: unknown) => console.error('删除批注失败', error));
-    closeNoteEditor();
+    try {
+      await commands.execute(COMMAND_IDS.annotationDelete, target.materialId, target.annotationId);
+      closeNoteEditor();
+    } catch (error) {
+      console.error('删除批注失败', error);
+    }
   };
 
   return (

@@ -1,7 +1,11 @@
 use base64::Engine;
 use tauri::State;
 
-use crate::db::import::{ImportRepository, MaterialMetadata, ReadingMaterial, StagedImport};
+use crate::db::import::{
+    ImportRepository, MaterialMetadata, ReadingMaterial, StagedImport,
+    VersionMigrationCommitRequest, VersionMigrationCommitResult,
+    VersionMigrationSnapshot,
+};
 use crate::db::DatabaseHandle;
 use crate::error::AppError;
 use crate::fs::LibraryPaths;
@@ -210,4 +214,49 @@ pub fn read_material_cover(
         ImportRepository::new(connection).read_cover(&material_id, &paths)
     })?;
     Ok(bytes.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+/// 用户确认后一次性提交 EPUB 版本迁移及全部迁移结果。
+#[tauri::command]
+pub fn commit_version_migration(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    request: VersionMigrationCommitRequest,
+) -> Result<VersionMigrationCommitResult, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).commit_version_migration(&request, &paths)
+    })
+}
+
+/// 列出持续保留的本地版本迁移恢复快照。
+#[tauri::command]
+pub fn list_version_migration_snapshots(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+) -> Result<Vec<VersionMigrationSnapshot>, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).list_version_migration_snapshots(&paths)
+    })
+}
+
+/// 用户明确清除一份版本迁移恢复快照。
+#[tauri::command]
+pub fn clear_version_migration_snapshot(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    snapshot_id: String,
+) -> Result<(), AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).clear_version_migration_snapshot(&snapshot_id, &paths)
+    })
+}
+
+/// 完整恢复迁移前的数据库、托管 EPUB、批注与工作区状态;快照本身继续保留。
+#[tauri::command]
+pub fn restore_version_migration_snapshot(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    snapshot_id: String,
+) -> Result<crate::db::import::VersionMigrationRestoreResult, AppError> {
+    database.restore_version_migration_snapshot(&paths, &snapshot_id)
 }

@@ -3,7 +3,24 @@ import type { NavigationHistory } from '../reader/navigationHistory';
 import type { ReadingTypography } from '../reader/typography';
 import { DEFAULT_READING_TYPOGRAPHY } from '../reader/typography';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 9;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 10;
+
+export const DEFAULT_ACTIVITY_PANEL_WIDTH = 304;
+export const MIN_ACTIVITY_PANEL_WIDTH = 240;
+export const MAX_ACTIVITY_PANEL_WIDTH = 460;
+
+export function clampActivityPanelWidth(width: number): number {
+  if (!Number.isFinite(width)) return DEFAULT_ACTIVITY_PANEL_WIDTH;
+  return Math.round(
+    Math.min(MAX_ACTIVITY_PANEL_WIDTH, Math.max(MIN_ACTIVITY_PANEL_WIDTH, width)),
+  );
+}
+
+export function normalizeActivityPanelWidth(width: unknown): number {
+  return typeof width === 'number'
+    ? clampActivityPanelWidth(width)
+    : DEFAULT_ACTIVITY_PANEL_WIDTH;
+}
 
 /** 第二个 Editor Group 的拆分方向。`right` 表示左右并排,`down` 表示上下并排。 */
 export type EditorGroupSplitDirection = 'right' | 'down';
@@ -35,6 +52,8 @@ export interface WorkspaceState {
   primarySidebarVisible: boolean;
   /** 目录侧栏的用户期望状态；紧凑布局只改变呈现方式，不改变此值。 */
   tocVisible: boolean;
+  /** 书库与目录共用的活动面板宽度，紧凑布局抽屉也复用此偏好。 */
+  activityPanelWidth: number;
   /** 用户显式指定的主要阅读材料;与当前焦点阅读视图独立。 */
   primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
@@ -63,6 +82,7 @@ export const DEFAULT_WORKSPACE_STATE: WorkspaceState = Object.freeze({
   schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
   primarySidebarVisible: true,
   tocVisible: false,
+  activityPanelWidth: DEFAULT_ACTIVITY_PANEL_WIDTH,
   primaryMaterialId: null,
   splitDirection: null,
   activeEditorGroupId: DEFAULT_EDITOR_GROUP_ID,

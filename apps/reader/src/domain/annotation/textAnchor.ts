@@ -121,7 +121,10 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ');
 }
 
-function contextMatches(anchor: Pick<TextAnchor, 'before' | 'after'>, match: TextAnchorSearchMatch): boolean {
+export function textAnchorContextMatches(
+  anchor: Pick<TextAnchor, 'before' | 'after'>,
+  match: TextAnchorSearchMatch,
+): boolean {
   const expectedBefore = normalizeWhitespace(anchor.before).trim();
   const actualBefore = normalizeWhitespace(match.excerpt.pre.replace(/^…/, '')).trim();
   if (expectedBefore && !actualBefore) {
@@ -148,6 +151,75 @@ function contextMatches(anchor: Pick<TextAnchor, 'before' | 'after'>, match: Tex
   return true;
 }
 
+export type TextAnchorRecoveryReason =
+  | 'unique-text'
+  | 'zero-matches'
+  | 'multiple-matches'
+  | 'context-mismatch';
+
+export interface TextAnchorRecoveryEvaluation {
+  anchor: TextAnchor;
+  outcome: 'resolved' | 'reanchored' | 'orphaned';
+  reason: TextAnchorRecoveryReason;
+  /** 只统计同一 spine section 且引文文本相同的命中。 */
+  matchCount: number;
+}
+
+/**
+ * 评估一个文本锚点的迁移结果,同时保留零匹配/多匹配信息供显式预览展示。
+ * CFI 的 spine 过滤先于唯一性判断,因此恢复永远不会跨章节猜测。
+ */
+export function evaluateTextAnchorRecovery(
+  anchor: TextAnchor,
+  documentVersion: string,
+  matches: readonly TextAnchorSearchMatch[],
+): TextAnchorRecoveryEvaluation {
+  const normalizedQuote = normalizeWhitespace(anchor.quote).trim();
+  const quoteMatches = matches.filter(
+    (match) =>
+      isSameEpubCfiSpine(anchor.cfi, match.cfi) &&
+      normalizeWhitespace(match.excerpt.match).trim() === normalizedQuote,
+  );
+
+  if (quoteMatches.length === 0) {
+    return {
+      anchor: { ...anchor, recoveryState: 'orphaned' },
+      outcome: 'orphaned',
+      reason: 'zero-matches',
+      matchCount: 0,
+    };
+  }
+  if (quoteMatches.length > 1) {
+    return {
+      anchor: { ...anchor, recoveryState: 'orphaned' },
+      outcome: 'orphaned',
+      reason: 'multiple-matches',
+      matchCount: quoteMatches.length,
+    };
+  }
+  if (!textAnchorContextMatches(anchor, quoteMatches[0]!)) {
+    return {
+      anchor: { ...anchor, recoveryState: 'orphaned' },
+      outcome: 'orphaned',
+      reason: 'context-mismatch',
+      matchCount: 1,
+    };
+  }
+
+  const nextCfi = quoteMatches[0]!.cfi;
+  return {
+    anchor: {
+      ...anchor,
+      cfi: nextCfi,
+      documentVersion,
+      recoveryState: nextCfi === anchor.cfi ? 'resolved' : 'reanchored',
+    },
+    outcome: nextCfi === anchor.cfi ? 'resolved' : 'reanchored',
+    reason: 'unique-text',
+    matchCount: 1,
+  };
+}
+
 /**
  * 根据阅读文档搜索结果迁移文本锚点。
  *
@@ -159,21 +231,60 @@ export function recoverTextAnchor(
   documentVersion: string,
   matches: readonly TextAnchorSearchMatch[],
 ): TextAnchor {
-  const normalizedQuote = normalizeWhitespace(anchor.quote).trim();
-  const quoteMatches = matches.filter(
-    (match) =>
-      isSameEpubCfiSpine(anchor.cfi, match.cfi) &&
-      normalizeWhitespace(match.excerpt.match).trim() === normalizedQuote,
-  );
+  return evaluateTextAnchorRecovery(anchor, documentVersion, matches).anchor;
+}
 
-  if (quoteMatches.length !== 1 || !contextMatches(anchor, quoteMatches[0]!)) {
-    return { ...anchor, recoveryState: 'orphaned' };
-  }
-
+/**
+ * 返回 Range 两端所属的内容文档。
+ *
+ * 浏览器不允许一个 Range 跨越两个 iframe 文档，但 Selection 事件可能在
+ * 章节切换/分页期间短暂留下跨文档的旧状态。提交前仍必须再次验证，避免
+ * 把这种活跃 DOM 状态交给 CFI 生成器后产生伪造的单章节范围。
+ */
+export function getRangeOwnerDocuments(range: Range): {
+  start: Document | null;
+  end: Document | null;
+} {
   return {
-    ...anchor,
-    cfi: quoteMatches[0]!.cfi,
-    documentVersion,
-    recoveryState: 'resolved',
+    start: ownerDocumentOfNode(range.startContainer),
+    end: ownerDocumentOfNode(range.endContainer),
   };
+}
+
+function ownerDocumentOfNode(node: Node | null): Document | null {
+  if (!node) return null;
+  if (node.nodeType === 9) return node as Document;
+  return node.ownerDocument;
+}
+
+/** 只有两端明确属于同一内容文档时，Range 才能作为单章节批注保存。 */
+export function isRangeWithinOneDocument(range: Range): boolean {
+  const documents = getRangeOwnerDocuments(range);
+  return documents.start !== null && documents.start === documents.end;
+}
+
+/**
+ * 返回单章节选择校验失败原因；返回 null 表示没有发现跨章节证据。
+ * `getDocumentIndex` 由 BookDocument 提供，避免文本锚点子域依赖具体阅读器。
+ */
+export function getSingleSectionSelectionError(
+  range: Range,
+  getDocumentIndex: (document: Document) => number | null,
+): string | null {
+  if (!isRangeWithinOneDocument(range)) {
+    return '跨章节选择不能保存为单条批注，请分别选择每个章节。';
+  }
+  const documents = getRangeOwnerDocuments(range);
+  if (!documents.start || !documents.end) {
+    return '无法确定选区所属章节，请重新选择正文。';
+  }
+  const startIndex = getDocumentIndex(documents.start);
+  const endIndex = getDocumentIndex(documents.end);
+  if (startIndex === null || endIndex === null) {
+    return '无法确定选区所属章节，请重新选择正文。';
+  }
+  if (startIndex !== endIndex) {
+    return '跨章节选择不能保存为单条批注，请分别选择每个章节。';
+  }
+  return null;
 }

@@ -15,9 +15,25 @@ export function createInMemoryAnnotationRepository(): AnnotationRepository {
         .sort((a, b) => a.createdAt - b.createdAt);
     },
 
+    async listDeletedByMaterial(materialId: string): Promise<Annotation[]> {
+      return [...store.values()]
+        .filter((annotation) => annotation.materialId === materialId && annotation.deletedAt !== null)
+        .sort((a, b) => a.createdAt - b.createdAt);
+    },
+
     async saveAnnotation(annotation: Annotation): Promise<Annotation> {
       store.set(annotation.id, { ...annotation });
       return { ...annotation };
+    },
+
+    async saveAnnotations(annotations: readonly Annotation[]): Promise<Annotation[]> {
+      const next = new Map(store);
+      for (const annotation of annotations) {
+        next.set(annotation.id, { ...annotation });
+      }
+      store.clear();
+      for (const [id, annotation] of next) store.set(id, annotation);
+      return annotations.map((annotation) => ({ ...annotation }));
     },
 
     async deleteAnnotation(annotationId: string): Promise<void> {
@@ -26,6 +42,14 @@ export function createInMemoryAnnotationRepository(): AnnotationRepository {
         return;
       }
       store.set(annotationId, { ...annotation, deletedAt: Date.now() });
+    },
+
+    async restoreAnnotation(annotationId: string): Promise<Annotation | null> {
+      const annotation = store.get(annotationId);
+      if (!annotation || annotation.deletedAt === null) return null;
+      const restored = { ...annotation, deletedAt: null, updatedAt: Date.now() };
+      store.set(annotationId, restored);
+      return { ...restored };
     },
   };
 }

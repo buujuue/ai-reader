@@ -82,6 +82,9 @@ export interface FoliateViewHost {
   /** 读取当前内容文档所在章节序号(index);未就绪时返回 null。 */
   getCurrentIndex(): number | null;
 
+  /** 返回已加载内容文档对应的 spine section 序号。 */
+  getContentDocumentIndex?(document: Document): number | null;
+
   /**
    * 绘制一条高亮批注。`value` 为 CFI,`color` 为高亮颜色。重复绘制同一 CFI 会替换旧覆盖层。
    */

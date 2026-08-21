@@ -36,6 +36,12 @@ export function createLocalStorageAnnotationRepository(
         .sort((a, b) => a.createdAt - b.createdAt);
     },
 
+    async listDeletedByMaterial(materialId: string): Promise<Annotation[]> {
+      return readAll()
+        .filter((annotation) => annotation.materialId === materialId && annotation.deletedAt !== null)
+        .sort((a, b) => a.createdAt - b.createdAt);
+    },
+
     async saveAnnotation(annotation: Annotation): Promise<Annotation> {
       const all = readAll();
       const index = all.findIndex((item) => item.id === annotation.id);
@@ -48,6 +54,19 @@ export function createLocalStorageAnnotationRepository(
       return { ...annotation };
     },
 
+    async saveAnnotations(annotations: readonly Annotation[]): Promise<Annotation[]> {
+      if (annotations.length === 0) return [];
+      const all = readAll();
+      const next = [...all];
+      for (const annotation of annotations) {
+        const index = next.findIndex((item) => item.id === annotation.id);
+        if (index >= 0) next[index] = { ...annotation };
+        else next.push({ ...annotation });
+      }
+      writeAll(next);
+      return annotations.map((annotation) => ({ ...annotation }));
+    },
+
     async deleteAnnotation(annotationId: string): Promise<void> {
       const all = readAll();
       const index = all.findIndex((item) => item.id === annotationId);
@@ -56,6 +75,16 @@ export function createLocalStorageAnnotationRepository(
       }
       all[index] = { ...all[index]!, deletedAt: Date.now() };
       writeAll(all);
+    },
+
+    async restoreAnnotation(annotationId: string): Promise<Annotation | null> {
+      const all = readAll();
+      const index = all.findIndex((item) => item.id === annotationId && item.deletedAt !== null);
+      if (index < 0) return null;
+      const restored = { ...all[index]!, deletedAt: null, updatedAt: Date.now() };
+      all[index] = restored;
+      writeAll(all);
+      return { ...restored };
     },
   };
 }

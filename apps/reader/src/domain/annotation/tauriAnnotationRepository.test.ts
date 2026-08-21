@@ -43,10 +43,23 @@ function createFakeTauriBackend(): {
           .filter((annotation) => annotation.materialId === materialId && annotation.deletedAt === null)
           .sort((a, b) => a.createdAt - b.createdAt);
       }
+      case ANNOTATION_COMMAND_NAMES.listDeleted: {
+        const materialId = (args as { materialId?: unknown }).materialId as string;
+        return [...store.values()]
+          .filter((annotation) => annotation.materialId === materialId && annotation.deletedAt !== null)
+          .sort((a, b) => a.createdAt - b.createdAt);
+      }
       case ANNOTATION_COMMAND_NAMES.save: {
         const annotation = (args as { annotation?: unknown }).annotation as Annotation;
         store.set(annotation.id, { ...annotation });
         return { ...annotation };
+      }
+      case ANNOTATION_COMMAND_NAMES.saveMany: {
+        const annotations = (args as { annotations?: unknown }).annotations as Annotation[];
+        for (const annotation of annotations) {
+          store.set(annotation.id, { ...annotation });
+        }
+        return annotations.map((annotation) => ({ ...annotation }));
       }
       case ANNOTATION_COMMAND_NAMES.delete: {
         const annotationId = (args as { annotationId?: unknown }).annotationId as string;
@@ -55,6 +68,14 @@ function createFakeTauriBackend(): {
           store.set(annotationId, { ...annotation, deletedAt: Date.now() });
         }
         return null;
+      }
+      case ANNOTATION_COMMAND_NAMES.restore: {
+        const annotationId = (args as { annotationId?: unknown }).annotationId as string;
+        const annotation = store.get(annotationId);
+        if (!annotation || annotation.deletedAt === null) return null;
+        const restored = { ...annotation, deletedAt: null, updatedAt: Date.now() };
+        store.set(annotationId, restored);
+        return { ...restored };
       }
       default:
         throw new Error(`unknown tauri command: ${command}`);
@@ -72,8 +93,11 @@ describe('AnnotationRepository 契约 · Tauri Adapter', () => {
 describe('TauriAnnotationRepository 边界映射', () => {
   it('使用稳定的 snake_case Tauri 命令名', () => {
     expect(ANNOTATION_COMMAND_NAMES.list).toBe('list_annotations');
+    expect(ANNOTATION_COMMAND_NAMES.listDeleted).toBe('list_deleted_annotations');
     expect(ANNOTATION_COMMAND_NAMES.save).toBe('save_annotation');
+    expect(ANNOTATION_COMMAND_NAMES.saveMany).toBe('save_annotations');
     expect(ANNOTATION_COMMAND_NAMES.delete).toBe('delete_annotation');
+    expect(ANNOTATION_COMMAND_NAMES.restore).toBe('restore_annotation');
   });
 
   it('列出批注时把 materialId 放入 serde 期望的参数', async () => {

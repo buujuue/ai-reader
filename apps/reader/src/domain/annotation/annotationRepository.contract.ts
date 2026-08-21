@@ -42,6 +42,15 @@ export function annotationRepositoryContract(
     expect(list[0]).toEqual(annotation);
   });
 
+  it('批量保存以一个 Adapter 提交写入多条批注', async () => {
+    const repository = makeRepository();
+    const first = makeAnnotation({ id: 'a1' });
+    const second = makeAnnotation({ id: 'a2' });
+
+    await expect(repository.saveAnnotations([first, second])).resolves.toEqual([first, second]);
+    await expect(repository.listByMaterial('material-1')).resolves.toEqual([first, second]);
+  });
+
   it('批注按 BookId 归属,读取返回材料级集合而不混入其它材料', async () => {
     const repository = makeRepository();
     await repository.saveAnnotation(makeAnnotation({ id: 'a1', materialId: 'material-1' }));
@@ -76,9 +85,31 @@ export function annotationRepositoryContract(
     expect(list.map((a) => a.id)).toEqual(['keep']);
   });
 
+  it('逻辑删除保留 tombstone,并可显式恢复原批注', async () => {
+    const repository = makeRepository();
+    const annotation = makeAnnotation();
+    await repository.saveAnnotation(annotation);
+
+    await repository.deleteAnnotation(annotation.id);
+
+    const deleted = await repository.listDeletedByMaterial(annotation.materialId);
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]).toMatchObject({
+      id: annotation.id,
+      anchor: annotation.anchor,
+      deletedAt: expect.any(Number),
+    });
+
+    const restored = await repository.restoreAnnotation(annotation.id);
+    expect(restored).toMatchObject({ id: annotation.id, anchor: annotation.anchor, deletedAt: null });
+    await expect(repository.listByMaterial(annotation.materialId)).resolves.toHaveLength(1);
+    await expect(repository.listDeletedByMaterial(annotation.materialId)).resolves.toHaveLength(0);
+  });
+
   it('删除不存在的批注是幂等的', async () => {
     const repository = makeRepository();
 
     await expect(repository.deleteAnnotation('no-such')).resolves.toBeUndefined();
+    await expect(repository.restoreAnnotation('no-such')).resolves.toBeNull();
   });
 }

@@ -8,6 +8,8 @@ export interface AndroidBackState {
   activeSearchViewId: string | null;
   markdownDirtyCloseOpen: boolean;
   recoveryDialogOpen: boolean;
+  versionMigrationDialogOpen: boolean;
+  versionMigrationSnapshotDialogOpen: boolean;
   metadataDialogOpen: boolean;
   purgeDialogOpen: boolean;
   externalLinkDialogOpen: boolean;
@@ -20,6 +22,8 @@ export type AndroidBackAction =
   | { kind: 'closeSearch'; viewId: string }
   | { kind: 'closeSidebar'; sidebar: AndroidBackSidebar }
   | { kind: 'dismissMarkdownDirtyClose' }
+  | { kind: 'dismissVersionMigration' }
+  | { kind: 'dismissVersionMigrationSnapshots' }
   | { kind: 'dismissMetadataDialog' }
   | { kind: 'dismissPurgeDialog' }
   | { kind: 'dismissExternalLinkDialog' }
@@ -39,6 +43,10 @@ export function resolveAndroidBackAction(state: AndroidBackState): AndroidBackAc
     return state.markdownDirtyCloseOpen
       ? { kind: 'dismissMarkdownDirtyClose' }
       : { kind: 'stay' };
+  }
+  if (state.versionMigrationDialogOpen) return { kind: 'dismissVersionMigration' };
+  if (state.versionMigrationSnapshotDialogOpen) {
+    return { kind: 'dismissVersionMigrationSnapshots' };
   }
   if (state.metadataDialogOpen) return { kind: 'dismissMetadataDialog' };
   if (state.purgeDialogOpen) return { kind: 'dismissPurgeDialog' };

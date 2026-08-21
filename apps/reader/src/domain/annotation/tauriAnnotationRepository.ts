@@ -6,8 +6,11 @@ import type { AnnotationRepository } from './annotationRepository';
 
 export const ANNOTATION_COMMAND_NAMES = {
   list: 'list_annotations',
+  listDeleted: 'list_deleted_annotations',
   save: 'save_annotation',
+  saveMany: 'save_annotations',
   delete: 'delete_annotation',
+  restore: 'restore_annotation',
 } as const;
 
 function assertAnnotationShape(raw: unknown): Annotation {
@@ -34,7 +37,9 @@ function assertAnnotationShape(raw: unknown): Annotation {
     typeof anchor.before !== 'string' ||
     typeof anchor.after !== 'string' ||
     typeof anchor.documentVersion !== 'string' ||
-    (anchor.recoveryState !== 'resolved' && anchor.recoveryState !== 'orphaned')
+    anchor.recoveryState !== 'resolved' &&
+    anchor.recoveryState !== 'reanchored' &&
+    anchor.recoveryState !== 'orphaned'
   ) {
     throw new Error('annotation anchor payload is malformed');
   }
@@ -71,12 +76,24 @@ export function createTauriAnnotationRepository(invokeFn: TauriInvoke): Annotati
       const raw = await invokeFn(ANNOTATION_COMMAND_NAMES.list, { materialId });
       return assertAnnotationList(raw);
     },
+    async listDeletedByMaterial(materialId: string): Promise<Annotation[]> {
+      const raw = await invokeFn(ANNOTATION_COMMAND_NAMES.listDeleted, { materialId });
+      return assertAnnotationList(raw);
+    },
     async saveAnnotation(annotation: Annotation): Promise<Annotation> {
       const raw = await invokeFn(ANNOTATION_COMMAND_NAMES.save, { annotation });
       return assertAnnotationShape(raw);
     },
+    async saveAnnotations(annotations: readonly Annotation[]): Promise<Annotation[]> {
+      const raw = await invokeFn(ANNOTATION_COMMAND_NAMES.saveMany, { annotations });
+      return assertAnnotationList(raw);
+    },
     async deleteAnnotation(annotationId: string): Promise<void> {
       await invokeFn(ANNOTATION_COMMAND_NAMES.delete, { annotationId });
+    },
+    async restoreAnnotation(annotationId: string): Promise<Annotation | null> {
+      const raw = await invokeFn(ANNOTATION_COMMAND_NAMES.restore, { annotationId });
+      return raw === null ? null : assertAnnotationShape(raw);
     },
   };
 }

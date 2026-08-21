@@ -8,6 +8,7 @@ use crate::error::AppError;
 #[serde(rename_all = "camelCase")]
 pub enum AnnotationRecoveryState {
     Resolved,
+    Reanchored,
     Orphaned,
 }
 
@@ -50,13 +51,88 @@ impl<'a> AnnotationRepository<'a> {
 
     /// 读取一份阅读材料的全部未删除批注(材料级集合)。
     pub fn list_by_material(&self, material_id: &str) -> Result<Vec<Annotation>, AppError> {
-        let mut statement = self.connection.prepare(
+        self.list_by_material_with_deleted_filter(material_id, true)
+    }
+
+    /// 读取一份阅读材料的已删除批注,用于撤销或恢复操作。
+    pub fn list_deleted_by_material(&self, material_id: &str) -> Result<Vec<Annotation>, AppError> {
+        self.list_by_material_with_deleted_filter(material_id, false)
+    }
+
+    /// 创建或更新一条批注(含编辑文字笔记)。按 id 幂等 upsert。
+    /// 校验材料存在,避免孤儿批注附着到不存在的材料。
+    pub fn save(&self, annotation: &Annotation) -> Result<Annotation, AppError> {
+        self.save_one(annotation)?;
+        Ok(annotation.clone())
+    }
+
+    /// 在一个 SQLite 事务中创建或更新多条批注。
+    pub fn save_many(&self, annotations: &[Annotation]) -> Result<Vec<Annotation>, AppError> {
+        self.connection.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| {
+            for annotation in annotations {
+                self.save_one(annotation)?;
+            }
+            Ok(annotations.to_vec())
+        })();
+
+        match result {
+            Ok(saved) => {
+                self.connection.execute_batch("COMMIT")?;
+                Ok(saved)
+            }
+            Err(error) => {
+                let _ = self.connection.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    /// 在调用方已经开启的 SQLite 事务中写入一组批注。
+    /// 版本迁移使用它把材料的 active/tombstone 批注与文件、工作区状态一起提交。
+    pub fn save_many_in_transaction(
+        &self,
+        annotations: &[Annotation],
+    ) -> Result<Vec<Annotation>, AppError> {
+        for annotation in annotations {
+            self.save_one(annotation)?;
+        }
+        Ok(annotations.to_vec())
+    }
+
+    /// 恢复一条逻辑删除的批注。恢复不会改变原有锚点。
+    pub fn restore(&self, annotation_id: &str) -> Result<Option<Annotation>, AppError> {
+        let updated = self.connection.execute(
+            "UPDATE annotations
+             SET deleted_at = NULL, updated_at = ?1
+             WHERE id = ?2 AND deleted_at IS NOT NULL",
+            params![chrono_timestamp(), annotation_id],
+        )?;
+        if updated == 0 {
+            return Ok(None);
+        }
+
+        self.get_by_id(annotation_id)
+    }
+
+    fn list_by_material_with_deleted_filter(
+        &self,
+        material_id: &str,
+        active: bool,
+    ) -> Result<Vec<Annotation>, AppError> {
+        let deleted_filter = if active {
+            "deleted_at IS NULL"
+        } else {
+            "deleted_at IS NOT NULL"
+        };
+        let query = format!(
             "SELECT id, material_id, cfi, quote, before, after, document_version,
                     recovery_state, style, color, note, created_at, updated_at, deleted_at
              FROM annotations
-             WHERE material_id = ?1 AND deleted_at IS NULL
-             ORDER BY created_at",
-        )?;
+             WHERE material_id = ?1 AND {deleted_filter}
+             ORDER BY created_at"
+        );
+        let mut statement = self.connection.prepare(&query)?;
         let rows = statement.query_map([material_id], annotation_from_row)?;
         let mut annotations = Vec::new();
         for row in rows {
@@ -65,9 +141,21 @@ impl<'a> AnnotationRepository<'a> {
         Ok(annotations)
     }
 
-    /// 创建或更新一条批注(含编辑文字笔记)。按 id 幂等 upsert。
-    /// 校验材料存在,避免孤儿批注附着到不存在的材料。
-    pub fn save(&self, annotation: &Annotation) -> Result<Annotation, AppError> {
+    fn get_by_id(&self, annotation_id: &str) -> Result<Option<Annotation>, AppError> {
+        self.connection
+            .query_row(
+                "SELECT id, material_id, cfi, quote, before, after, document_version,
+                        recovery_state, style, color, note, created_at, updated_at, deleted_at
+                 FROM annotations
+                 WHERE id = ?1",
+                [annotation_id],
+                annotation_from_row,
+            )
+            .optional()
+            .map_err(AppError::from)
+    }
+
+    fn save_one(&self, annotation: &Annotation) -> Result<(), AppError> {
         self.ensure_material(&annotation.material_id)?;
         self.connection.execute(
             "INSERT INTO annotations
@@ -104,7 +192,7 @@ impl<'a> AnnotationRepository<'a> {
                 annotation.deleted_at,
             ],
         )?;
-        Ok(annotation.clone())
+        Ok(())
     }
 
     /// 逻辑删除一条批注(保留记录,标记 deleted_at)。
@@ -158,6 +246,7 @@ fn annotation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Annotation> {
             after,
             document_version,
             recovery_state: match recovery_state.as_str() {
+                "reanchored" => AnnotationRecoveryState::Reanchored,
                 "orphaned" => AnnotationRecoveryState::Orphaned,
                 _ => AnnotationRecoveryState::Resolved,
             },
@@ -174,6 +263,7 @@ fn annotation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Annotation> {
 fn recovery_state_str(state: &AnnotationRecoveryState) -> &'static str {
     match state {
         AnnotationRecoveryState::Resolved => "resolved",
+        AnnotationRecoveryState::Reanchored => "reanchored",
         AnnotationRecoveryState::Orphaned => "orphaned",
     }
 }
@@ -193,11 +283,15 @@ mod tests {
 
     fn migrated_connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
+        connection.pragma_update(None, "foreign_keys", "ON").unwrap();
         connection
             .execute_batch(include_str!("migrations/0002_materials.sql"))
             .unwrap();
         connection
             .execute_batch(include_str!("migrations/0006_annotations.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0009_annotation_recovery_state.sql"))
             .unwrap();
         connection
     }
@@ -315,5 +409,49 @@ mod tests {
 
         let list = repository.list_by_material("material-1").unwrap();
         assert_eq!(list[0].anchor.recovery_state, AnnotationRecoveryState::Orphaned);
+    }
+
+    #[test]
+    fn reanchored_recovery_state_roundtrips() {
+        let connection = migrated_connection();
+        seed_material(&connection, "material-1");
+        let repository = AnnotationRepository::new(&connection);
+
+        let mut annotation = sample_annotation("material-1");
+        annotation.anchor.recovery_state = AnnotationRecoveryState::Reanchored;
+        repository.save(&annotation).unwrap();
+
+        let list = repository.list_by_material("material-1").unwrap();
+        assert_eq!(list[0].anchor.recovery_state, AnnotationRecoveryState::Reanchored);
+    }
+
+    #[test]
+    fn deleted_annotations_can_be_listed_and_restored() {
+        let connection = migrated_connection();
+        seed_material(&connection, "material-1");
+        let repository = AnnotationRepository::new(&connection);
+        repository.save(&sample_annotation("material-1")).unwrap();
+
+        repository.delete("ann-1").unwrap();
+        assert_eq!(repository.list_deleted_by_material("material-1").unwrap().len(), 1);
+
+        let restored = repository.restore("ann-1").unwrap().unwrap();
+        assert_eq!(restored.anchor.cfi, "epubcfi(/6/4)!/4/2/2/1:0");
+        assert!(restored.deleted_at.is_none());
+        assert!(repository.list_deleted_by_material("material-1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn save_many_rolls_back_when_one_annotation_is_invalid() {
+        let connection = migrated_connection();
+        seed_material(&connection, "material-1");
+        let repository = AnnotationRepository::new(&connection);
+        let mut invalid = sample_annotation("no-such");
+        invalid.id = "ann-invalid".to_string();
+
+        assert!(repository
+            .save_many(&[sample_annotation("material-1"), invalid])
+            .is_err());
+        assert!(repository.list_by_material("material-1").unwrap().is_empty());
     }
 }

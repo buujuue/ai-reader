@@ -10,6 +10,8 @@ const baseState: AndroidBackState = {
   activeSearchViewId: null,
   markdownDirtyCloseOpen: false,
   recoveryDialogOpen: false,
+  versionMigrationDialogOpen: false,
+  versionMigrationSnapshotDialogOpen: false,
   metadataDialogOpen: false,
   purgeDialogOpen: false,
   externalLinkDialogOpen: false,

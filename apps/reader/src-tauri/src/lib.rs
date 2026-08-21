@@ -27,6 +27,7 @@ pub fn run() {
             let paths = LibraryPaths::new(&app_dir)?;
             // 恢复切换可能在上一次进程异常终止时停在数据库文件替换中，必须在打开 SQLite 前处理。
             db::backup::recover_library_restore(&paths)?;
+            db::import::recover_version_migrations(&paths)?;
             let connection = open_database(&app_dir.join(DATABASE_FILE_NAME))?;
             app.manage(DatabaseHandle::new(connection));
             app.manage(paths.clone());
@@ -46,8 +47,11 @@ pub fn run() {
             commands::workspace::load_workspace_state,
             commands::workspace::save_workspace_state,
             commands::annotations::list_annotations,
+            commands::annotations::list_deleted_annotations,
             commands::annotations::save_annotation,
+            commands::annotations::save_annotations,
             commands::annotations::delete_annotation,
+            commands::annotations::restore_annotation,
             commands::annotations::write_annotation_markdown,
             commands::import::stage_import,
             commands::import::read_staged_file,
@@ -66,6 +70,10 @@ pub fn run() {
             commands::import::remove_material_cover,
             commands::import::restore_source_metadata,
             commands::import::read_material_cover,
+            commands::import::commit_version_migration,
+            commands::import::list_version_migration_snapshots,
+            commands::import::restore_version_migration_snapshot,
+            commands::import::clear_version_migration_snapshot,
             commands::markdown_recovery::write_markdown_recovery,
             commands::markdown_recovery::list_markdown_recoveries,
             commands::markdown_recovery::discard_markdown_recovery,

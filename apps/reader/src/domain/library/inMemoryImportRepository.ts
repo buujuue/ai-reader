@@ -1,5 +1,11 @@
 import type { ImportRepository, MarkdownRecoverySnapshot } from './importRepository';
 import type {
+  VersionMigrationCommitRequest,
+  VersionMigrationCommitResult,
+  VersionMigrationRestoreResult,
+  VersionMigrationSnapshot,
+} from './versionMigrationPersistence';
+import type {
   MaterialOverride,
   ReadingMaterial,
   SourceMetadata,
@@ -39,6 +45,16 @@ export function createInMemoryImportRepository(
   const markdownRecoveries = new Map<
     string,
     Omit<MarkdownRecoverySnapshot, 'status'>
+  >();
+  const versionMigrationSnapshots = new Map<
+    string,
+    {
+      snapshot: VersionMigrationSnapshot;
+      material: InternalMaterial;
+      bytes: Uint8Array;
+      annotations: VersionMigrationCommitRequest['previousAnnotations'];
+      workspaceState: VersionMigrationCommitRequest['previousWorkspaceState'];
+    }
   >();
 
   function toMaterial(internal: InternalMaterial): ReadingMaterial {
@@ -220,6 +236,86 @@ export function createInMemoryImportRepository(
         return null;
       }
       return new Uint8Array(bytes);
+    },
+
+    async commitVersionMigration(
+      request: VersionMigrationCommitRequest,
+    ): Promise<VersionMigrationCommitResult> {
+      const internal = requireInternal(materials, request.materialId);
+      if (internal.fingerprint !== request.expectedSourceFingerprint) {
+        throw new Error('版本迁移源材料已变化,请重新预览');
+      }
+      if (request.staged.fingerprint !== request.expectedTargetFingerprint) {
+        throw new Error('版本迁移暂存文件指纹不匹配');
+      }
+      const bytes = stagedBytes.get(request.staged.id);
+      if (!bytes) {
+        throw new Error('版本迁移暂存文件不存在');
+      }
+      const targetKey = materialIdentityKey(
+        request.expectedTargetFingerprint,
+        request.staged.originalFileName,
+      );
+      const collision = byIdentity.get(targetKey);
+      if (collision && collision.id !== internal.id) {
+        throw new Error('新版本已作为另一份阅读材料存在,未执行迁移');
+      }
+
+      const snapshotId = crypto.randomUUID();
+      versionMigrationSnapshots.set(snapshotId, {
+        snapshot: {
+          id: snapshotId,
+          materialId: internal.id,
+          sourceFingerprint: internal.fingerprint,
+          targetFingerprint: request.expectedTargetFingerprint,
+          createdAt: Date.now(),
+          status: 'available',
+        },
+        material: { ...internal, source: { ...internal.source } },
+        bytes: new Uint8Array(managedBytes.get(internal.id) ?? []),
+        annotations: structuredClone(request.previousAnnotations),
+        workspaceState: structuredClone(request.previousWorkspaceState),
+      });
+
+      byIdentity.delete(materialIdentityKey(internal.fingerprint, internal.sourceFileName));
+      internal.fingerprint = request.expectedTargetFingerprint;
+      internal.sourceFileName = request.staged.originalFileName;
+      internal.source = { ...request.metadata };
+      managedBytes.set(internal.id, new Uint8Array(bytes));
+      byIdentity.set(targetKey, internal);
+      stagedBytes.delete(request.staged.id);
+      pending.delete(request.staged.id);
+      return { material: toMaterial(internal), snapshotId };
+    },
+
+    async listVersionMigrationSnapshots(): Promise<VersionMigrationSnapshot[]> {
+      return [...versionMigrationSnapshots.values()]
+        .map(({ snapshot }) => ({ ...snapshot }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
+
+    async restoreVersionMigrationSnapshot(
+      snapshotId: string,
+    ): Promise<VersionMigrationRestoreResult> {
+      const stored = versionMigrationSnapshots.get(snapshotId);
+      if (!stored) throw new Error(`迁移恢复快照不存在:${snapshotId}`);
+      const current = requireInternal(materials, stored.material.id);
+      byIdentity.delete(materialIdentityKey(current.fingerprint, current.sourceFileName));
+      materials.set(stored.material.id, { ...stored.material, source: { ...stored.material.source } });
+      managedBytes.set(stored.material.id, new Uint8Array(stored.bytes));
+      byIdentity.set(
+        materialIdentityKey(stored.material.fingerprint, stored.material.sourceFileName),
+        materials.get(stored.material.id)!,
+      );
+      return {
+        material: toMaterial(materials.get(stored.material.id)!),
+        annotations: [...structuredClone(stored.annotations)],
+        workspaceState: structuredClone(stored.workspaceState),
+      };
+    },
+
+    async clearVersionMigrationSnapshot(snapshotId: string): Promise<void> {
+      versionMigrationSnapshots.delete(snapshotId);
     },
 
     async saveMarkdown(materialId, content): Promise<ReadingMaterial> {

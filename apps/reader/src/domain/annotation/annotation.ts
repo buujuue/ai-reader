@@ -8,7 +8,7 @@
  */
 
 /** 文本锚点的恢复状态。 */
-export type AnnotationRecoveryState = 'resolved' | 'orphaned';
+export type AnnotationRecoveryState = 'resolved' | 'reanchored' | 'orphaned';
 
 /**
  * 文本锚点(Text Anchor):把批注重新定位到材料内容的版本化数据。

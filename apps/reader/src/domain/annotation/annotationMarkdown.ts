@@ -83,6 +83,9 @@ function locationDescription(
   if (annotation.anchor.recoveryState === 'orphaned') {
     return `失联（原始${textPosition}；无法安全恢复）`;
   }
+  if (annotation.anchor.recoveryState === 'reanchored') {
+    return `已重锚（${textPosition}；已根据引文恢复到新位置）`;
+  }
   return outdated
     ? `待恢复（原始${textPosition}；文档版本已变化，尚未确认位置）`
     : textPosition;
@@ -109,6 +112,8 @@ function formatAnnotation(
   const status =
     annotation.anchor.recoveryState === 'orphaned'
       ? '失联批注（原引文与笔记已保留，未伪装成已定位）'
+      : annotation.anchor.recoveryState === 'reanchored'
+        ? '已重锚批注（根据引文恢复到新位置）'
       : isOutdated(annotation, material)
         ? '待恢复（文档版本已变化，尚未确认位置）'
         : '已定位';

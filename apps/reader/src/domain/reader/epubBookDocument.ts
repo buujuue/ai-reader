@@ -155,6 +155,10 @@ export class EpubBookDocument implements BookDocument {
     return this.host?.getCurrentIndex() ?? null;
   }
 
+  getContentDocumentIndex(document: Document): number | null {
+    return this.host?.getContentDocumentIndex?.(document) ?? null;
+  }
+
   addAnnotation(annotation: { value: string; color: string }): void {
     this.host?.addAnnotation(annotation);
   }

@@ -11,6 +11,7 @@ import {
 } from './annotationCommands';
 import { useAnnotationStore } from './annotationStore';
 import { useReaderRuntime } from './readerRuntime';
+import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { useLibraryStore } from './libraryStore';
 
@@ -54,6 +55,7 @@ function setup() {
   const repository = createInMemoryAnnotationRepository();
   registerAnnotationCommands(registry, { annotationRepository: repository });
   useAnnotationStore.getState().resetToDefault();
+  useShellUiStore.getState().setAnnotationUndoTarget(null);
   return { registry, repository };
 }
 
@@ -169,6 +171,25 @@ describe('Annotation 命令', () => {
     expect(useAnnotationStore.getState().byMaterial['material-1']).toHaveLength(0);
   });
 
+  it('软删除后可通过恢复命令恢复原批注与原锚点', async () => {
+    const { registry, repository } = setup();
+    const annotation = makeAnnotation();
+    await repository.saveAnnotation(annotation);
+    useAnnotationStore.getState().upsertAnnotation(annotation);
+
+    await registry.execute('annotation.delete', 'material-1', 'ann-1');
+    await registry.execute('annotation.restore', 'material-1', 'ann-1');
+
+    await expect(repository.listByMaterial('material-1')).resolves.toMatchObject([
+      { ...annotation, deletedAt: null, updatedAt: expect.any(Number) },
+    ]);
+    expect(useAnnotationStore.getState().byMaterial['material-1']).toMatchObject([
+      { ...annotation, deletedAt: null, updatedAt: expect.any(Number) },
+    ]);
+    expect(useShellUiStore.getState().annotationUndoTarget).toBeNull();
+    expect(useShellUiStore.getState().statusMessage).toBe('已恢复批注');
+  });
+
   it('加载材料批注时填充运行时集合并重绘到开放视图', async () => {
     const { repository } = setup();
     const annotation = makeAnnotation();
@@ -230,7 +251,7 @@ describe('Annotation 命令', () => {
       ...annotation.anchor,
       cfi: 'epubcfi(/6/4)!/4/4:0',
       documentVersion: 'new-fingerprint',
-      recoveryState: 'resolved',
+      recoveryState: 'reanchored',
     });
     expect(document.clearSearch).toHaveBeenCalledOnce();
     expect(document.addAnnotation).toHaveBeenCalledWith({

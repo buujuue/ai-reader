@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -116,6 +116,20 @@ describe('阅读工作台外壳', () => {
     expect(screen.getByRole('complementary', { name: '书库侧栏' })).toBeInTheDocument();
     expect(screen.getByRole('status', { name: '状态栏' })).toBeInTheDocument();
     expect(screen.getByText(/尚未导入阅读材料/)).toBeInTheDocument();
+  });
+
+  it('左侧面板手柄支持键盘调整并持久化宽度', async () => {
+    renderApp(services);
+
+    const handle = screen.getByRole('separator', { name: '调整左侧面板宽度' });
+    expect(handle).toHaveAttribute('aria-valuenow', '304');
+
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+
+    await waitFor(() => {
+      expect(handle).toHaveAttribute('aria-valuenow', '316');
+    });
+    await expect(repository.loadState()).resolves.toMatchObject({ activityPanelWidth: 316 });
   });
 
   it('默认生产入口呈现 C 工作台顶栏并只保留书库与目录活动入口', () => {
@@ -677,6 +691,7 @@ describe('打开 EPUB 并重启续读', () => {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       tocVisible: workspace.tocVisible,
+      activityPanelWidth: workspace.activityPanelWidth,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,
@@ -803,6 +818,7 @@ describe('打开 EPUB 并重启续读', () => {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       tocVisible: workspace.tocVisible,
+      activityPanelWidth: workspace.activityPanelWidth,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
       activeEditorGroupId: workspace.activeEditorGroupId,

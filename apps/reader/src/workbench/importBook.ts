@@ -5,8 +5,12 @@ import {
   type EpubPreflightReport,
 } from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
-import type { ReadingMaterial, SourceMetadata } from '../domain/library/material';
+import type { ReadingMaterial, SourceMetadata, StagedImport } from '../domain/library/material';
 import { formatFromSourceFileName } from '../domain/library/materialFormat';
+import {
+  findVersionMigrationCandidates,
+  type VersionMigrationCandidate,
+} from '../domain/library/versionMigration';
 import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import { PdfInspectError, inspectPdf } from '../domain/reader/pdf/pdfInspector';
 import { MarkdownInspectError, inspectMarkdown } from '../domain/reader/markdown/markdownInspector';
@@ -26,6 +30,13 @@ export type ImportOutcome =
       fileName: string;
       material: ReadingMaterial;
       /** EPUB 局部降级报告；在 commit 前生成，供 UI 展示可行动提示。 */
+      preflight?: EpubPreflightReport;
+    }
+  | {
+      kind: 'migrationCandidate';
+      sourcePath: string;
+      fileName: string;
+      candidates: VersionMigrationCandidate[];
       preflight?: EpubPreflightReport;
     }
   | { kind: 'failure'; sourcePath: string; fileName: string; failure: ImportFailure };
@@ -61,8 +72,13 @@ export async function importBooks(
   }
 
   const outcomes: ImportOutcome[] = [];
+  let existingMaterials = await dependencies.importRepository.listMaterials();
   for (const sourcePath of sourcePaths) {
-    outcomes.push(await importOneFile(sourcePath, dependencies));
+    const outcome = await importOneFile(sourcePath, dependencies, existingMaterials);
+    outcomes.push(outcome);
+    if (outcome.kind === 'success') {
+      existingMaterials = [...existingMaterials, outcome.material];
+    }
   }
   return outcomes;
 }
@@ -70,22 +86,44 @@ export async function importBooks(
 async function importOneFile(
   sourcePath: string,
   dependencies: ImportBookDependencies,
+  existingMaterials: readonly ReadingMaterial[],
 ): Promise<ImportOutcome> {
-  let staged;
+  let staged: StagedImport | undefined;
+  let stagedSuccessfully = false;
   try {
-    staged = await dependencies.importRepository.stageImport(sourcePath);
-    const bytes = await dependencies.importRepository.readStagedFile(staged);
-    const inspected = await inspectFile(bytes, staged.originalFileName, dependencies.pdfLib);
-    const material = await dependencies.importRepository.commitImport(staged, inspected.metadata);
+    const stagedImport = await dependencies.importRepository.stageImport(sourcePath);
+    staged = stagedImport;
+    stagedSuccessfully = true;
+    const bytes = await dependencies.importRepository.readStagedFile(stagedImport);
+    const inspected = await inspectFile(bytes, stagedImport.originalFileName, dependencies.pdfLib);
+    const candidates = findVersionMigrationCandidates(
+      existingMaterials,
+      stagedImport,
+      inspected.metadata,
+    ).map((material) => ({
+      material,
+      staged: stagedImport,
+      metadata: inspected.metadata,
+    }));
+    if (candidates.length > 0) {
+      return {
+        kind: 'migrationCandidate',
+        sourcePath,
+        fileName: stagedImport.originalFileName,
+        candidates,
+        ...(inspected.preflight ? { preflight: inspected.preflight } : {}),
+      };
+    }
+    const material = await dependencies.importRepository.commitImport(stagedImport, inspected.metadata);
     return {
       kind: 'success',
       sourcePath,
-      fileName: staged.originalFileName,
+      fileName: stagedImport.originalFileName,
       material,
       ...(inspected.preflight ? { preflight: inspected.preflight } : {}),
     };
   } catch (error) {
-    if (staged) {
+    if (staged && stagedSuccessfully) {
       try {
         await dependencies.importRepository.discardImport(staged);
       } catch {

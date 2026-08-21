@@ -3,6 +3,8 @@ import { COMMAND_IDS } from '../commands/commandRegistry';
 import type { Annotation } from '../domain/annotation/annotation';
 import {
   buildTextAnchor,
+  getRangeOwnerDocuments,
+  getSingleSectionSelectionError,
   recoverTextAnchor,
   type TextAnchorSearchMatch,
 } from '../domain/annotation/textAnchor';
@@ -129,6 +131,7 @@ async function recoverAnnotationsForDocument(
   repository: AnnotationRepository,
 ): Promise<Annotation[]> {
   const recovered: Annotation[] = [];
+  const pendingPersistence: Annotation[] = [];
   let orphanedCount = 0;
 
   for (const annotation of annotations) {
@@ -140,11 +143,14 @@ async function recoverAnnotationsForDocument(
 
     // PDF 区域锚点依赖页码与归一化矩形，不把它当作文本引文参与恢复，避免版本变化后误附着。
     if (isPdfTextAnchor(annotation.anchor.cfi)) {
-      const next = await repository.saveAnnotation({
+      const next = {
         ...annotation,
-        anchor: { ...annotation.anchor, recoveryState: 'orphaned' },
-      });
+        anchor: { ...annotation.anchor, recoveryState: 'orphaned' as const },
+      };
       recovered.push(next);
+      if (next.anchor.recoveryState !== annotation.anchor.recoveryState) {
+        pendingPersistence.push(next);
+      }
       orphanedCount += 1;
       continue;
     }
@@ -161,9 +167,9 @@ async function recoverAnnotationsForDocument(
         documentVersion: currentVersion,
         recoveryState: 'resolved' as const,
       };
-      recovered.push(
-        await repository.saveAnnotation({ ...annotation, anchor: nextAnchor }),
-      );
+      const next = { ...annotation, anchor: nextAnchor };
+      recovered.push(next);
+      pendingPersistence.push(next);
       continue;
     }
 
@@ -175,11 +181,14 @@ async function recoverAnnotationsForDocument(
       }
     } catch {
       // 搜索引擎异常时也不能把旧 CFI 当作安全位置,先保留为失联并等待重试。
-      const next = await repository.saveAnnotation({
+      const next = {
         ...annotation,
-        anchor: { ...annotation.anchor, recoveryState: 'orphaned' },
-      });
+        anchor: { ...annotation.anchor, recoveryState: 'orphaned' as const },
+      };
       recovered.push(next);
+      if (next.anchor.recoveryState !== annotation.anchor.recoveryState) {
+        pendingPersistence.push(next);
+      }
       orphanedCount += 1;
       continue;
     } finally {
@@ -197,7 +206,20 @@ async function recoverAnnotationsForDocument(
       nextAnchor.recoveryState !== annotation.anchor.recoveryState;
     const next = changed ? { ...annotation, anchor: nextAnchor } : annotation;
     if (next.anchor.recoveryState === 'orphaned') orphanedCount += 1;
-    recovered.push(changed ? await repository.saveAnnotation(next) : next);
+    recovered.push(next);
+    if (changed) pendingPersistence.push(next);
+  }
+
+  // Recovery may touch several annotations. Persist the complete set through
+  // one adapter-level commit so a failure cannot leave the first half migrated
+  // while the runtime store still contains the old set.
+  if (pendingPersistence.length > 0) {
+    const saved = await repository.saveAnnotations(pendingPersistence);
+    const savedById = new Map(saved.map((annotation) => [annotation.id, annotation]));
+    for (let index = 0; index < recovered.length; index += 1) {
+      const savedAnnotation = savedById.get(recovered[index]!.id);
+      if (savedAnnotation) recovered[index] = savedAnnotation;
+    }
   }
 
   if (orphanedCount > 0) {
@@ -229,20 +251,38 @@ export function registerAnnotationCommands(
     if (!materialId) return;
     const document = useReaderRuntime.getState().getDocument(viewId);
     if (!document) return;
-    const index = document.getCurrentIndex();
+    const rangeDocuments = getRangeOwnerDocuments(range);
+    const selectionError =
+      document.format === 'epub'
+        ? getSingleSectionSelectionError(
+            range,
+            (contentDocument) => document.getContentDocumentIndex?.(contentDocument) ?? null,
+          )
+        : null;
+    if (selectionError) {
+      useShellUiStore.getState().setStatusMessage(selectionError);
+      return;
+    }
+    const contentDocumentIndex = rangeDocuments.start
+      ? document.getContentDocumentIndex?.(rangeDocuments.start) ?? null
+      : null;
+    const index = contentDocumentIndex ?? document.getCurrentIndex();
     if (index === null) return;
     const quote = range.toString().trim();
     if (!quote) return;
+    const cfi = document.getCFI(index, range);
+    if (!cfi) return;
 
+    const now = Date.now();
     const annotation: Annotation = {
       id: nextAnnotationId(),
       materialId,
-      anchor: buildTextAnchor(document.getCFI(index, range), range, materialFingerprint(materialId)),
+      anchor: buildTextAnchor(cfi, range, materialFingerprint(materialId)),
       style: 'highlight',
       color: DEFAULT_HIGHLIGHT_COLOR,
       note: '',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
       deletedAt: null,
     };
     const saved = await dependencies.annotationRepository.saveAnnotation(annotation);
@@ -307,16 +347,40 @@ export function registerAnnotationCommands(
     const materialId = args[0] as string | undefined;
     const annotationId = args[1] as string | undefined;
     if (!materialId || !annotationId) return;
-    await dependencies.annotationRepository.deleteAnnotation(annotationId);
     const annotation = useAnnotationStore
       .getState()
       .getMaterialAnnotations(materialId)
       .find((item) => item.id === annotationId);
+    await dependencies.annotationRepository.deleteAnnotation(annotationId);
     useAnnotationStore.getState().removeAnnotation(materialId, annotationId);
+    useShellUiStore.getState().setAnnotationUndoTarget({ materialId, annotationId });
     if (annotation) {
       for (const document of useReaderRuntime.getState().documents.values()) {
-        document.removeAnnotation(annotation.anchor.cfi);
+        try {
+          document.removeAnnotation(annotation.anchor.cfi);
+        } catch {
+          // 持久化已经成功;覆盖层失败不会回滚或丢失批注,下次加载会重绘。
+        }
       }
     }
+  });
+
+  // 恢复一条软删除批注。恢复只清除 tombstone,不重新计算或改变原锚点。
+  registry.register(COMMAND_IDS.annotationRestore, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    const annotationId = args[1] as string | undefined;
+    if (!materialId || !annotationId) return;
+    const restored = await dependencies.annotationRepository.restoreAnnotation(annotationId);
+    if (!restored) {
+      useShellUiStore.getState().setStatusMessage('批注已不存在或未处于删除状态');
+      return;
+    }
+    if (restored.materialId !== materialId) {
+      throw new Error('恢复批注归属材料不匹配');
+    }
+    useAnnotationStore.getState().upsertAnnotation(restored);
+    useShellUiStore.getState().setAnnotationUndoTarget(null);
+    redrawAnnotationsForMaterial(materialId);
+    useShellUiStore.getState().setStatusMessage('已恢复批注');
   });
 }

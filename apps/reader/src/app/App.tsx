@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, type CSSProperties } from 'react';
 
 import { ActivityBar } from '../components/ActivityBar';
 import { AnnotationPanel } from '../components/AnnotationSidebar';
@@ -13,7 +13,9 @@ import { PrimarySidebar } from '../components/PrimarySidebar';
 import { PurgeConfirmDialog } from '../components/PurgeConfirmDialog';
 import { ReaderSettingsDialog } from '../components/ReaderSettingsDialog';
 import { StatusBar } from '../components/StatusBar';
+import { SidebarResizeHandle } from '../components/SidebarResizeHandle';
 import { TocSidebar } from '../components/TocSidebar';
+import { VersionMigrationDialog } from '../components/VersionMigrationDialog';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { resolveAndroidBackAction } from './androidBackButton';
 import { useShellUiStore } from '../workbench/shellUiStore';
@@ -34,6 +36,7 @@ export function App() {
   } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
+  const activityPanelWidth = useWorkspaceStore((state) => state.activityPanelWidth);
   const activeViewId = useWorkspaceStore((state) => {
     const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
     return group?.activeViewId ?? null;
@@ -50,6 +53,12 @@ export function App() {
     (state) => state.markdownDirtyCloseViewId !== null,
   );
   const recoveryDialogOpen = useShellUiStore((state) => state.markdownRecoverySnapshots.length > 0);
+  const versionMigrationDialogOpen = useShellUiStore(
+    (state) => state.versionMigrationCandidates.length > 0 || state.versionMigrationPreview !== null,
+  );
+  const versionMigrationSnapshotDialogOpen = useShellUiStore(
+    (state) => state.versionMigrationSnapshotDialogOpen,
+  );
   const metadataDialogOpen = useShellUiStore((state) => state.metadataEditorMaterialId !== null);
   const purgeDialogOpen = useShellUiStore((state) => state.purgeMaterialId !== null);
   const externalLinkDialogOpen = useShellUiStore((state) => state.externalLinkUrl !== null);
@@ -71,6 +80,8 @@ export function App() {
   }, tocVisible ? 'toc' : 'primary');
   const effectiveVisibleSidebars =
     layoutPolicy.mode === 'compact' && compactActivityPanelDismissed ? [] : visibleSidebars;
+  const hasInlineSidebar =
+    layoutPolicy.sidebarPresentation === 'inline' && effectiveVisibleSidebars.length > 0;
   const visibleSidebarKey = effectiveVisibleSidebars.join(',');
 
   useEffect(() => {
@@ -139,6 +150,8 @@ export function App() {
           activeSearchViewId,
           markdownDirtyCloseOpen,
           recoveryDialogOpen,
+          versionMigrationDialogOpen,
+          versionMigrationSnapshotDialogOpen,
           metadataDialogOpen,
           purgeDialogOpen,
           externalLinkDialogOpen,
@@ -175,6 +188,14 @@ export function App() {
             break;
           case 'dismissNoteDialog':
             void commands.execute(COMMAND_IDS.shellDismissDialog, 'note').catch(() => undefined);
+            break;
+          case 'dismissVersionMigration':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'versionMigration').catch(() => undefined);
+            break;
+          case 'dismissVersionMigrationSnapshots':
+            void commands
+              .execute(COMMAND_IDS.shellDismissDialog, 'versionMigrationSnapshots')
+              .catch(() => undefined);
             break;
           case 'dismissAnnotationPanel':
             void commands.execute(COMMAND_IDS.shellDismissDialog, 'annotationPanel').catch(() => undefined);
@@ -214,6 +235,8 @@ export function App() {
     noteDialogOpen,
     purgeDialogOpen,
     recoveryDialogOpen,
+    versionMigrationDialogOpen,
+    versionMigrationSnapshotDialogOpen,
     androidBackButton,
     typographyDialogOpen,
     visibleSidebarKey,
@@ -323,11 +346,12 @@ export function App() {
         data-layout-mode={layoutPolicy.mode}
         data-sidebar-presentation={layoutPolicy.sidebarPresentation}
         className="relative flex min-h-0 min-w-0 flex-1"
+        style={{ '--activity-panel-width': `${activityPanelWidth}px` } as CSSProperties}
       >
         <div
           className="app-left-navigation"
           data-has-panel={
-            layoutPolicy.sidebarPresentation === 'inline' && effectiveVisibleSidebars.length > 0
+            hasInlineSidebar
           }
         >
           <ActivityBar />
@@ -340,6 +364,7 @@ export function App() {
         </div>
         {layoutPolicy.sidebarPresentation === 'inline' ? (
           <>
+            {hasInlineSidebar ? <SidebarResizeHandle /> : null}
             <div id="reader-main" className="app-reader-main min-h-0 min-w-0 flex-1">
               <EditorArea layoutPolicy={layoutPolicy} />
             </div>
@@ -354,13 +379,15 @@ export function App() {
               className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
             >
               {effectiveVisibleSidebars.includes('toc') ? (
-                <div className="pointer-events-auto absolute inset-y-0 left-[3.375rem] w-[min(304px,calc(100vw-54px))] shadow-2xl shadow-black/50">
+                <div className="app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50">
                   <TocSidebar />
+                  <SidebarResizeHandle />
                 </div>
               ) : null}
               {effectiveVisibleSidebars.includes('primary') ? (
-                <div className="pointer-events-auto absolute inset-y-0 left-[3.375rem] w-[min(304px,calc(100vw-54px))] shadow-2xl shadow-black/50">
+                <div className="app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50">
                   <PrimarySidebar />
+                  <SidebarResizeHandle />
                 </div>
               ) : null}
             </div>
@@ -371,6 +398,7 @@ export function App() {
       <MetadataEditorDialog />
       <MarkdownDirtyCloseDialog />
       <MarkdownRecoveryDialog />
+      <VersionMigrationDialog />
       <PurgeConfirmDialog />
       <ExternalLinkDialog />
       <ReaderSettingsDialog />

@@ -2,12 +2,20 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type { TauriInvoke } from '../tauriInvoke';
 import type { ImportRepository, MarkdownRecoverySnapshot } from './importRepository';
+import type { Annotation } from '../annotation/annotation';
 import type {
   MaterialOverride,
   ReadingMaterial,
   SourceMetadata,
   StagedImport,
 } from './material';
+import type {
+  VersionMigrationCommitRequest,
+  VersionMigrationCommitResult,
+  VersionMigrationRestoreResult,
+  VersionMigrationSnapshot,
+} from './versionMigrationPersistence';
+import type { WorkspaceState } from '../workspace/workspaceState';
 
 export const IMPORT_COMMAND_NAMES = {
   stage: 'stage_import',
@@ -30,6 +38,10 @@ export const IMPORT_COMMAND_NAMES = {
   writeMarkdownRecovery: 'write_markdown_recovery',
   listMarkdownRecoveries: 'list_markdown_recoveries',
   discardMarkdownRecovery: 'discard_markdown_recovery',
+  commitVersionMigration: 'commit_version_migration',
+  listVersionMigrationSnapshots: 'list_version_migration_snapshots',
+  restoreVersionMigrationSnapshot: 'restore_version_migration_snapshot',
+  clearVersionMigrationSnapshot: 'clear_version_migration_snapshot',
 } as const;
 
 function assertStagedShape(raw: unknown): StagedImport {
@@ -106,6 +118,35 @@ function assertMaterialList(raw: unknown): ReadingMaterial[] {
     throw new Error('materials payload is not an array');
   }
   return raw.map(assertMaterialShape);
+}
+
+function assertAnnotationList(raw: unknown): Annotation[] {
+  if (!Array.isArray(raw)) throw new Error('version migration annotations payload is not an array');
+  return raw as Annotation[];
+}
+
+function assertWorkspaceState(raw: unknown): WorkspaceState {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error('version migration workspace payload is malformed');
+  }
+  return raw as WorkspaceState;
+}
+
+function assertVersionMigrationSnapshot(raw: unknown): VersionMigrationSnapshot {
+  const candidate = raw as Partial<VersionMigrationSnapshot> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.id !== 'string' ||
+    typeof candidate.materialId !== 'string' ||
+    typeof candidate.sourceFingerprint !== 'string' ||
+    typeof candidate.targetFingerprint !== 'string' ||
+    typeof candidate.createdAt !== 'number' ||
+    !['available', 'corrupt'].includes(candidate.status ?? '')
+  ) {
+    throw new Error('version migration snapshot payload is malformed');
+  }
+  return candidate as VersionMigrationSnapshot;
 }
 
 function assertMarkdownRecovery(raw: unknown): MarkdownRecoverySnapshot {
@@ -215,6 +256,41 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
         throw new Error('cover bytes payload is not a string');
       }
       return base64ToBytes(raw);
+    },
+    async commitVersionMigration(
+      request: VersionMigrationCommitRequest,
+    ): Promise<VersionMigrationCommitResult> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.commitVersionMigration, { request });
+      const candidate = raw as Partial<VersionMigrationCommitResult> | null;
+      if (typeof candidate !== 'object' || candidate === null || typeof candidate.snapshotId !== 'string') {
+        throw new Error('version migration commit payload is malformed');
+      }
+      return {
+        snapshotId: candidate.snapshotId,
+        material: assertMaterialShape(candidate.material),
+      };
+    },
+    async listVersionMigrationSnapshots(): Promise<VersionMigrationSnapshot[]> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.listVersionMigrationSnapshots);
+      if (!Array.isArray(raw)) throw new Error('version migration snapshots payload is not an array');
+      return raw.map(assertVersionMigrationSnapshot);
+    },
+    async restoreVersionMigrationSnapshot(
+      snapshotId: string,
+    ): Promise<VersionMigrationRestoreResult> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.restoreVersionMigrationSnapshot, { snapshotId });
+      const candidate = raw as Partial<VersionMigrationRestoreResult> | null;
+      if (typeof candidate !== 'object' || candidate === null) {
+        throw new Error('version migration restore payload is malformed');
+      }
+      return {
+        material: assertMaterialShape(candidate.material),
+        annotations: assertAnnotationList(candidate.annotations),
+        workspaceState: assertWorkspaceState(candidate.workspaceState),
+      };
+    },
+    async clearVersionMigrationSnapshot(snapshotId: string): Promise<void> {
+      await invokeFn(IMPORT_COMMAND_NAMES.clearVersionMigrationSnapshot, { snapshotId });
     },
     async saveMarkdown(materialId: string, content: string): Promise<ReadingMaterial> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.saveMarkdown, { materialId, content });

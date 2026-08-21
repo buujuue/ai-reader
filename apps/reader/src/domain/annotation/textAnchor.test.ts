@@ -4,6 +4,9 @@ import {
   buildTextAnchor,
   extractContext,
   findUniqueQuoteMatch,
+  getRangeOwnerDocuments,
+  getSingleSectionSelectionError,
+  isRangeWithinOneDocument,
   recoverTextAnchor,
 } from './textAnchor';
 
@@ -52,6 +55,51 @@ describe('文本锚点构建', () => {
     expect(before).toContain('这是前文');
     expect(after).toContain('在这里');
     document.body.removeChild(container);
+  });
+
+  it('只有 Range 两端属于同一内容文档时才允许作为单章节选择', () => {
+    const first = document.createElement('p');
+    first.textContent = '第一节';
+    const second = document.createElement('p');
+    second.textContent = '第二节';
+    document.body.append(first, second);
+
+    const range = document.createRange();
+    const firstText = first.firstChild!;
+    const secondText = second.firstChild!;
+    range.setStart(firstText, 0);
+    range.setEnd(secondText, 2);
+
+    const documents = getRangeOwnerDocuments(range);
+    expect(documents.start).toBe(document);
+    expect(documents.end).toBe(document);
+    expect(isRangeWithinOneDocument(range)).toBe(true);
+
+    first.remove();
+    second.remove();
+  });
+
+  it('Range 两端属于不同内容文档时拒绝保存为单条批注', () => {
+    const otherDocument = document.implementation.createHTMLDocument('other');
+    const range = {
+      startContainer: document.createTextNode('第一节'),
+      endContainer: otherDocument.createTextNode('第二节'),
+    } as unknown as Range;
+
+    expect(getSingleSectionSelectionError(range, () => 0)).toBe(
+      '跨章节选择不能保存为单条批注，请分别选择每个章节。',
+    );
+  });
+
+  it('无法映射 spine section 时拒绝保存选区', () => {
+    const textNode = document.createTextNode('正文');
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, 2);
+
+    expect(getSingleSectionSelectionError(range, () => null)).toBe(
+      '无法确定选区所属章节，请重新选择正文。',
+    );
   });
 
   it('罕见情况下拿不到上下文时返回空字符串', () => {
@@ -106,7 +154,7 @@ describe('文本锚点构建', () => {
       ...anchor,
       cfi: 'epubcfi(/6/1)!/4/4:0',
       documentVersion: 'new-version',
-      recoveryState: 'resolved',
+      recoveryState: 'reanchored',
     });
   });
 

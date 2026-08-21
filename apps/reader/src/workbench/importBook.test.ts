@@ -77,6 +77,27 @@ describe('importBooks 批量编排', () => {
     expect((await io.importRepository.listMaterials()).map((m) => m.title)).toEqual(['甲', '乙']);
   });
 
+  it('发现元数据相同但内容不同的 EPUB 时只返回迁移候选并保留暂存文件', async () => {
+    const oldBytes = buildEpub({ title: '同一本书', author: '作者', language: 'zh' });
+    const newBytes = buildEpub({ title: '同一本书', author: '作者', language: 'zh', withCover: true });
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, 'old.epub', oldBytes);
+    addInMemorySource(sources, 'new.epub', newBytes);
+    const repository = createInMemoryImportRepository(sources);
+    const oldStaged = await repository.stageImport('old.epub');
+    await repository.commitImport(oldStaged, { title: '同一本书', author: '作者', language: 'zh' });
+    const picker = createInMemoryFilePicker(['new.epub']);
+
+    const outcomes = (await importBooks({ importRepository: repository, filePicker: picker }))!;
+    const candidate = outcomes[0];
+
+    expect(candidate?.kind).toBe('migrationCandidate');
+    expect(await repository.listMaterials()).toHaveLength(1);
+    if (candidate?.kind === 'migrationCandidate') {
+      expect(await repository.readStagedFile(candidate.candidates[0]!.staged)).toEqual(newBytes);
+    }
+  });
+
   it('单个损坏文件失败不影响其它成功文件,且失败文件不留记录', async () => {
     const io = makeIo({
       sourcePaths: ['good.epub', 'bad.epub'],

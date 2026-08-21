@@ -109,6 +109,13 @@ export interface BookDocument {
   /** 读取当前内容文档所在章节序号(index);未就绪时返回 null。 */
   getCurrentIndex(): number | null;
 
+  /**
+   * 返回一个内容 iframe 所属的 spine section 序号。
+   * 这是可选能力，供 EPUB 选择提交前校验 Range 是否仍位于同一章节；
+   * 不支持该映射的格式由实现使用当前章节作为兼容回退。
+   */
+  getContentDocumentIndex?(document: Document): number | null;
+
   /** 绘制一条高亮批注(经宿主覆盖层渲染,颜色取自批注)。 */
   addAnnotation(annotation: { value: string; color: string }): void;
 

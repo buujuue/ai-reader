@@ -65,6 +65,7 @@ export function ApplicationBar() {
         { id: 'separator-1', separator: true },
         { id: 'backup', label: '导出完整备份…' },
         { id: 'restore', label: '恢复完整备份…' },
+        { id: 'migration-snapshots', label: '版本迁移恢复快照…' },
         { id: 'separator-2', separator: true },
         { id: 'close', label: '关闭当前材料', disabled: !activeViewId },
       ];
@@ -93,6 +94,9 @@ export function ApplicationBar() {
         break;
       case 'file:restore':
         execute(COMMAND_IDS.libraryRestoreBackup);
+        break;
+      case 'file:migration-snapshots':
+        execute(COMMAND_IDS.libraryListVersionMigrationSnapshots);
         break;
       case 'file:close':
         if (activeViewId) execute(COMMAND_IDS.readerCloseView, activeViewId);

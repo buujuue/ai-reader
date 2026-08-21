@@ -1,8 +1,23 @@
 import type { CommandRegistry } from '../commands/commandRegistry';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
+import { EpubBookDocument } from '../domain/reader/epubBookDocument';
+import {
+  createFoliateViewHostFactory,
+  type FoliateViewHostFactory,
+} from '../domain/reader/foliateViewHost';
+import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
+import { serializeWorkspaceState } from './workbenchCommands';
+import { useAnnotationStore } from './annotationStore';
 import { useLibraryStore } from './libraryStore';
 import { importBooks, type ImportBookDependencies } from './importBook';
 import { useShellUiStore } from './shellUiStore';
+import { useWorkspaceStore } from './workspaceStore';
+import {
+  buildVersionMigrationPreview,
+  type VersionMigrationCandidate,
+  type VersionMigrationPreview,
+} from '../domain/library/versionMigration';
 
 /** 空串与 null 都归一为 null(清除覆盖并回落到来源),避免把空覆盖钉住。 */
 function normalizeOverrideValue(value: string | null): string | null {
@@ -16,7 +31,15 @@ function normalizeOverrideValue(value: string | null): string | null {
 /** 书库相关的稳定 Command 唯一实现入口。TS 只经 typed ImportRepository 调用平台能力。 */
 export function registerLibraryCommands(
   registry: CommandRegistry,
-  dependencies: ImportBookDependencies,
+  dependencies: ImportBookDependencies & {
+    annotationRepository?: AnnotationRepository;
+    workspaceRepository?: WorkspaceRepository;
+    viewHostFactory?: FoliateViewHostFactory;
+    /** 浏览器降级适配器没有 Rust 的跨仓储原子事务，需要在提交后同步状态。 */
+    syncVersionMigrationState?: boolean;
+    /** Tauri 恢复/提交后重建活动 Reader Runtime，避免继续显示旧 EPUB 字节。 */
+    reloadApplication?: () => void;
+  },
 ): void {
   registry.register(COMMAND_IDS.libraryRefresh, async () => {
     const [materials, trashedMaterials] = await Promise.all([
@@ -131,8 +154,14 @@ export function registerLibraryCommands(
       useLibraryStore.getState().setMaterials(materials);
 
       const succeeded = outcomes.filter((outcome) => outcome.kind === 'success').length;
+      const migrationCandidates = outcomes.flatMap((outcome) =>
+        outcome.kind === 'migrationCandidate' ? outcome.candidates : [],
+      );
+      if (migrationCandidates.length > 0) {
+        useShellUiStore.getState().setVersionMigrationCandidates(migrationCandidates);
+      }
       const failed = outcomes.filter((outcome) => outcome.kind === 'failure');
-      if (failed.length === 0) {
+      if (failed.length === 0 && migrationCandidates.length === 0) {
         useShellUiStore
           .getState()
           .setStatusMessage(`已导入 ${succeeded} 份文件`);
@@ -140,9 +169,11 @@ export function registerLibraryCommands(
         useShellUiStore
           .getState()
           .setStatusMessage(
-            `导入完成:成功 ${succeeded} 份,失败 ${failed.length} 份(${failed
-              .map((outcome) => outcome.fileName)
-              .join('、')})`,
+            `导入完成:成功 ${succeeded} 份,待确认版本迁移 ${migrationCandidates.length} 份,失败 ${failed.length} 份${
+              failed.length > 0
+                ? `(${failed.map((outcome) => outcome.fileName).join('、')})`
+                : ''
+            }`,
           );
       }
     } catch (error) {
@@ -152,5 +183,145 @@ export function registerLibraryCommands(
     } finally {
       useLibraryStore.getState().setImporting(false);
     }
+  });
+
+  registry.register(COMMAND_IDS.libraryPreviewVersionMigration, async (...args: unknown[]) => {
+    const candidate = (args[0] as VersionMigrationCandidate | undefined) ??
+      useShellUiStore.getState().versionMigrationCandidates[0];
+    if (!candidate) throw new Error('没有可预览的版本迁移候选');
+    if (!dependencies.annotationRepository || !dependencies.workspaceRepository) {
+      throw new Error('版本迁移需要批注与工作区 Repository');
+    }
+    if (typeof document === 'undefined' || !document.body) {
+      throw new Error('当前环境无法挂载 EPUB 预览文档');
+    }
+
+    const bytes = await dependencies.importRepository.readStagedFile(candidate.staged);
+    const annotations = await dependencies.annotationRepository.listByMaterial(candidate.material.id);
+    const deletedAnnotations = await dependencies.annotationRepository.listDeletedByMaterial(
+      candidate.material.id,
+    );
+    // 位置节流器可能尚未把最新状态写回 Repository，预览必须以当前可序列化 Store 为准。
+    const workspaceState = serializeWorkspaceState();
+    const container = document.createElement('div');
+    container.setAttribute('aria-hidden', 'true');
+    container.style.cssText =
+      'position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;';
+    document.body.appendChild(container);
+    const documentModel = new EpubBookDocument({
+      bytes,
+      metadata: candidate.metadata,
+      viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
+      sourceFingerprint: candidate.staged.fingerprint,
+    });
+    try {
+      await documentModel.open(container);
+      const preview = await buildVersionMigrationPreview({
+        candidate,
+        document: documentModel,
+        annotations,
+        deletedAnnotations,
+        workspaceState,
+      });
+      useShellUiStore.getState().setVersionMigrationPreview(preview);
+    } finally {
+      documentModel.close();
+      container.remove();
+    }
+  });
+
+  registry.register(COMMAND_IDS.libraryCommitVersionMigration, async (...args: unknown[]) => {
+    const preview = (args[0] as VersionMigrationPreview | undefined) ??
+      useShellUiStore.getState().versionMigrationPreview;
+    if (!preview) throw new Error('没有待确认的版本迁移预览');
+    if (!dependencies.annotationRepository || !dependencies.workspaceRepository) {
+      throw new Error('版本迁移需要批注与工作区 Repository');
+    }
+    const result = await dependencies.importRepository.commitVersionMigration({
+      materialId: preview.candidate.material.id,
+      staged: preview.candidate.staged,
+      metadata: preview.candidate.metadata,
+      expectedSourceFingerprint: preview.candidate.material.fingerprint,
+      expectedTargetFingerprint: preview.candidate.staged.fingerprint,
+      annotations: preview.migratedAnnotations,
+      workspaceState: preview.migratedWorkspaceState,
+      previousAnnotations: preview.sourceAnnotations,
+      previousWorkspaceState: preview.sourceWorkspaceState,
+    });
+    if (dependencies.syncVersionMigrationState !== false) {
+      if (preview.migratedAnnotations.length > 0) {
+        await dependencies.annotationRepository.saveAnnotations(preview.migratedAnnotations);
+      }
+      await dependencies.workspaceRepository.saveState(preview.migratedWorkspaceState);
+    }
+    useLibraryStore.getState().updateMaterial(result.material);
+    useAnnotationStore
+      .getState()
+      .setMaterialAnnotations(
+        result.material.id,
+        preview.migratedAnnotations.filter((annotation) => annotation.deletedAt === null),
+      );
+    useWorkspaceStore.getState().hydrate(preview.migratedWorkspaceState);
+    const remainingCandidates = useShellUiStore
+      .getState()
+      .versionMigrationCandidates.filter(
+        (candidate) => candidate.staged.id !== preview.candidate.staged.id,
+      );
+    useShellUiStore.getState().setVersionMigrationCandidates(remainingCandidates);
+    useShellUiStore.getState().setVersionMigrationPreview(null);
+    useShellUiStore.getState().setStatusMessage('已完成版本迁移，迁移前快照已保留');
+    dependencies.reloadApplication?.();
+  });
+
+  registry.register(COMMAND_IDS.libraryCancelVersionMigration, async () => {
+    const candidates = useShellUiStore.getState().versionMigrationCandidates;
+    const stagedIds = new Set(candidates.map((candidate) => candidate.staged.id));
+    for (const candidate of candidates) {
+      if (stagedIds.has(candidate.staged.id)) {
+        await dependencies.importRepository.discardImport(candidate.staged).catch(() => undefined);
+      }
+      stagedIds.delete(candidate.staged.id);
+    }
+    useShellUiStore.getState().setVersionMigrationCandidates([]);
+    useShellUiStore.getState().setVersionMigrationPreview(null);
+  });
+
+  registry.register(COMMAND_IDS.libraryListVersionMigrationSnapshots, async () => {
+    const snapshots = await dependencies.importRepository.listVersionMigrationSnapshots();
+    useShellUiStore.getState().setVersionMigrationSnapshots(snapshots);
+    useShellUiStore.getState().openVersionMigrationSnapshots();
+  });
+
+  registry.register(COMMAND_IDS.libraryRestoreVersionMigrationSnapshot, async (...args: unknown[]) => {
+    const snapshotId = args[0] as string | undefined;
+    if (!snapshotId) throw new Error('恢复迁移快照命令缺少快照 ID');
+    if (!dependencies.annotationRepository || !dependencies.workspaceRepository) {
+      throw new Error('恢复迁移快照需要批注与工作区 Repository');
+    }
+    const result = await dependencies.importRepository.restoreVersionMigrationSnapshot(snapshotId);
+    if (dependencies.syncVersionMigrationState !== false) {
+      if (result.annotations.length > 0) {
+        await dependencies.annotationRepository.saveAnnotations(result.annotations);
+      }
+      await dependencies.workspaceRepository.saveState(result.workspaceState);
+    }
+    useLibraryStore.getState().updateMaterial(result.material);
+    useAnnotationStore
+      .getState()
+      .setMaterialAnnotations(
+        result.material.id,
+        result.annotations.filter((annotation) => annotation.deletedAt === null),
+      );
+    useWorkspaceStore.getState().hydrate(result.workspaceState);
+    useShellUiStore.getState().setStatusMessage('已恢复迁移前版本，快照仍然保留');
+    dependencies.reloadApplication?.();
+  });
+
+  registry.register(COMMAND_IDS.libraryClearVersionMigrationSnapshot, async (...args: unknown[]) => {
+    const snapshotId = args[0] as string | undefined;
+    if (!snapshotId) throw new Error('清除迁移快照命令缺少快照 ID');
+    await dependencies.importRepository.clearVersionMigrationSnapshot(snapshotId);
+    const snapshots = await dependencies.importRepository.listVersionMigrationSnapshots();
+    useShellUiStore.getState().setVersionMigrationSnapshots(snapshots);
   });
 }

@@ -100,6 +100,10 @@ pub struct EditorGroupState {
 
 /// 工作区状态的持久化 DTO,serde 命名与 TypeScript 端保持一致(camelCase)。
 /// Rust 只负责原样存取该结构,不理解其中的工作台语义。
+fn default_activity_panel_width() -> u32 {
+    304
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceState {
@@ -107,6 +111,9 @@ pub struct WorkspaceState {
     pub primary_sidebar_visible: bool,
     #[serde(default)]
     pub toc_visible: bool,
+    /// 书库与目录共用的活动面板宽度,旧工作区缺失时回退到默认值。
+    #[serde(default = "default_activity_panel_width")]
+    pub activity_panel_width: u32,
     /// 主要阅读材料与当前焦点独立,旧工作区缺失时为空。
     #[serde(default)]
     pub primary_material_id: Option<String>,
@@ -145,9 +152,10 @@ pub struct PartialTypography {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 9,
+            schema_version: 10,
             primary_sidebar_visible: true,
             toc_visible: false,
+            activity_panel_width: 304,
             primary_material_id: None,
             split_direction: None,
             active_editor_group_id: "group-1".to_string(),
@@ -230,9 +238,10 @@ mod tests {
             },
         );
         WorkspaceState {
-            schema_version: 9,
+            schema_version: 10,
             primary_sidebar_visible: false,
             toc_visible: true,
+            activity_panel_width: 336,
             primary_material_id: Some("mat-1".to_string()),
             split_direction: Some("down".to_string()),
             active_editor_group_id: "group-1".to_string(),
@@ -302,8 +311,18 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":9,"primarySidebarVisible":true,"tocVisible":false,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
+            r#"{"schemaVersion":10,"primarySidebarVisible":true,"tocVisible":false,"activityPanelWidth":304,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{}}"#
         );
+    }
+
+    #[test]
+    fn legacy_workspace_state_defaults_activity_panel_width() {
+        let state: WorkspaceState = serde_json::from_str(
+            r#"{"schemaVersion":9,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(state.activity_panel_width, 304);
     }
 
     #[test]

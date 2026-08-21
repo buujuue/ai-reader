@@ -3,11 +3,21 @@ import { Highlighter, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import {
+  getSingleSectionSelectionError,
+} from '../domain/annotation/textAnchor';
 import type { AreaSelection } from '../domain/reader/bookDocument';
 import { useReaderRuntime } from '../workbench/readerRuntime';
 
 type SelectionState =
-  | { kind: 'text'; range: Range; ownerDocument: Document; x: number; y: number }
+  | {
+      kind: 'text';
+      range: Range;
+      ownerDocument: Document;
+      x: number;
+      y: number;
+      invalidReason?: string;
+    }
   | { kind: 'area'; area: AreaSelection; x: number; y: number };
 
 /**
@@ -50,7 +60,21 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
       const frameRect = frame?.getBoundingClientRect() ?? { left: 0, top: 0 };
       const x = frameRect.left + rect.left + rect.width / 2;
       const y = frameRect.top + rect.top;
-      setSelection({ kind: 'text', range, ownerDocument: doc, x, y });
+      const invalidReason =
+        book.format === 'epub'
+          ? getSingleSectionSelectionError(
+              range,
+              (contentDocument) => book.getContentDocumentIndex?.(contentDocument) ?? null,
+            )
+          : null;
+      setSelection({
+        kind: 'text',
+        range,
+        ownerDocument: doc,
+        x,
+        y,
+        ...(invalidReason ? { invalidReason } : {}),
+      });
       setPosition({ x, y });
     };
 
@@ -95,6 +119,7 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
   }
 
   const handleHighlight = async () => {
+    if (selection.kind === 'text' && selection.invalidReason) return;
     const command =
       selection.kind === 'area'
         ? commands.execute(COMMAND_IDS.annotationCreatePdfArea, viewId, selection.area)
@@ -123,15 +148,21 @@ export function SelectionToolbar({ viewId }: { viewId: string }) {
       role="toolbar"
       aria-label="选区工具栏"
     >
-      <button
-        type="button"
-        onClick={handleHighlight}
-        aria-label={selection.kind === 'area' ? '高亮选中区域' : '高亮选中文本'}
-        className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-zinc-700"
-      >
-        <Highlighter size={14} aria-hidden />
-        {selection.kind === 'area' ? '高亮区域' : '高亮'}
-      </button>
+      {selection.kind === 'text' && selection.invalidReason ? (
+        <span role="alert" className="max-w-64 px-2 py-1 text-xs leading-5 text-amber-200">
+          {selection.invalidReason}
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={handleHighlight}
+          aria-label={selection.kind === 'area' ? '高亮选中区域' : '高亮选中文本'}
+          className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-zinc-700"
+        >
+          <Highlighter size={14} aria-hidden />
+          {selection.kind === 'area' ? '高亮区域' : '高亮'}
+        </button>
+      )}
       <button
         type="button"
         onClick={handleCancel}

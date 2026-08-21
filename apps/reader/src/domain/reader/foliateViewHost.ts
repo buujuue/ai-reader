@@ -403,6 +403,13 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     return typeof rendererIndex === 'number' ? rendererIndex : null;
   }
 
+  getContentDocumentIndex(document: Document): number | null {
+    const content = this.element.renderer?.getContents?.().find(
+      (candidate) => candidate.doc === document,
+    );
+    return typeof content?.index === 'number' ? content.index : null;
+  }
+
   addAnnotation(annotation: { value: string; color: string }): void {
     this.element.addAnnotation(annotation);
   }

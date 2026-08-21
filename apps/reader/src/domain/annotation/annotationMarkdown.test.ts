@@ -86,6 +86,25 @@ describe('formatAnnotationMarkdown', () => {
     expect(markdown).toContain('> 我的笔记');
   });
 
+  it('已重锚批注明确标记恢复后的新位置', () => {
+    const markdown = formatAnnotationMarkdown({
+      material: { id: 'material-1', title: '示例书', author: null, fingerprint: 'new-version' },
+      annotations: [
+        makeAnnotation({
+          anchor: {
+            ...makeAnnotation().anchor,
+            cfi: 'epubcfi(/6/4)!/4/4:0',
+            documentVersion: 'new-version',
+            recoveryState: 'reanchored',
+          },
+        }),
+      ],
+    });
+
+    expect(markdown).toContain('状态：已重锚批注');
+    expect(markdown).toContain('已根据引文恢复到新位置');
+  });
+
   it('文档版本变化但尚未恢复时不会伪装成已定位', () => {
     const markdown = formatAnnotationMarkdown({
       material: { id: 'material-1', title: '示例书', author: null, fingerprint: 'new-version' },

@@ -15,6 +15,7 @@ import type { WorkspaceRepository } from './workspaceRepository';
 import {
   DEFAULT_EDITOR_GROUP_ID,
   DEFAULT_WORKSPACE_STATE,
+  normalizeActivityPanelWidth,
   normalizeSidebarVisibility,
   WORKSPACE_STATE_SCHEMA_VERSION,
   type EditorGroupSplitDirection,
@@ -128,6 +129,7 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   return {
     schemaVersion: candidate.schemaVersion,
     ...sidebarVisibility,
+    activityPanelWidth: normalizeActivityPanelWidth(candidate.activityPanelWidth),
     primaryMaterialId:
       candidate.primaryMaterialId === null || typeof candidate.primaryMaterialId === 'string'
         ? candidate.primaryMaterialId ?? null

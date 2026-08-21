@@ -15,6 +15,8 @@ pub struct LibraryPaths {
     pub managed_dir: PathBuf,
     pub covers_dir: PathBuf,
     pub recovery_dir: PathBuf,
+    /// 显式 EPUB 版本迁移的本地恢复快照,不进入备份归档或同步边界。
+    pub version_migration_dir: PathBuf,
 }
 
 impl LibraryPaths {
@@ -24,16 +26,19 @@ impl LibraryPaths {
         let managed_dir = app_data_dir.join("library");
         let covers_dir = app_data_dir.join("covers");
         let recovery_dir = app_data_dir.join("recovery");
+        let version_migration_dir = app_data_dir.join("version-migrations");
         std::fs::create_dir_all(&stash_dir)?;
         std::fs::create_dir_all(&managed_dir)?;
         std::fs::create_dir_all(&covers_dir)?;
         std::fs::create_dir_all(&recovery_dir)?;
+        std::fs::create_dir_all(&version_migration_dir)?;
         Ok(Self {
             app_data_dir: app_data_dir.to_path_buf(),
             stash_dir,
             managed_dir,
             covers_dir,
             recovery_dir,
+            version_migration_dir,
         })
     }
 
@@ -62,6 +67,17 @@ impl LibraryPaths {
             return Err(AppError::InvalidMaterialId(material_id.to_string()));
         }
         Ok(self.recovery_dir.join(format!("{material_id}.json")))
+    }
+
+    pub fn version_migration_path(&self, snapshot_id: &str) -> Result<PathBuf, AppError> {
+        let mut components = Path::new(snapshot_id).components();
+        let is_single_normal_component =
+            matches!(components.next(), Some(std::path::Component::Normal(_)))
+                && components.next().is_none();
+        if snapshot_id.is_empty() || !is_single_normal_component {
+            return Err(AppError::InvalidMaterialId(snapshot_id.to_string()));
+        }
+        Ok(self.version_migration_dir.join(snapshot_id))
     }
 }
 
@@ -140,6 +156,28 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let temp_path = parent.join(format!(".{file_name}.tmp-{}", uuid::Uuid::new_v4()));
     std::fs::write(&temp_path, bytes).map_err(classify_io_error)?;
     match std::fs::rename(&temp_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(classify_io_error(error))
+        }
+    }
+}
+
+/// 从应用私有文件流式复制并原子替换目标,用于版本迁移提交和恢复快照切换。
+/// 读取源文件只发生在 Rust 边界内;目标不会暴露给 TypeScript,也不把 EPUB 全部载入内存。
+pub fn atomic_copy(path: &Path, target: &Path) -> Result<(), AppError> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let temp_path = parent.join(format!(".{file_name}.copy-tmp-{}", uuid::Uuid::new_v4()));
+    if let Err(error) = stream_copy_with_fingerprint(path, &temp_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    match std::fs::rename(&temp_path, target) {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = std::fs::remove_file(&temp_path);
@@ -238,12 +276,17 @@ mod tests {
         assert!(paths.managed_dir.is_dir());
         assert!(paths.covers_dir.is_dir());
         assert!(paths.recovery_dir.is_dir());
+        assert!(paths.version_migration_dir.is_dir());
         assert_eq!(paths.stash_path("abc"), dir.join("stash").join("abc"));
         assert_eq!(paths.managed_path("abc"), dir.join("library").join("abc"));
         assert_eq!(paths.cover_path("abc"), dir.join("covers").join("abc"));
         assert_eq!(
             paths.recovery_path("abc").unwrap(),
             dir.join("recovery").join("abc.json")
+        );
+        assert_eq!(
+            paths.version_migration_path("snapshot-1").unwrap(),
+            dir.join("version-migrations").join("snapshot-1")
         );
     }
 

@@ -13,6 +13,7 @@ describe('Workspace Store', () => {
 
     expect(state.primarySidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.primarySidebarVisible);
     expect(state.tocVisible).toBe(DEFAULT_WORKSPACE_STATE.tocVisible);
+    expect(state.activityPanelWidth).toBe(DEFAULT_WORKSPACE_STATE.activityPanelWidth);
     expect(state.primaryMaterialId).toBe(DEFAULT_WORKSPACE_STATE.primaryMaterialId);
     expect(state.editorGroups).toEqual(DEFAULT_WORKSPACE_STATE.editorGroups);
   });

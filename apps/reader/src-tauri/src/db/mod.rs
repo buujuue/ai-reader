@@ -23,6 +23,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("migrations/0007_material_document_version.sql"),
     ),
     (8, include_str!("migrations/0008_import_identity.sql")),
+    (
+        9,
+        include_str!("migrations/0009_annotation_recovery_state.sql"),
+    ),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -122,6 +126,108 @@ impl DatabaseHandle {
             Err(error) => recover_failed_restore(&mut guard, paths, error, "切换失败"),
         }
     }
+
+    /// 恢复一份显式版本迁移快照。迁移快照不是备份归档,但同样必须先释放
+    /// SQLite 连接再切换数据库文件,否则 Windows 可能持有旧文件句柄。
+    pub fn restore_version_migration_snapshot(
+        &self,
+        paths: &crate::fs::LibraryPaths,
+        snapshot_id: &str,
+    ) -> Result<import::VersionMigrationRestoreResult, AppError> {
+        let mut guard = self
+            .connection
+            .lock()
+            .map_err(|_| AppError::DatabaseLocked)?;
+        let connection = guard.as_ref().ok_or(AppError::DatabaseLocked)?;
+        let snapshot_dir = paths.version_migration_path(snapshot_id)?;
+        let snapshot_db = snapshot_dir.join("database.sqlite");
+        let snapshot_material = snapshot_dir.join("material.epub");
+        if !snapshot_db.is_file() || !snapshot_material.is_file() {
+            return Err(AppError::BackupValidation(format!(
+                "迁移恢复快照不完整:{snapshot_id}"
+            )));
+        }
+        let material_id = import::read_version_migration_material_id(&snapshot_dir)?;
+        let current_material = paths.managed_path(&material_id);
+        let safety_id = uuid::Uuid::new_v4().to_string();
+        let safety_db = paths
+            .stash_dir
+            .join(format!(".migration-restore-{safety_id}.sqlite"));
+        let safety_material = paths
+            .stash_dir
+            .join(format!(".migration-restore-{safety_id}.material"));
+        let had_current_material = current_material.is_file();
+        connection.backup("main", &safety_db, None)?;
+        if had_current_material {
+            crate::fs::atomic_copy(&current_material, &safety_material)?;
+        }
+
+        guard.take();
+        let result = (|| {
+            crate::fs::atomic_copy(&snapshot_db, &paths.database_path())?;
+            crate::fs::atomic_copy(&snapshot_material, &current_material)?;
+            let reopened = open_database(&paths.database_path())?;
+            import::ImportRepository::new(&reopened).recover(paths)?;
+            let material = import::ImportRepository::new(&reopened)
+                .list_materials()?
+                .into_iter()
+                .chain(import::ImportRepository::new(&reopened).list_trashed()?)
+                .find(|item| item.id == material_id)
+                .ok_or_else(|| AppError::MaterialNotFound(material_id.clone()))?;
+            let annotations = {
+                let repository = annotations::AnnotationRepository::new(&reopened);
+                let mut values = repository.list_by_material(&material_id)?;
+                values.extend(repository.list_deleted_by_material(&material_id)?);
+                values
+            };
+            let workspace_state = serde_json::to_value(
+                workspace::WorkspaceRepository::new(&reopened).load_state()?,
+            )
+            .map_err(AppError::WorkspaceStateSerialize)?;
+            *guard = Some(reopened);
+            Ok(import::VersionMigrationRestoreResult {
+                material,
+                annotations,
+                workspace_state,
+            })
+        })();
+
+        match result {
+            Ok(value) => {
+                let _ = std::fs::remove_file(safety_db);
+                let _ = std::fs::remove_file(safety_material);
+                Ok(value)
+            }
+            Err(error) => {
+                guard.take();
+                let rollback = crate::fs::atomic_copy(&safety_db, &paths.database_path()).and_then(
+                    |_| {
+                        if had_current_material {
+                            crate::fs::atomic_copy(&safety_material, &current_material)
+                        } else {
+                            match std::fs::remove_file(&current_material) {
+                                Ok(()) => Ok(()),
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                                Err(error) => Err(crate::error::classify_io_error(error)),
+                            }
+                        }
+                    },
+                )
+                .and_then(|_| open_database(&paths.database_path()));
+                match rollback {
+                    Ok(reopened) => {
+                        *guard = Some(reopened);
+                        let _ = std::fs::remove_file(safety_db);
+                        let _ = std::fs::remove_file(safety_material);
+                        Err(error)
+                    }
+                    Err(rollback_error) => Err(AppError::BackupRestore(format!(
+                        "迁移恢复失败:{error}; 回滚失败:{rollback_error}"
+                    ))),
+                }
+            }
+        }
+    }
 }
 
 fn recover_failed_restore(
@@ -196,7 +302,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]

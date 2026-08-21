@@ -11,6 +11,8 @@ import type { ReadingTypography } from '../domain/reader/typography';
 import { resolveTypography } from '../domain/reader/typography';
 import {
   DEFAULT_WORKSPACE_STATE,
+  clampActivityPanelWidth,
+  normalizeActivityPanelWidth,
   normalizeSidebarVisibility,
   SECOND_EDITOR_GROUP_ID,
   type EditorGroupSplitDirection,
@@ -26,6 +28,7 @@ import {
 export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
   tocVisible: boolean;
+  activityPanelWidth: number;
   primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
   activeEditorGroupId: string;
@@ -36,6 +39,7 @@ export interface WorkspaceStoreState {
   materialTypography: Record<string, Partial<ReadingTypography>>;
   setPrimarySidebarVisible: (visible: boolean) => void;
   setTocVisible: (visible: boolean) => void;
+  setActivityPanelWidth: (width: number) => void;
   setPrimaryMaterial: (materialId: string | null) => void;
   focusEditorGroup: (groupId: string) => void;
   splitEditorGroup: (
@@ -134,6 +138,7 @@ function normalizeWorkspaceViews(
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
   tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
+  activityPanelWidth: DEFAULT_WORKSPACE_STATE.activityPanelWidth,
   primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
   splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
   activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,
@@ -150,6 +155,8 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     set((state) => ({
       ...normalizeSidebarVisibility(state.primarySidebarVisible, visible),
     })),
+
+  setActivityPanelWidth: (width) => set({ activityPanelWidth: clampActivityPanelWidth(width) }),
 
   setPrimaryMaterial: (materialId) => set({ primaryMaterialId: materialId }),
 
@@ -367,6 +374,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     const materials = uniqueMaterialIds(normalized.editorGroups);
     set({
       ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+      activityPanelWidth: normalizeActivityPanelWidth(state.activityPanelWidth),
       primaryMaterialId:
         state.primaryMaterialId ?? (materials.length === 1 ? materials[0]! : null),
       splitDirection: normalized.splitDirection,
@@ -381,6 +389,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     set({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
       tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
+      activityPanelWidth: DEFAULT_WORKSPACE_STATE.activityPanelWidth,
       primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
       splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
       activeEditorGroupId: DEFAULT_WORKSPACE_STATE.activeEditorGroupId,

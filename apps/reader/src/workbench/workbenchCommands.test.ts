@@ -73,6 +73,16 @@ describe('工作台命令处理', () => {
     await expect(repository.loadState()).resolves.toMatchObject({ tocVisible: false });
   });
 
+  it('设置活动面板宽度命令会限制范围并持久化', async () => {
+    await registry.execute(COMMAND_IDS.workbenchSetActivityPanelWidth, 999, true);
+
+    expect(useWorkspaceStore.getState().activityPanelWidth).toBe(460);
+    await expect(repository.loadState()).resolves.toMatchObject({ activityPanelWidth: 460 });
+
+    await registry.execute(COMMAND_IDS.workbenchSetActivityPanelWidth, 120, true);
+    expect(useWorkspaceStore.getState().activityPanelWidth).toBe(240);
+  });
+
   it('返回键关闭对话框与 WebView 后退都经稳定命令执行', async () => {
     useShellUiStore.getState().openMetadataEditor('material-1');
     await registry.execute(COMMAND_IDS.shellDismissDialog, 'metadata');

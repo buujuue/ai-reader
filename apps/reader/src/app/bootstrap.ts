@@ -239,6 +239,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
   registerLibraryCommands(commands, {
     ...importServices,
     pdfLib: options.pdfLib,
+    annotationRepository,
+    workspaceRepository,
+    syncVersionMigrationState: !isTauriRuntime(),
+    ...(isTauriRuntime() ? { reloadApplication: () => window.location.reload() } : {}),
+    ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
   });
   registerAnnotationCommands(commands, { annotationRepository });
   registerAnnotationExportCommands(commands, {
