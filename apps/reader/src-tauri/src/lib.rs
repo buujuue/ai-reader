@@ -42,6 +42,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::epub::prefetch_managed_epub,
+            commands::epub::read_epub_derived_toc_cache,
+            commands::epub::write_epub_derived_toc_cache,
             commands::backup::export_library_backup,
             commands::backup::restore_library_backup,
             commands::workspace::load_workspace_state,

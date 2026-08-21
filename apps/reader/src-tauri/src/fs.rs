@@ -17,6 +17,8 @@ pub struct LibraryPaths {
     pub recovery_dir: PathBuf,
     /// 显式 EPUB 版本迁移的本地恢复快照,不进入备份归档或同步边界。
     pub version_migration_dir: PathBuf,
+    /// EPUB 推导目录的本地派生缓存,不进入书库备份或同步边界。
+    pub derived_toc_cache_dir: PathBuf,
 }
 
 impl LibraryPaths {
@@ -27,11 +29,13 @@ impl LibraryPaths {
         let covers_dir = app_data_dir.join("covers");
         let recovery_dir = app_data_dir.join("recovery");
         let version_migration_dir = app_data_dir.join("version-migrations");
+        let derived_toc_cache_dir = app_data_dir.join("derived-toc-cache");
         std::fs::create_dir_all(&stash_dir)?;
         std::fs::create_dir_all(&managed_dir)?;
         std::fs::create_dir_all(&covers_dir)?;
         std::fs::create_dir_all(&recovery_dir)?;
         std::fs::create_dir_all(&version_migration_dir)?;
+        std::fs::create_dir_all(&derived_toc_cache_dir)?;
         Ok(Self {
             app_data_dir: app_data_dir.to_path_buf(),
             stash_dir,
@@ -39,6 +43,7 @@ impl LibraryPaths {
             covers_dir,
             recovery_dir,
             version_migration_dir,
+            derived_toc_cache_dir,
         })
     }
 
@@ -78,6 +83,17 @@ impl LibraryPaths {
             return Err(AppError::InvalidMaterialId(snapshot_id.to_string()));
         }
         Ok(self.version_migration_dir.join(snapshot_id))
+    }
+
+    /// 把前端提供的逻辑缓存键映射到应用私有目录下的不可预测文件名。
+    /// 键本身不参与路径拼接,因此不会把缓存写出私有目录。
+    pub fn derived_toc_cache_path(&self, key: &str) -> Result<PathBuf, AppError> {
+        if key.is_empty() || key.len() > 4096 || key.contains('\0') {
+            return Err(AppError::InvalidDerivedTocCache(key.to_string()));
+        }
+        Ok(self
+            .derived_toc_cache_dir
+            .join(format!("{}.json", fingerprint_bytes(key.as_bytes()))))
     }
 }
 
@@ -277,6 +293,7 @@ mod tests {
         assert!(paths.covers_dir.is_dir());
         assert!(paths.recovery_dir.is_dir());
         assert!(paths.version_migration_dir.is_dir());
+        assert!(paths.derived_toc_cache_dir.is_dir());
         assert_eq!(paths.stash_path("abc"), dir.join("stash").join("abc"));
         assert_eq!(paths.managed_path("abc"), dir.join("library").join("abc"));
         assert_eq!(paths.cover_path("abc"), dir.join("covers").join("abc"));
@@ -287,6 +304,11 @@ mod tests {
         assert_eq!(
             paths.version_migration_path("snapshot-1").unwrap(),
             dir.join("version-migrations").join("snapshot-1")
+        );
+        assert_eq!(
+            paths.derived_toc_cache_path("cache-key").unwrap(),
+            dir.join("derived-toc-cache")
+                .join(format!("{}.json", fingerprint_bytes(b"cache-key")))
         );
     }
 
@@ -306,6 +328,19 @@ mod tests {
         assert!(matches!(
             paths.recovery_path("nested/material"),
             Err(AppError::InvalidMaterialId(_))
+        ));
+    }
+
+    #[test]
+    fn derived_toc_cache_path_keeps_untrusted_key_inside_private_cache_dir() {
+        let dir = temp_dir();
+        let paths = LibraryPaths::new(&dir).unwrap();
+
+        let path = paths.derived_toc_cache_path("../outside").unwrap();
+        assert_eq!(path.parent(), Some(paths.derived_toc_cache_dir.as_path()));
+        assert!(matches!(
+            paths.derived_toc_cache_path("bad\0key"),
+            Err(AppError::InvalidDerivedTocCache(_))
         ));
     }
 

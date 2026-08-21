@@ -27,7 +27,11 @@ interface FakeViewElement {
     tocItem?: { label?: string };
     pageItem?: { label?: string };
   };
-  book?: { transformTarget?: EventTarget; toc?: Array<{ label?: string; href?: string; subitems?: unknown }> };
+  book?: {
+    transformTarget?: EventTarget;
+    toc?: Array<{ label?: string; href?: string; subitems?: unknown }>;
+    sections?: Array<{ id?: string; loadText?: () => Promise<string | null> }>;
+  };
   renderer?: {
     getContents?: ReturnType<typeof vi.fn>;
     setAttribute?: ReturnType<typeof vi.fn>;
@@ -232,6 +236,124 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     await host.open({});
 
     expect(host.getTOC()).toEqual([{ label: '第一章', href: 'c1.xhtml', subitems: null }]);
+  });
+
+  it('原生目录缺失时从可读章节标题生成本地推导目录且不改写原生 TOC', async () => {
+    const element = createFakeElement();
+    const nativeToc: Array<{ label?: string; href?: string; subitems?: unknown }> = [];
+    const section = {
+      id: 'chapter.xhtml',
+      loadText: vi.fn().mockResolvedValue(
+        '<html><body><h1 id="chapter">第一章</h1><h2 id="detail">细节</h2></body></html>',
+      ),
+    };
+    element.book = { toc: nativeToc, sections: [section] };
+    const host = createHost(element);
+
+    await host.open(new File(['epub'], 'book.epub'), {
+      derivedToc: { sourceFingerprint: 'derived-book-hash' },
+    });
+
+    expect(host.getTOCSource?.()).toBe('derived');
+    expect(host.getTOC()).toEqual([
+      {
+        label: '第一章',
+        href: 'chapter.xhtml#chapter',
+        source: 'derived',
+        subitems: [
+          {
+            label: '细节',
+            href: 'chapter.xhtml#detail',
+            source: 'derived',
+            subitems: null,
+          },
+        ],
+      },
+    ]);
+    expect(nativeToc).toEqual([]);
+    expect(section.loadText).toHaveBeenCalledOnce();
+  });
+
+  it('已有可导航原生目录时不扫描章节正文', async () => {
+    const element = createFakeElement();
+    const section = {
+      id: 'chapter.xhtml',
+      loadText: vi.fn().mockResolvedValue('<h1>不应扫描</h1>'),
+    };
+    element.book = {
+      toc: [{ label: '原生目录', href: 'chapter.xhtml', subitems: null }],
+      sections: [section],
+    };
+    const host = createHost(element);
+
+    await host.open(new File(['epub'], 'book.epub'), {
+      derivedToc: { sourceFingerprint: 'native-book-hash' },
+    });
+
+    expect(host.getTOCSource?.()).toBe('native');
+    expect(host.getTOC()).toEqual([{ label: '原生目录', href: 'chapter.xhtml', subitems: null }]);
+    expect(section.loadText).not.toHaveBeenCalled();
+  });
+
+  it('原生目录只指向不存在的 spine 时改用可读章节标题推导', async () => {
+    const element = createFakeElement();
+    const section = {
+      id: 'chapter.xhtml',
+      loadText: vi.fn().mockResolvedValue('<h1 id="chapter">第一章</h1>'),
+    };
+    element.book = {
+      toc: [{ label: '损坏目标', href: 'missing.xhtml', subitems: null }],
+      sections: [section],
+    };
+    const host = createHost(element);
+
+    await host.open(new File(['epub'], 'book.epub'), {
+      derivedToc: { sourceFingerprint: 'invalid-native-book-hash' },
+    });
+
+    expect(host.getTOCSource?.()).toBe('derived');
+    expect(host.getTOC()[0]?.href).toBe('chapter.xhtml#chapter');
+    expect(section.loadText).toHaveBeenCalledOnce();
+  });
+
+  it('原生目录部分目标损坏时不丢弃剩余章节的推导导航', async () => {
+    const element = createFakeElement();
+    const section = {
+      id: 'chapter.xhtml',
+      loadText: vi.fn().mockResolvedValue('<h1 id="chapter">第一章</h1>'),
+    };
+    element.book = {
+      toc: [
+        { label: '可用章节', href: 'chapter.xhtml', subitems: null },
+        { label: '损坏章节', href: 'missing.xhtml', subitems: null },
+      ],
+      sections: [section],
+    };
+    const host = createHost(element);
+
+    await host.open(new File(['epub'], 'book.epub'), {
+      derivedToc: { sourceFingerprint: 'partial-native-book-hash' },
+    });
+
+    expect(host.getTOCSource?.()).toBe('derived');
+    expect(host.getTOC()[0]?.href).toBe('chapter.xhtml#chapter');
+    expect(section.loadText).toHaveBeenCalledOnce();
+  });
+
+  it('章节尺寸超过标题扫描预算时不读取该章节', async () => {
+    const element = createFakeElement();
+    const section = {
+      id: 'huge.xhtml',
+      size: 512 * 1024 + 1,
+      loadText: vi.fn().mockResolvedValue('<h1>不应读取</h1>'),
+    };
+    element.book = { toc: [], sections: [section] };
+    const host = createHost(element);
+
+    await host.open(new File(['epub'], 'book.epub'));
+
+    expect(host.getTOC()).toEqual([]);
+    expect(section.loadText).not.toHaveBeenCalled();
   });
 
   it('search 把 foliate 的原始产出归一化为领域事件', async () => {

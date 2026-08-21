@@ -46,6 +46,8 @@ pub enum AppError {
     BackupRecoveryState(String),
     #[error("EPUB 原生预取失败:{0}")]
     EpubPrefetch(String),
+    #[error("EPUB 推导目录缓存参数不合法:{0}")]
+    InvalidDerivedTocCache(String),
 }
 
 impl serde::Serialize for AppError {

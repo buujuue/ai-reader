@@ -1,6 +1,7 @@
 import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
+import type { TocSource } from './toc';
 import type { ReadingTypography } from './typography';
 import type { ReadingProgress } from './readingProgress';
 
@@ -69,6 +70,9 @@ export interface BookDocument {
 
   /** 读取分层目录。 */
   getTOC(): Toc;
+
+  /** 读取目录来源；推导目录是本地非权威的运行时数据。 */
+  getTOCSource?(): TocSource;
 
   /**
    * 在当前阅读材料内搜索正文。异步增量产出进度与命中;调用方可 `return()`

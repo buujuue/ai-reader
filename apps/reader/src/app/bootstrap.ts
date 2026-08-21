@@ -39,6 +39,11 @@ import {
   type EpubNativeAccelerator,
 } from '../domain/reader/nativeEpub';
 import { createDefaultTauriEpubNativeAccelerator } from '../domain/reader/tauriEpubNative';
+import {
+  createEpubDerivedTocCache,
+  type EpubDerivedTocCache,
+} from '../domain/reader/derivedToc';
+import { createDefaultTauriEpubDerivedTocCache } from '../domain/reader/tauriDerivedTocCache';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import { isAndroidWebView } from './platform';
@@ -113,6 +118,8 @@ export interface AppServicesOptions {
   /** 可注入的页面光栅化函数(测试用)。 */
   pdfRasterize?: PdfPageRasterizer;
   epubNativeAccelerator?: EpubNativeAccelerator;
+  /** 可注入的 EPUB 推导目录缓存;Tauri 默认落到 Rust 私有文件缓存。 */
+  epubDerivedTocCache?: EpubDerivedTocCache;
   windowLifecycle?: WindowLifecycle | null;
   androidBackButton?: AndroidBackButton | null;
 }
@@ -226,6 +233,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     (isTauriRuntime()
       ? createDefaultTauriEpubNativeAccelerator()
       : createUnavailableEpubNativeAccelerator());
+  const epubDerivedTocCache =
+    options.epubDerivedTocCache ??
+    (isTauriRuntime()
+      ? createDefaultTauriEpubDerivedTocCache()
+      : createEpubDerivedTocCache());
 
   const commands = new CommandRegistry();
   registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
@@ -270,6 +282,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       pdfLib: options.pdfLib,
       pdfRasterize: options.pdfRasterize,
       epubNativeAccelerator,
+      epubDerivedTocCache,
     });
   } else {
     registerReaderCommands(commands, {
@@ -280,6 +293,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       pdfLib: options.pdfLib,
       pdfRasterize: options.pdfRasterize,
       epubNativeAccelerator,
+      epubDerivedTocCache,
     });
   }
   return {

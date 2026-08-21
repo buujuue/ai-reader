@@ -2,12 +2,13 @@ import type { BookDocument, BookDocumentMetadata } from './bookDocument';
 import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
 import { sanitizeEpubContent } from './sanitizer';
-import type { Toc } from './toc';
+import type { Toc, TocSource } from './toc';
 import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 import type { NativeEpubPrefetch } from './nativeEpub';
 import type { ReadingProgress } from './readingProgress';
+import type { EpubDerivedTocCache } from './derivedToc';
 import {
   createEpubCanonicalTransform,
   removeEpubDisplayOnlyNodes,
@@ -34,6 +35,8 @@ export interface EpubBookDocumentOptions {
   canonicalTransformVersion?: string;
   /** 可注入的规范转换派生缓存;默认使用当前文档的内存缓存。 */
   derivedCache?: EpubDerivedCache<string>;
+  /** 可注入的推导目录缓存;只保存带版本的目录 JSON。 */
+  derivedTocCache?: EpubDerivedTocCache;
 }
 
 /**
@@ -50,6 +53,8 @@ export class EpubBookDocument implements BookDocument {
   private readonly viewHostFactory: FoliateViewHostFactory;
   private readonly locationKind: 'epub' | 'markdown';
   private readonly nativePrefetch: NativeEpubPrefetch | null;
+  private readonly sourceFingerprint: string;
+  private readonly derivedTocCache: EpubDerivedTocCache | undefined;
   private typography: ReadingTypography = DEFAULT_READING_TYPOGRAPHY;
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
@@ -71,8 +76,10 @@ export class EpubBookDocument implements BookDocument {
     this.format = options.format ?? 'epub';
     this.locationKind = options.locationKind ?? this.format;
     this.nativePrefetch = options.nativePrefetch ?? null;
+    this.sourceFingerprint = options.sourceFingerprint ?? 'unknown-source';
+    this.derivedTocCache = options.derivedTocCache;
     const canonicalOptions = {
-      sourceFingerprint: options.sourceFingerprint ?? 'unknown-source',
+      sourceFingerprint: this.sourceFingerprint,
       ...(options.derivedCache ? { cache: options.derivedCache } : {}),
       ...(options.canonicalTransformVersion
         ? { transformVersion: options.canonicalTransformVersion }
@@ -95,7 +102,17 @@ export class EpubBookDocument implements BookDocument {
     // 必须在 view.open() 前接入安全监听器,否则 Foliate 可能在打开首章时
     // 已经消费 data 事件,导致首章绕过内容清洗。
     this.wireSecurity();
-    await view.open(file, { epubPrefetch: this.nativePrefetch });
+    await view.open(file, {
+      epubPrefetch: this.nativePrefetch,
+      ...(this.format === 'epub'
+        ? {
+            derivedToc: {
+              sourceFingerprint: this.sourceFingerprint,
+              ...(this.derivedTocCache ? { cache: this.derivedTocCache } : {}),
+            },
+          }
+        : {}),
+    });
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);
@@ -177,6 +194,10 @@ export class EpubBookDocument implements BookDocument {
 
   getTOC(): Toc {
     return this.host?.getTOC() ?? [];
+  }
+
+  getTOCSource(): TocSource {
+    return this.host?.getTOCSource?.() ?? 'native';
   }
 
   search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {

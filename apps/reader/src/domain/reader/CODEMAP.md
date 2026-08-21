@@ -4,6 +4,8 @@
 
 - `bookDocument.ts`：`BookDocument` 统一文档接口（元数据、打开、位置读写、目录、书内链接跳转、书内/外部链接事件、下一页/上一页、搜索、批注 CFI 无位置解析、可选的内容文档到 spine section 映射、位置订阅、可选的可序列化阅读位置反馈订阅、关闭；以及 `getContentDocs`/`onContentCreate` 暴露内容文档用于附加阅读输入监听器，并为 PDF 提供可选的区域锚点与区域选区订阅）。EPUB、PDF、Markdown 都实现该接口；Reader 外部不直接依赖 Foliate View。
 - `toc.ts`：`TocItem`/`Toc` 类型，与 foliate-js `book.toc` 结构一致的分层目录。
+- `derivedToc.ts`：原生 NAV/NCX 缺失或不可导航时，从受预算限制的章节 `h1`–`h6` 标题生成带层级和稳定章节目标的本地临时目录；按完整内容指纹与算法版本读写小型本地缓存，缓存损坏只触发重建。缓存只经 `EpubDerivedTocCache` 窄接口访问。
+- `derivedTocCacheContract.ts`：内存与 Tauri 推导目录缓存 Adapter 共用的行为契约测试辅助，验证未命中、写入、覆盖和 key 隔离。
 - `navigationHistory.ts`：每个 ReadingView 的可序列化导航历史（最多 50 个节点）。显式跳转 `pushExplicit` 新增节点、普通翻页 `replaceCurrent` 替换当前节点、`back`/`forward` 后退前进；纯数据结构，可随工作区持久化。
 - `readingLocation.ts`：可序列化的 `ReadingLocation`（第一版为 EPUB CFI）与形状校验。
 - `readingProgress.ts`：把 Foliate 的当前位置投影为可序列化的章节、页码、目录标签与百分比，并提供阅读位置反馈的格式化文本；不把 Range 或渲染器对象带入 Workspace State。
@@ -14,6 +16,7 @@
 - `epubBookDocument.ts`：`EpubBookDocument` 实现。把不可信内容清洗、Foliate 渲染器挂载、位置读取/恢复、目录读取、href 导航与书内/外部链接事件封装在窄接口后；`wireSecurity` 在文本资源进入渲染器前清洗各已知 MIME，把 relocate 事件转成 `ReadingLocation` 和可序列化进度反馈，并把书内/外部链接事件面向上层。
 - `foliateEpubLoader.ts`：把受预算的项目 ZIP loader 适配为 foliate-js EPUB loader；可选原生预取只覆盖已校验的 container/OPF/NAV/NCX 文本和资源尺寸，其余章节与资源继续由同一份 JS ZIP loader 按需读取。
 - `nativeEpub.ts` / `tauriEpubNative.ts`：定义原生 EPUB 预取协议、平台/能力/语义来源门控、错误分类与 Tauri Adapter；任意不支持、协议不匹配或 IPC 失败均返回纯 JS 路径。
+- `tauriDerivedTocCache.ts`：把 EPUB 推导目录缓存映射到 Rust 私有文件的 typed Tauri 命令；浏览器降级使用 `derivedToc.ts` 的内存 Adapter。
 - `viewHost.ts` / `foliateViewHost.ts`：`FoliateViewHost` 窄接口与 `FoliateViewHostFactory` 工厂。生产实现懒加载 `foliate-js` 的 `view.js` 并创建 `foliate-view` 元素；测试注入伪宿主。提供 `getTOC`/`goToHref`/`onInternalLink`/`onExternalLink`，以 preventDefault 阻止书内与外部链接的默认导航，把 href/URL 面向上层统一处理；`search`/`clearSearch` 把 foliate 的原始搜索产出归一化为领域事件并委托高亮；`canResolveAnnotation` 只在不改变阅读位置的前提下验证当前已加载章节的原 CFI；`getContentDocumentIndex` 把内容文档映射到 spine section 供单章节批注校验；`applyTypography` 把排版经分页器 attribute（flow/gap/margin/max-inline-size/max-block-size/max-column-count）与可选 `setStyles` 注入文档，以兼容固定版式渲染器；当前位置从 Foliate `lastLocation` 归一化为进度反馈，固定版式还提供当前 spread 索引回退；`getContentDocs`/`onContentCreate` 暴露内容文档（iframe 内）供上层附加统一阅读输入监听器，并对不可见 MathML 做局部可理解降级。所有对具体渲染器的直接调用都集中在本层。
 - `mathmlFallback.ts`：检测浏览器无法绘制的 MathML，仅替换不可见公式为带 `role="img"` 和可读文本的本地 fallback；可渲染的原生 MathML 保持不变。
 - `readingInput.ts`：阅读输入统一层。纯解释器（`interpretKeyboard`/`interpretWheel`/`interpretTap`/`interpretSwipe`）把键盘、滚轮、点击、滑动归一化为"翻一页"意图；`WheelPageGate` 保证一次滚轮/惯性手势最多翻一页；`isInteractiveElement` 识别链接与交互控件以避免误触翻页；`ReadingInputController` 把解释结果收敛到稳定 Command ID 分发（不依赖 Command Registry），并通过 `attach` 把内容文档的原始 DOM 事件归一化后喂给控制器，分页模式下抑制 foliate 原生触摸滑动避免双翻页。
@@ -25,7 +28,7 @@
 
 ## 依赖其它文件夹（树）
 
-`domain/reader` 只从 `domain/library/epub/zip.ts` 复用有界 ZIP 读取器；运行时经 `foliate-js` 依赖渲染，原生预取只通过本目录的 typed 协议进入。`domain/annotation/textAnchor.ts` 复用本目录的 `epubCfi.ts` 做同 spine 判断，不反向依赖渲染器实现。
+`domain/reader` 只从 `domain/library/epub/zip.ts` 复用有界 ZIP 读取器；运行时经 `foliate-js` 依赖渲染，原生预取只通过本目录的 typed 协议进入；`derivedToc.ts` 只消费章节文本并产出非权威临时目录，不回写 Foliate 原生 TOC 或原书。`domain/annotation/textAnchor.ts` 复用本目录的 `epubCfi.ts` 做同 spine 判断，不反向依赖渲染器实现。
 
 ## 被谁依赖（树）
 

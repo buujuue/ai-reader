@@ -12,6 +12,7 @@
 - `package.json`：应用脚本与依赖（React 19、zustand、Tailwind CSS 4、@tauri-apps/api、Vitest、Testing Library）。
 - `vite.config.ts` / `vitest.config.ts` / `tsconfig.json`：前端构建、测试与严格类型配置。
 - `index.html`：前端入口 HTML。
+- `src/app/bootstrap.ts`：组装应用级 Adapter；EPUB 推导目录缓存必须经 `EpubDerivedTocCache` typed 接口注入，Tauri 运行时使用 Rust 私有派生缓存，浏览器降级使用内存缓存。
 
 ## 常用命令
 

@@ -3,10 +3,16 @@ import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
 import type { NativeEpubPrefetch } from './nativeEpub';
 import type { ReadingProgress } from './readingProgress';
+import type { EpubDerivedTocCache } from './derivedToc';
 
 /** BookDocument 传给 Foliate 宿主的可选机械预取。 */
 export interface FoliateViewOpenOptions {
   epubPrefetch?: NativeEpubPrefetch | null;
+  /** 原生目录不可导航时使用的本地推导目录缓存。 */
+  derivedToc?: {
+    sourceFingerprint: string;
+    cache?: EpubDerivedTocCache;
+  };
 }
 
 /**
@@ -34,6 +40,8 @@ export interface FoliateViewHost {
   onProgressChange?(listener: (progress: ReadingProgress) => void): () => void;
   /** 读取分层目录。 */
   getTOC(): Toc;
+  /** 目录来源；未实现此能力的测试宿主按原生目录处理。 */
+  getTOCSource?(): 'native' | 'derived';
   /**
    * 在当前文档内搜索正文。以异步增量方式产出进度与命中;调用方可通过
    * `return()` 提前终止(取消)。返回的生成器自然结束时即搜索完成。

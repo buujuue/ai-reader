@@ -12,6 +12,12 @@ import { Overlayer } from 'foliate-js/overlayer.js';
 import { sanitizeEpubContent } from './sanitizer';
 import { openFoliateEpub } from './foliateEpubLoader';
 import { degradeUnsupportedMathMl } from './mathmlFallback';
+import {
+  DEFAULT_DERIVED_TOC_BUDGET,
+  deriveEpubToc,
+  isUsableToc,
+} from './derivedToc';
+import type { TocSource } from './toc';
 
 export type { FoliateViewHostFactory } from './viewHost';
 
@@ -83,6 +89,8 @@ interface ExtendedRenderer {
 
 interface FoliateSection {
   id?: string;
+  /** foliate 解析出的包内资源尺寸;用于在读取正文前执行扫描预算预检。 */
+  size?: number;
   load: () => Promise<unknown>;
   loadText?: () => Promise<string | null>;
 }
@@ -90,6 +98,7 @@ interface FoliateSection {
 interface FoliateBook {
   sections?: FoliateSection[];
   loadText?: (href: string) => Promise<string | null>;
+  toc?: Array<{ label?: string; href?: string; subitems?: unknown }>;
   transformTarget?: EventTarget;
 }
 
@@ -121,11 +130,14 @@ function readRelocateDetail(event: Event): ExtendedFoliateView['lastLocation'] |
 
 function toToc(items: unknown): import('./toc').Toc {
   const source = Array.isArray(items) ? (items as FoliateTocNode[]) : [];
-  return source.map((item) => ({
-    label: item.label ?? '',
-    href: item.href ?? '',
-    subitems: Array.isArray(item.subitems) ? toToc(item.subitems) : null,
-  }));
+  return source.map((item) => {
+    const candidate = item && typeof item === 'object' ? item : {};
+    return {
+      label: typeof candidate.label === 'string' ? candidate.label : '',
+      href: typeof candidate.href === 'string' ? candidate.href : '',
+      subitems: Array.isArray(candidate.subitems) ? toToc(candidate.subitems) : null,
+    };
+  });
 }
 
 /**
@@ -143,6 +155,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private readonly viewModule: Promise<typeof import('foliate-js/view.js')>;
   private opened = false;
   private readonly fallbackUrls = new Set<string>();
+  private book: FoliateBook | null = null;
+  private derivedToc: import('./toc').Toc | null = null;
+  private tocSource: TocSource = 'native';
   private contentListeners = new Set<(type: string, data: string) => string>();
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
@@ -220,6 +235,8 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       }
     }
     this.opened = true;
+    this.book = asFoliateBook(this.element.book) ?? asFoliateBook(openedBook);
+    await this.deriveTocWhenNeeded(this.book, options.derivedToc);
     this.wireInternalLinkHandling();
     this.wireExternalLinkBlocking();
     this.wireAnnotationDrawing();
@@ -249,7 +266,14 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   getTOC(): import('./toc').Toc {
-    return toToc(this.element.book?.toc);
+    if (this.derivedToc !== null) {
+      return this.derivedToc;
+    }
+    return toToc(this.book?.toc ?? this.element.book?.toc);
+  }
+
+  getTOCSource(): TocSource {
+    return this.tocSource;
   }
 
   getCurrentCFI(): string | null {
@@ -445,6 +469,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       this.drawAnnotationCleanup = null;
       this.showAnnotationCleanup = null;
       this.revokeFallbackUrls();
+      this.book = null;
+      this.derivedToc = null;
+      this.tocSource = 'native';
       this.opened = false;
     }
   }
@@ -459,6 +486,71 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private clearContentSanitization(): void {
     this.contentCleanup?.();
     this.contentCleanup = null;
+  }
+
+  private async deriveTocWhenNeeded(
+    book: FoliateBook | null,
+    options: import('./viewHost').FoliateViewOpenOptions['derivedToc'],
+  ): Promise<void> {
+    if (!options) {
+      this.tocSource = 'native';
+      return;
+    }
+    const nativeToc = toToc(book?.toc);
+    const spineHrefs = new Set(
+      (book?.sections ?? [])
+        .map((section) => section.id?.trim())
+        .filter((href): href is string => Boolean(href)),
+    );
+    const nativeHrefIsNavigable = (href: string): boolean => {
+      if (href.trim().length === 0) {
+        return false;
+      }
+      if (spineHrefs.size === 0) {
+        return true;
+      }
+      const path = href.split('#', 1)[0]?.trim() ?? '';
+      return path.length > 0 && spineHrefs.has(path);
+    };
+    if (isUsableToc(nativeToc, nativeHrefIsNavigable)) {
+      this.tocSource = 'native';
+      return;
+    }
+
+    const sections = (book?.sections ?? [])
+      .map((section) => {
+        const href = section.id?.trim() ?? '';
+        if (
+          typeof section.size === 'number' &&
+          section.size > DEFAULT_DERIVED_TOC_BUDGET.maxSectionTextCharacters
+        ) {
+          return null;
+        }
+        const loadText = section.loadText
+          ? section.loadText.bind(section)
+          : href && book?.loadText
+            ? () => book.loadText!(href)
+            : null;
+        return href && loadText ? { href, loadText } : null;
+      })
+      .filter((section): section is { href: string; loadText: () => Promise<string | null> } => section !== null);
+
+    const deriveOptions: import('./derivedToc').DeriveEpubTocOptions = {};
+    if (options?.sourceFingerprint) {
+      deriveOptions.sourceFingerprint = options.sourceFingerprint;
+    }
+    if (options?.cache) {
+      deriveOptions.cache = options.cache;
+    }
+    try {
+      this.derivedToc = await deriveEpubToc(sections, deriveOptions);
+    } catch (error) {
+      // 目录是可再生成的旁路能力；任何解析/缓存故障都退化为空目录，
+      // 不得阻塞已经可以打开的正文。
+      console.warn('EPUB 推导目录失败,已退化为空目录', error);
+      this.derivedToc = [];
+    }
+    this.tocSource = 'derived';
   }
 
   /** 在 foliate Loader 派发 `data` 事件时对不可信内容做清洗。 */

@@ -114,7 +114,7 @@ EPUB 文本批注限制在单一 spine section 内，跨页/跨栏/跨段允许�
 
 ### Persistence
 
-SQLite 保存材料、批注、阅读位置、工作区和设置。文件系统保存材料、封面、恢复快照、版本迁移快照与缓存。高频位置写入节流，关键写入使用事务或可恢复协议；显式 EPUB 版本迁移提交前保存一致的旧数据库与旧托管文件，迁移后快照持续保留。
+SQLite 保存材料、批注、阅读位置、工作区和设置。文件系统保存材料、封面、恢复快照、版本迁移快照与可再生成缓存。EPUB 缺失原生导航时的临时目录由 TypeScript 按标题推导，缓存由 Rust 经 typed 命令按材料完整指纹与算法版本原子保存，且不进入书库备份或同步边界。高频位置写入节流，关键写入使用事务或可恢复协议；显式 EPUB 版本迁移提交前保存一致的旧数据库与旧托管文件，迁移后快照持续保留。具体目录决策见 ADR-0027。
 
 ### Markdown
 
@@ -168,6 +168,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 16 切片**：单章节 EPUB 批注完整生命周期（同一 spine section 内跨页/跨栏/跨段选区、跨章节拒绝、已重锚/失联状态、批量恢复事务、批注 tombstone 与显式撤销/恢复）。
 - **第 17 切片**：显式 EPUB 版本迁移（元数据仅作候选信号、完整指纹保持材料身份边界、进度/批注预览、同 spine 唯一引文重锚、孤儿保留，以及 SQLite/托管文件/工作区/批注的一次性可恢复提交与持续迁移快照）。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
+- **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 
 macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`；iPadOS 的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`；Android 平板的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS/iPadOS/Android 启动、导入、阅读与重启恢复不计入浏览器降级证据，统一由 `.github/workflows/cross-platform.yml` 承载对应平台的自动校验；未能在 CI 自动完成的移动系统交互按冒烟文档记录人工证据。
 

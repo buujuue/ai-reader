@@ -8,6 +8,10 @@ import {
   createEpubDerivedCache,
   type EpubDerivedCache,
 } from '../domain/reader/epubCanonical';
+import {
+  createEpubDerivedTocCache,
+  type EpubDerivedTocCache,
+} from '../domain/reader/derivedToc';
 import type { EpubNativeAccelerator } from '../domain/reader/nativeEpub';
 import {
   createFoliateViewHostFactory,
@@ -64,6 +68,8 @@ export interface ReaderCommandDependencies {
   epubNativeAccelerator?: EpubNativeAccelerator | undefined;
   /** 可选的 EPUB 规范转换缓存;生产默认在当前进程内按版本共享。 */
   epubDerivedCache?: EpubDerivedCache<string>;
+  /** 可选的 EPUB 推导目录缓存;生产由 Rust 私有文件 Repository 提供，不参与同步。 */
+  epubDerivedTocCache?: EpubDerivedTocCache;
 }
 
 /**
@@ -80,6 +86,7 @@ interface ActiveViewMount {
 
 const activeMounts = new Map<string, ActiveViewMount>();
 const defaultEpubDerivedCache = createEpubDerivedCache<string>();
+const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
 
 function describeDocumentOpenError(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -205,6 +212,7 @@ async function createEpubDocument(
     nativePrefetch,
     sourceFingerprint: material.fingerprint,
     derivedCache: dependencies.epubDerivedCache ?? defaultEpubDerivedCache,
+    derivedTocCache: dependencies.epubDerivedTocCache ?? defaultEpubDerivedTocCache,
   });
 }
 

@@ -64,6 +64,9 @@ export function TocSidebar() {
     activeViewId ? state.documentStates.get(activeViewId) : undefined,
   );
   const toc = document?.getTOC() ?? [];
+  const tocSource =
+    document?.getTOCSource?.() ??
+    (toc.some((item) => item.source === 'derived') ? 'derived' : 'native');
 
   const handleNavigate = (href: string) => {
     if (!activeViewId) return;
@@ -75,7 +78,7 @@ export function TocSidebar() {
       aria-label="目录侧栏"
       className="app-sidebar-panel"
     >
-      <SidebarPanelHeader icon={ListTree} title="目录" />
+      <SidebarPanelHeader icon={ListTree} title={tocSource === 'derived' ? '目录 · 正文推导' : '目录'} />
       <div className="flex-1 overflow-y-auto py-2">
         {documentState?.status === 'loading' ? (
           <p className="px-3 py-4 text-xs leading-5 text-zinc-500" role="status">
@@ -87,14 +90,23 @@ export function TocSidebar() {
           </p>
         ) : toc.length === 0 ? (
           <p className="px-3 py-4 text-xs leading-5 text-zinc-500">
-            当前书籍没有可用的目录。
+            {tocSource === 'derived'
+              ? '正文中没有可靠的章节标题，当前书籍仍可通过翻页阅读。'
+              : '当前书籍没有可用的目录。'}
           </p>
         ) : (
-          <ul>
-            {toc.map((item, index) => (
-              <TocNode key={`${item.href}-${index}`} item={item} depth={0} onNavigate={handleNavigate} />
-            ))}
-          </ul>
+          <>
+            {tocSource === 'derived' ? (
+              <p className="px-3 pb-2 text-[11px] leading-4 text-zinc-500" role="note">
+                目录根据正文标题生成，仅用于本地导航，不会改写原书。
+              </p>
+            ) : null}
+            <ul>
+              {toc.map((item, index) => (
+                <TocNode key={`${item.href}-${index}`} item={item} depth={0} onNavigate={handleNavigate} />
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </aside>
