@@ -4,10 +4,18 @@ import type { ReadingTypography } from './typography';
 import type { NativeEpubPrefetch } from './nativeEpub';
 import type { ReadingProgress } from './readingProgress';
 import type { EpubDerivedTocCache } from './derivedToc';
+import type { CanonicalSearchIndexCache } from './canonicalSearch';
 
 /** BookDocument 传给 Foliate 宿主的可选机械预取。 */
 export interface FoliateViewOpenOptions {
   epubPrefetch?: NativeEpubPrefetch | null;
+  /** 规范转换后的文档工厂；搜索与渲染必须看到同一份可读内容。 */
+  canonicalSearch?: {
+    sourceFingerprint: string;
+    canonicalTransformVersion: string;
+    transform: (resourceType: string, resourceText: string) => string;
+    cache?: CanonicalSearchIndexCache;
+  };
   /** 原生目录不可导航时使用的本地推导目录缓存。 */
   derivedToc?: {
     sourceFingerprint: string;

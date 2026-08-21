@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { UpstreamFoliateViewHost } from './foliateViewHost';
 import { openFoliateEpub } from './foliateEpubLoader';
+import { sanitizeEpubContent } from './sanitizer';
 
 vi.mock('./foliateEpubLoader', () => ({
   openFoliateEpub: vi.fn(),
@@ -69,6 +70,80 @@ function createHost(element: FakeViewElement) {
 }
 
 describe('UpstreamFoliateViewHost 安全接线', () => {
+  it('搜索使用规范转换后的章节文档,跨标签保留 CFI 并排除脚本文本', async () => {
+    const element = createFakeElement();
+    const book = {
+      sections: [
+        {
+          id: 'chapter.xhtml',
+          createDocument: vi.fn(async () =>
+            new DOMParser().parseFromString(
+              '<html><body><p>正<strong>文</strong><script>正文</script></p></body></html>',
+              'text/html',
+            ),
+          ),
+        },
+      ],
+    };
+    const host = createHost(element);
+
+    await host.open(book, {
+      canonicalSearch: {
+        sourceFingerprint: 'book-hash',
+        canonicalTransformVersion: 'epub-canonical-v1',
+        transform: (type, text) => sanitizeEpubContent(text),
+      },
+    });
+
+    const events = [] as Array<import('./search').SearchEvent>;
+    for await (const event of host.search({ query: '正文' })) events.push(event);
+
+    expect(events.filter((event) => event.kind === 'match')).toHaveLength(1);
+    expect(element.getCFI).toHaveBeenCalledOnce();
+    expect(element.addAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({ value: expect.stringContaining('foliate-search:') }),
+    );
+  });
+
+  it('正则搜索通过同一宿主返回明确的无效表达式状态', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({
+      sections: [
+        {
+          createDocument: async () =>
+            new DOMParser().parseFromString('<html><body>正文</body></html>', 'text/html'),
+        },
+      ],
+    });
+
+    let error: unknown;
+    try {
+      for await (const _event of host.search({ query: '(', mode: 'regex' })) {
+        // exhaust the generator
+      }
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ code: 'INVALID_REGEX' });
+  });
+
+  it('旧版章节宿主不会绕过正则硬预算', async () => {
+    const element = createFakeElement();
+    const host = createHost(element);
+    await host.open({ sections: [{ id: 'chapter.xhtml' }] });
+
+    let error: unknown;
+    try {
+      for await (const _event of host.search({ query: '正文', mode: 'regex' })) {
+        // exhaust the generator
+      }
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ code: 'REGEX_UNAVAILABLE' });
+  });
+
   it('非核心资源失败时回退到清洗后的静态章节,不让整章空白', async () => {
     const element = createFakeElement();
     const transformTarget = new EventTarget();

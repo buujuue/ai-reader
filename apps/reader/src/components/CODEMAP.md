@@ -19,6 +19,7 @@
 - `MarkdownRecoveryDialog.tsx`：启动恢复对话框。逐份展示 available/conflict/corrupt 快照；有效或冲突快照可经 `markdown.recovery.resolve` 载入为未保存缓冲区，损坏快照只允许丢弃，绝不自动覆盖正式内容。
 - `VersionMigrationDialog.tsx`：EPUB 新版本显式迁移对话框，先选择候选再展示进度/批注的保持、唯一重锚和孤儿预览；确认后提交并提供持续保留的迁移前恢复快照列表。
 - `SearchBar.tsx`：当前阅读视图的搜索栏（顶部覆盖层）。输入经防抖后执行 `reader.search.run`，大小写开关执行 `reader.search.toggleCase`，上一项/下一项执行 `reader.search.next`/`reader.search.prev`，点击结果列表项执行 `reader.search.goTo`（经导航历史跳转），关闭执行 `reader.search.close`；展示命中计数、搜索进度与可点击的结果摘录列表。由 `searchStore` 的视图状态驱动。
+- `SearchBar.tsx` 还通过 `reader.search.toggleMode` 切换文本/正则模式，并对预算、语法或取消错误显示可访问的 `role="alert"` 状态。
 - `TocSidebar.tsx`：目录侧栏，展示活动阅读视图的 `BookDocument.getTOC()` 分层目录；点击条目经 `reader.goToHref` 执行显式跳转（压入导航历史），并在 `getTOCSource()` 或条目标记表明为派生目录时提示“正文推导”及非权威说明；由 Workspace Store 的 `tocVisible` 控制显隐。
 - `MetadataEditorDialog.tsx`：元数据编辑器对话框。覆盖标题/作者/封面并一键恢复来源元数据；所有变更经 `library.updateMetadata` / `library.setCover` / `library.removeCover` / `library.restoreMetadata` 命令执行，封面预览经 `importRepository.readCover` 读取。
 - `PurgeConfirmDialog.tsx`：永久删除二次确认对话框。用户需输入书名才可执行 `library.purge`，取消或关闭不改变任何数据；由 `shellUiStore.purgeMaterialId` 控制开关。

@@ -3,6 +3,7 @@ import { EpubBookDocument } from '../epubBookDocument';
 import type { FoliateViewHostFactory } from '../viewHost';
 import { buildMarkdownEpub } from './markdownEpub';
 import { parseMarkdown, type ParsedMarkdown } from './markdownParser';
+import type { CanonicalSearchIndexCache } from '../canonicalSearch';
 
 export interface MarkdownBookDocumentOptions {
   /** Markdown 源文本(UTF-8 字符串)。 */
@@ -11,6 +12,10 @@ export interface MarkdownBookDocumentOptions {
   metadata: BookDocumentMetadata;
   /** 可注入的 Foliate 视图宿主工厂(测试用)。 */
   viewHostFactory: FoliateViewHostFactory;
+  /** Markdown 正文版本指纹，用于隔离可重建搜索索引。 */
+  sourceFingerprint?: string;
+  /** 可注入的全文搜索索引缓存。 */
+  searchIndexCache?: CanonicalSearchIndexCache;
 }
 
 /**
@@ -33,6 +38,8 @@ export class MarkdownBookDocument extends EpubBookDocument {
       viewHostFactory: options.viewHostFactory,
       format: 'markdown',
       locationKind: 'markdown',
+      sourceFingerprint: options.sourceFingerprint ?? 'markdown-source',
+      ...(options.searchIndexCache ? { searchIndexCache: options.searchIndexCache } : {}),
     });
   }
 }

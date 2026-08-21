@@ -10,6 +10,7 @@ import { normalizeReadingProgress } from './readingProgress';
 import { Overlayer } from 'foliate-js/overlayer.js';
 
 import { sanitizeEpubContent } from './sanitizer';
+import { removeEpubDisplayOnlyNodes } from './epubCanonical';
 import { openFoliateEpub } from './foliateEpubLoader';
 import { degradeUnsupportedMathMl } from './mathmlFallback';
 import {
@@ -18,6 +19,21 @@ import {
   isUsableToc,
 } from './derivedToc';
 import type { TocSource } from './toc';
+import {
+  addCanonicalSearchSection,
+  buildCanonicalSearchIndexKey,
+  createCanonicalSectionText,
+  createCanonicalSearchMatch,
+  findRegexMatchOffsetsInWorker,
+  findCanonicalSectionMatches,
+  isUsableCanonicalSearchIndex,
+  MAX_REGEX_RESULTS,
+  type CanonicalSearchIndexSnapshot,
+  type SearchBudgetState,
+} from './canonicalSearch';
+import { SearchBudgetError } from './canonicalSearch';
+
+const SEARCH_ANNOTATION_PREFIX = 'foliate-search:';
 
 export type { FoliateViewHostFactory } from './viewHost';
 
@@ -93,6 +109,7 @@ interface FoliateSection {
   size?: number;
   load: () => Promise<unknown>;
   loadText?: () => Promise<string | null>;
+  createDocument?: () => Promise<Document>;
 }
 
 interface FoliateBook {
@@ -162,6 +179,10 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
   private showAnnotationListeners = new Set<(value: string) => void>();
+  private canonicalSearchConfig: FoliateViewOpenOptions['canonicalSearch'] | null = null;
+  private canonicalSearchIndex: CanonicalSearchIndexSnapshot | null = null;
+  private canonicalSearchIndexKey: string | null = null;
+  private searchAnnotations = new Map<number, string[]>();
 
   constructor(
     element: ExtendedFoliateView,
@@ -172,6 +193,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   async open(book: unknown, options: FoliateViewOpenOptions = {}): Promise<void> {
+    this.canonicalSearchConfig = options.canonicalSearch ?? null;
     const viewModule = await this.viewModule;
     const isFileInput =
       typeof book === 'string' ||
@@ -203,6 +225,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       const foliateBook = asFoliateBook(candidate);
       if (foliateBook) {
         installSectionFallbacks(foliateBook, this.fallbackUrls);
+        installCanonicalDocumentFactories(foliateBook, this.canonicalSearchConfig);
       }
       // 先接入 Loader 的 data 事件,再让 foliate-view 创建 renderer,确保首章
       // 和后续章节都只能以清洗后的字符串进入 iframe。
@@ -259,10 +282,12 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
 
   async goToLocation(location: unknown): Promise<void> {
     await this.element.goTo(location);
+    this.drawSearchAnnotations();
   }
 
   async goToHref(href: string): Promise<void> {
     await this.element.goTo(href);
+    this.drawSearchAnnotations();
   }
 
   getTOC(): import('./toc').Toc {
@@ -315,6 +340,18 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   async *search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
+    if (this.canSearchCanonicalSections()) {
+      yield* this.searchCanonicalSections(options);
+      return;
+    }
+
+    // 注入伪宿主或旧版渲染器没有 createDocument 时保留窄接口兼容路径。
+    if (options.mode === 'regex') {
+      throw new SearchBudgetError(
+        'REGEX_UNAVAILABLE',
+        '当前阅读材料不支持带硬预算的正则搜索',
+      );
+    }
     const generator = this.element.search(options);
     for await (const raw of generator) {
       // foliate 的 search 逐节产出 {progress} 或 {label, subitems},单节搜索产出
@@ -341,6 +378,12 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   clearSearch(): void {
+    for (const cfis of this.searchAnnotations.values()) {
+      for (const cfi of cfis) {
+        this.element.addAnnotation({ value: SEARCH_ANNOTATION_PREFIX + cfi }, true);
+      }
+    }
+    this.searchAnnotations.clear();
     this.element.clearSearch?.();
   }
 
@@ -387,6 +430,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       if (detail?.doc) {
         degradeUnsupportedMathMl(detail.doc);
         listener(detail.doc);
+        this.drawSearchAnnotationsForDocument(detail.doc);
       }
     };
     // foliate-view 在每次内容文档加载后派发 `load` 事件(随章节翻页持续出现)。
@@ -469,6 +513,10 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       this.drawAnnotationCleanup = null;
       this.showAnnotationCleanup = null;
       this.revokeFallbackUrls();
+      this.searchAnnotations.clear();
+      this.canonicalSearchIndex = null;
+      this.canonicalSearchIndexKey = null;
+      this.canonicalSearchConfig = null;
       this.book = null;
       this.derivedToc = null;
       this.tocSource = 'native';
@@ -486,6 +534,113 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private clearContentSanitization(): void {
     this.contentCleanup?.();
     this.contentCleanup = null;
+  }
+
+  private canSearchCanonicalSections(): boolean {
+    return Boolean(
+      this.book?.sections?.length &&
+        this.book.sections.every((section) => typeof section.createDocument === 'function'),
+    );
+  }
+
+  private async *searchCanonicalSections(
+    options: SearchOptions,
+  ): AsyncGenerator<SearchEvent, void, void> {
+    const sections = this.book?.sections ?? [];
+    this.clearSearch();
+    const state: SearchBudgetState = { resultCount: 0 };
+    const signal = options.signal;
+
+    for (const [index, section] of sections.entries()) {
+      if (signal?.aborted) {
+        throw new SearchBudgetError('SEARCH_CANCELLED', '搜索已取消');
+      }
+      const doc = await section.createDocument!();
+      if (signal?.aborted) {
+        throw new SearchBudgetError('SEARCH_CANCELLED', '搜索已取消');
+      }
+      const text = createCanonicalSectionText(doc);
+      this.updateCanonicalSearchIndex(index, text);
+      const regexOffsets =
+        options.mode === 'regex'
+          ? await findRegexMatchOffsetsInWorker(text.text, options.query, options.matchCase ?? false, signal)
+          : null;
+      if (regexOffsets && state.resultCount + regexOffsets.length > MAX_REGEX_RESULTS) {
+        throw new SearchBudgetError(
+          'REGEX_RESULT_LIMIT',
+          `正则搜索结果超过上限 ${MAX_REGEX_RESULTS} 条`,
+        );
+      }
+      if (regexOffsets) state.resultCount += regexOffsets.length;
+      const matches = regexOffsets
+        ? regexOffsets.map(({ start, end }) => createCanonicalSearchMatch(text, start, end))
+        : findCanonicalSectionMatches(text, options, state, {
+            now: () => globalThis.performance?.now?.() ?? Date.now(),
+          });
+      for (const match of matches) {
+        if (signal?.aborted) {
+          throw new SearchBudgetError('SEARCH_CANCELLED', '搜索已取消');
+        }
+        const cfi = this.element.getCFI(index, match.range);
+        const list = this.searchAnnotations.get(index) ?? [];
+        list.push(cfi);
+        this.searchAnnotations.set(index, list);
+        this.element.addAnnotation({ value: SEARCH_ANNOTATION_PREFIX + cfi });
+        yield { kind: 'match', match: { cfi, excerpt: match.excerpt } };
+      }
+      yield {
+        kind: 'progress',
+        progress: sections.length === 0 ? 1 : (index + 1) / sections.length,
+      };
+      // Yield between sections so a pending query can be cancelled before the
+      // next chapter is loaded.
+      await Promise.resolve();
+    }
+  }
+
+  private updateCanonicalSearchIndex(
+    sectionIndex: number,
+    section: import('./canonicalSearch').CanonicalSectionText,
+  ): void {
+    const config = this.canonicalSearchConfig;
+    if (!config) return;
+    const key = buildCanonicalSearchIndexKey({
+      sourceFingerprint: config.sourceFingerprint,
+      canonicalTransformVersion: config.canonicalTransformVersion,
+    });
+    if (this.canonicalSearchIndexKey !== key) {
+      const cached = config.cache?.get(key);
+      this.canonicalSearchIndex = isUsableCanonicalSearchIndex(cached, key)
+        ? cached
+        : { key, sections: {}, totalCharacters: 0 };
+      this.canonicalSearchIndexKey = key;
+    }
+    this.canonicalSearchIndex = addCanonicalSearchSection(
+      this.canonicalSearchIndex ?? { key, sections: {}, totalCharacters: 0 },
+      sectionIndex,
+      section,
+    );
+    config.cache?.set(key, this.canonicalSearchIndex);
+  }
+
+  private drawSearchAnnotations(): void {
+    for (const [index, cfis] of this.searchAnnotations) {
+      if (this.element.renderer?.getContents?.().some((content) => content.index === index)) {
+        this.drawSearchAnnotationsForIndex(cfis);
+      }
+    }
+  }
+
+  private drawSearchAnnotationsForDocument(doc: Document): void {
+    const index = this.element.renderer?.getContents?.().find((content) => content.doc === doc)?.index;
+    if (typeof index !== 'number') return;
+    this.drawSearchAnnotationsForIndex(this.searchAnnotations.get(index) ?? []);
+  }
+
+  private drawSearchAnnotationsForIndex(cfis: readonly string[]): void {
+    for (const cfi of cfis) {
+      this.element.addAnnotation({ value: SEARCH_ANNOTATION_PREFIX + cfi });
+    }
   }
 
   private async deriveTocWhenNeeded(
@@ -664,6 +819,34 @@ function asFoliateBook(value: unknown): FoliateBook | null {
     return null;
   }
   return value as FoliateBook;
+}
+
+/**
+ * foliate-js 的 `createDocument()` 读取原始章节，默认不会经过 Loader 的
+ * `data` 事件。搜索必须显式套上与渲染路径相同的规范转换，否则脚本文本、
+ * CFI 忽略节点和运行时辅助节点会进入索引，且结果 CFI 会漂移。
+ */
+function installCanonicalDocumentFactories(
+  book: FoliateBook,
+  config: FoliateViewOpenOptions['canonicalSearch'] | null,
+): void {
+  if (!config) return;
+  for (const section of book.sections ?? []) {
+    const original = section.createDocument;
+    if (!original) continue;
+    section.createDocument = async () => {
+      const source = await original.call(section);
+      const serialized = new XMLSerializer().serializeToString(source);
+      const transformed = config.transform('application/xhtml+xml', serialized);
+      const xhtml = new DOMParser().parseFromString(transformed, 'application/xhtml+xml');
+      const canonical =
+        xhtml.getElementsByTagName('parsererror').length > 0
+          ? new DOMParser().parseFromString(transformed, 'text/html')
+          : xhtml;
+      removeEpubDisplayOnlyNodes(canonical);
+      return canonical;
+    };
+  }
 }
 
 /**

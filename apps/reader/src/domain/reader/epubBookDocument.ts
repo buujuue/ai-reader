@@ -15,6 +15,7 @@ import {
   type EpubCanonicalTransform,
   type EpubDerivedCache,
 } from './epubCanonical';
+import type { CanonicalSearchIndexCache } from './canonicalSearch';
 
 export interface EpubBookDocumentOptions {
   /** EPUB 字节内容。 */
@@ -35,6 +36,8 @@ export interface EpubBookDocumentOptions {
   canonicalTransformVersion?: string;
   /** 可注入的规范转换派生缓存;默认使用当前文档的内存缓存。 */
   derivedCache?: EpubDerivedCache<string>;
+  /** 可重建全文搜索索引缓存;不保存原书字节。 */
+  searchIndexCache?: CanonicalSearchIndexCache;
   /** 可注入的推导目录缓存;只保存带版本的目录 JSON。 */
   derivedTocCache?: EpubDerivedTocCache;
 }
@@ -86,7 +89,10 @@ export class EpubBookDocument implements BookDocument {
         : {}),
     };
     this.canonicalTransform = createEpubCanonicalTransform(canonicalOptions);
+    this.searchIndexCache = options.searchIndexCache;
   }
+
+  private readonly searchIndexCache: CanonicalSearchIndexCache | undefined;
 
   async open(container: HTMLElement): Promise<void> {
     if (this.host) {
@@ -112,6 +118,12 @@ export class EpubBookDocument implements BookDocument {
             },
           }
         : {}),
+      canonicalSearch: {
+        sourceFingerprint: this.sourceFingerprint,
+        canonicalTransformVersion: this.canonicalTransform.version,
+        transform: this.canonicalTransform.transform.bind(this.canonicalTransform),
+        ...(this.searchIndexCache ? { cache: this.searchIndexCache } : {}),
+      },
     });
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);

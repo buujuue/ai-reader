@@ -9,6 +9,10 @@ import {
   type EpubDerivedCache,
 } from '../domain/reader/epubCanonical';
 import {
+  createCanonicalSearchIndexCache,
+  type CanonicalSearchIndexCache,
+} from '../domain/reader/canonicalSearch';
+import {
   createEpubDerivedTocCache,
   type EpubDerivedTocCache,
 } from '../domain/reader/derivedToc';
@@ -68,6 +72,8 @@ export interface ReaderCommandDependencies {
   epubNativeAccelerator?: EpubNativeAccelerator | undefined;
   /** 可选的 EPUB 规范转换缓存;生产默认在当前进程内按版本共享。 */
   epubDerivedCache?: EpubDerivedCache<string>;
+  /** 可选的可重建全文搜索索引缓存;按书籍/规范/查询版本隔离。 */
+  canonicalSearchIndexCache?: CanonicalSearchIndexCache;
   /** 可选的 EPUB 推导目录缓存;生产由 Rust 私有文件 Repository 提供，不参与同步。 */
   epubDerivedTocCache?: EpubDerivedTocCache;
 }
@@ -86,6 +92,7 @@ interface ActiveViewMount {
 
 const activeMounts = new Map<string, ActiveViewMount>();
 const defaultEpubDerivedCache = createEpubDerivedCache<string>();
+const defaultCanonicalSearchIndexCache = createCanonicalSearchIndexCache();
 const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
 
 function describeDocumentOpenError(error: unknown): string {
@@ -212,6 +219,7 @@ async function createEpubDocument(
     nativePrefetch,
     sourceFingerprint: material.fingerprint,
     derivedCache: dependencies.epubDerivedCache ?? defaultEpubDerivedCache,
+    searchIndexCache: dependencies.canonicalSearchIndexCache ?? defaultCanonicalSearchIndexCache,
     derivedTocCache: dependencies.epubDerivedTocCache ?? defaultEpubDerivedTocCache,
   });
 }
@@ -274,6 +282,8 @@ async function createMarkdownDocument(
       language: material.language,
     },
     viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
+    sourceFingerprint: material.fingerprint,
+    searchIndexCache: dependencies.canonicalSearchIndexCache ?? defaultCanonicalSearchIndexCache,
   });
 }
 
@@ -720,7 +730,8 @@ export function registerReaderCommands(
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     const query = args[1] as string | undefined;
     if (!viewId || typeof query !== 'string') return;
-    runSearch(viewId, { query, matchCase: useSearchStore.getState().getView(viewId).matchCase });
+    const view = useSearchStore.getState().getView(viewId);
+    runSearch(viewId, { query, matchCase: view.matchCase, mode: view.mode });
   });
 
   registry.register(COMMAND_IDS.readerSearchToggleCase, async (...args: unknown[]) => {
@@ -731,7 +742,25 @@ export function registerReaderCommands(
     const matchCase = !view.matchCase;
     useSearchStore.getState().setMatchCase(viewId, matchCase);
     // 用当前输入草稿重搜(若调用方未给草稿则回退到上次已提交查询)。
-    runSearch(viewId, { query: queryFromArg ?? view.query, matchCase });
+    runSearch(viewId, {
+      query: queryFromArg ?? view.query,
+      matchCase,
+      mode: view.mode,
+    });
+  });
+
+  registry.register(COMMAND_IDS.readerSearchToggleMode, async (...args: unknown[]) => {
+    const viewId = (args[0] as string | undefined) ?? getActiveViewId();
+    const queryFromArg = args[1] as string | undefined;
+    if (!viewId) return;
+    const view = useSearchStore.getState().getView(viewId);
+    const mode = view.mode === 'regex' ? 'text' : 'regex';
+    useSearchStore.getState().setMode(viewId, mode);
+    runSearch(viewId, {
+      query: queryFromArg ?? view.query,
+      matchCase: view.matchCase,
+      mode,
+    });
   });
 
   registry.register(COMMAND_IDS.readerSearchNext, async (...args: unknown[]) => {

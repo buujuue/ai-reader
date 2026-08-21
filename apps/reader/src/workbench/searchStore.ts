@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { SearchMatch } from '../domain/reader/search';
+import type { SearchMatch, SearchMode } from '../domain/reader/search';
 
 /**
  * 当前材料搜索的运行时状态(不可持久化的活状态),按阅读视图 id 组织。
@@ -15,6 +15,7 @@ export interface SearchViewState {
   active: boolean;
   query: string;
   matchCase: boolean;
+  mode: SearchMode;
   /** 全材料搜索进度 0..1。 */
   progress: number;
   status: SearchStatus;
@@ -32,13 +33,14 @@ export interface SearchStoreState {
   getView: (viewId: string) => SearchViewState;
   open: (viewId: string) => void;
   close: (viewId: string) => void;
-  begin: (viewId: string, query: string, matchCase: boolean) => void;
+  begin: (viewId: string, query: string, matchCase: boolean, mode?: SearchMode) => void;
   setProgress: (viewId: string, progress: number) => void;
   addMatch: (viewId: string, match: SearchMatch) => void;
   complete: (viewId: string) => void;
   cancel: (viewId: string) => void;
   setError: (viewId: string, error: string) => void;
   setMatchCase: (viewId: string, matchCase: boolean) => void;
+  setMode: (viewId: string, mode: SearchMode) => void;
   setCurrentIndex: (viewId: string, index: number) => void;
   reset: (viewId: string) => void;
 }
@@ -48,6 +50,7 @@ function emptyView(): SearchViewState {
     active: false,
     query: '',
     matchCase: false,
+    mode: 'text',
     progress: 0,
     status: 'idle',
     error: null,
@@ -74,7 +77,7 @@ export const useSearchStore = create<SearchStoreState>()((set, get) => ({
       return { views };
     }),
 
-  begin: (viewId, query, matchCase) =>
+  begin: (viewId, query, matchCase, mode = 'text') =>
     set((state) => ({
       views: {
         ...state.views,
@@ -83,6 +86,7 @@ export const useSearchStore = create<SearchStoreState>()((set, get) => ({
           active: true,
           query,
           matchCase,
+          mode,
           progress: 0,
           status: 'searching',
           error: null,
@@ -122,7 +126,14 @@ export const useSearchStore = create<SearchStoreState>()((set, get) => ({
       return {
         views: {
           ...state.views,
-          [viewId]: { ...state.views[viewId]!, status: 'cancelled' },
+          [viewId]: {
+            ...state.views[viewId]!,
+            status: 'cancelled',
+            error: null,
+            matches: [],
+            currentIndex: -1,
+            currentCfi: null,
+          },
         },
       };
     }),
@@ -133,7 +144,15 @@ export const useSearchStore = create<SearchStoreState>()((set, get) => ({
       return {
         views: {
           ...state.views,
-          [viewId]: { ...state.views[viewId]!, status: 'error', error, progress: 1 },
+          [viewId]: {
+            ...state.views[viewId]!,
+            status: 'error',
+            error,
+            progress: 1,
+            matches: [],
+            currentIndex: -1,
+            currentCfi: null,
+          },
         },
       };
     }),
@@ -142,6 +161,12 @@ export const useSearchStore = create<SearchStoreState>()((set, get) => ({
     set((state) => {
       if (!state.views[viewId]) return {};
       return { views: { ...state.views, [viewId]: { ...state.views[viewId]!, matchCase } } };
+    }),
+
+  setMode: (viewId, mode) =>
+    set((state) => {
+      if (!state.views[viewId]) return {};
+      return { views: { ...state.views, [viewId]: { ...state.views[viewId]!, mode } } };
     }),
 
   setCurrentIndex: (viewId, index) =>

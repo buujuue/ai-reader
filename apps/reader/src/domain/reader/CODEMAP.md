@@ -12,6 +12,7 @@
 - `typography.ts`：阅读排版设置（字体、字号、行距、页边距、主题、分页/滚动）。定义完整设置 `ReadingTypography`、全局默认 `DEFAULT_READING_TYPOGRAPHY`、材料级覆盖与全局默认的合并规则 `resolveTypography`，以及把排版注入文档的 `buildTypographyCss`。字体与颜色全部来自固定映射，不拼接不可信字符串，落实 ADR-0010 不放开安全边界。
 - `sanitizer.ts`：不可信阅读资源清洗器。`sanitizeEpubResource` 统一处理 XHTML/HTML、SVG、CSS 与脚本 MIME；永久移除脚本、iframe、object、embed、表单、音视频媒体、事件处理器属性、远程/危险 URL 和可执行 CSS，落实 ADR-0010。清洗是打开 EPUB 的必经步骤，无"信任此书"开关。
 - `epubCanonical.ts`：规范 EPUB 转换入口与版本化派生缓存键。原书完整指纹和转换版本进入缓存键；清洗结果只作为阅读、搜索与 CFI 所见 DOM 的派生数据，排版设置不参与转换。
+- `canonicalSearch.ts`：按章节建立规范可读文本、文本偏移到 DOM Range 的映射和版本化搜索索引快照；普通搜索与安全正则共用字符预算、结果上限、章节超时和取消错误边界，正则实际在可终止 Worker 中执行，脚本、模板、CFI 忽略节点及展示辅助节点不进入结果，缓存损坏或版本变化只触发重建。
 - `epubCfi.ts`：EPUB CFI 的 spine 前缀解析与同章判断，供文本锚点回退限制在原章节内。
 - `epubBookDocument.ts`：`EpubBookDocument` 实现。把不可信内容清洗、Foliate 渲染器挂载、位置读取/恢复、目录读取、href 导航与书内/外部链接事件封装在窄接口后；`wireSecurity` 在文本资源进入渲染器前清洗各已知 MIME，把 relocate 事件转成 `ReadingLocation` 和可序列化进度反馈，并把书内/外部链接事件面向上层。
 - `foliateEpubLoader.ts`：把受预算的项目 ZIP loader 适配为 foliate-js EPUB loader；可选原生预取只覆盖已校验的 container/OPF/NAV/NCX 文本和资源尺寸，其余章节与资源继续由同一份 JS ZIP loader 按需读取。
@@ -21,7 +22,7 @@
 - `mathmlFallback.ts`：检测浏览器无法绘制的 MathML，仅替换不可见公式为带 `role="img"` 和可读文本的本地 fallback；可渲染的原生 MathML 保持不变。
 - `readingInput.ts`：阅读输入统一层。纯解释器（`interpretKeyboard`/`interpretWheel`/`interpretTap`/`interpretSwipe`）把键盘、滚轮、点击、滑动归一化为"翻一页"意图；`WheelPageGate` 保证一次滚轮/惯性手势最多翻一页；`isInteractiveElement` 识别链接与交互控件以避免误触翻页；`ReadingInputController` 把解释结果收敛到稳定 Command ID 分发（不依赖 Command Registry），并通过 `attach` 把内容文档的原始 DOM 事件归一化后喂给控制器，分页模式下抑制 foliate 原生触摸滑动避免双翻页。
 - 对应 `*.test.ts`：清洗器、`EpubBookDocument`、阅读进度、MathML 降级、搜索归一化与排版合并/建 CSS 行为测试；EPUB P0 语义矩阵另在 `src/test/fixtures/epub/` 使用 Foliate loader 验证目录、固定版式与方向语义。
-- `search.ts`：当前材料搜索的领域类型（`SearchExcerpt`、`SearchMatch`、`SearchEvent`、`SearchOptions`）。搜索只针对当前激活 ReadingView，不跨书建索引。
+- `search.ts`：当前材料搜索的领域类型（`SearchExcerpt`、`SearchMatch`、`SearchEvent`、`SearchOptions`、`SearchMode`）。搜索只针对当前激活 ReadingView，不跨书建索引。
 - 对应 `*.test.ts`：清洗器、`EpubBookDocument` 与搜索归一化行为测试（伪宿主）；EPUB 2/3 P0 语义矩阵位于 `src/test/fixtures/epub/`。
 - `pdf/`：PDF 阅读子模块。`pdfLibrary.ts` 定义 PDF.js 窄接口类型与懒加载引导（`isEvalSupported:false` 安全边界）；`pdfRangeTransport.ts` 实现范围读取并发上限（`MAX_CONCURRENT_RANGES`）；`pdfInspector.ts` 的 `inspectPdf` 做格式校验与元数据提取；`pdfPageRenderer.ts` 单页渲染器（DPI 夹紧、过期渲染取消、替换/卸载释放画布位图与文本层、扫描页区域拖选）；`pdfRenderer.ts` 布局管理器（分页/滚动、缩放与页面适配、滚动窗口化 + 画布内存预算，仅渲染视口附近的解码页）；`pdfBookDocument.ts` 的 `PdfBookDocument` 实现 `BookDocument`（元数据/目录/导航/位置/缩放/适配/封面 + PDF 专属 `setViewport`、文本/区域锚点）。所有对 PDF.js 的直接调用都集中在本模块，上层只经 `BookDocument` 窄接口交互。详见 `pdf/CODEMAP.md`。
 - `markdown/`：Markdown 阅读子模块。`markdownParser.ts` 用 `marked` 渲染并经 `sanitizeHtmlFragment` 清洗、按一级标题分段并提取来源元数据；`markdownInspector.ts` 的 `inspectMarkdown` 做导入检查与标题/文件名兜底；`markdownEpub.ts` 把已清洗章节组装成最小 stored 内存 EPUB；`markdownBookDocument.ts` 的 `MarkdownBookDocument` 复用 `EpubBookDocument` 的 Foliate 宿主完成渲染。所有对 `marked`、内存 EPUB 与 Foliate 渲染的直接调用都集中在本模块。详见 `markdown/CODEMAP.md`。

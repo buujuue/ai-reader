@@ -43,6 +43,7 @@ export const COMMAND_IDS = {
   readerSearchClose: 'reader.search.close',
   readerSearchRun: 'reader.search.run',
   readerSearchToggleCase: 'reader.search.toggleCase',
+  readerSearchToggleMode: 'reader.search.toggleMode',
   readerSearchNext: 'reader.search.next',
   readerSearchPrev: 'reader.search.prev',
   readerSearchGoTo: 'reader.search.goTo',

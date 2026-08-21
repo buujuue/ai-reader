@@ -35,6 +35,32 @@ describe('searchStore', () => {
     expect(view.matches).toHaveLength(0);
     expect(view.currentIndex).toBe(-1);
     expect(view.progress).toBe(0);
+    expect(view.mode).toBe('text');
+  });
+
+  it('可切换正则模式,错误时清掉部分命中避免污染后续查询', () => {
+    const store = useSearchStore.getState();
+    store.begin(VIEW, 'a+', false, 'regex');
+    store.addMatch(VIEW, match('epubcfi(/6/1)'));
+    store.setError(VIEW, '正则搜索超时');
+
+    const view = useSearchStore.getState().getView(VIEW);
+    expect(view.mode).toBe('regex');
+    expect(view.status).toBe('error');
+    expect(view.matches).toEqual([]);
+    expect(view.currentIndex).toBe(-1);
+  });
+
+  it('取消搜索时清掉部分命中并保留明确的取消状态', () => {
+    const store = useSearchStore.getState();
+    store.begin(VIEW, 'a+', false, 'regex');
+    store.addMatch(VIEW, match('epubcfi(/6/1)'));
+    store.cancel(VIEW);
+
+    const view = useSearchStore.getState().getView(VIEW);
+    expect(view.status).toBe('cancelled');
+    expect(view.matches).toEqual([]);
+    expect(view.error).toBeNull();
   });
 
   it('searching 期间累积进度与命中,complete 结束', () => {

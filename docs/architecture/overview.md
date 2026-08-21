@@ -154,7 +154,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 2 切片**：托管导入一份 EPUB（stage → inspect → commit、完整内容指纹、SQLite 落库）。
 - **第 3 切片**：安全打开 EPUB 并重启续读（`BookDocument`/`EpubBookDocument` + `foliate-js`、`ReadingLocation`、Editor Group 标签、位置节流写入与 flush、重启恢复、内容清洗）。
 - **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面网格、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。书库文件夹树与拖拽归类不属于本次原型迁移，另行切片。
-- **第 5 切片**：当前资料目录、搜索、导航历史与基本排版（`TocSidebar`、增量搜索 `searchStore`/`searchRunner`、导航历史后退/前进、阅读排版 `typography.ts` 与 `ReaderSettingsDialog`、排版设置持久化）。
+- **第 5 切片**：当前资料目录、规范搜索、导航历史与基本排版（`TocSidebar`、按章节规范 DOM 增量搜索 `canonicalSearch.ts`/`searchStore`/`searchRunner`、文本/安全正则预算与取消、导航历史后退/前进、阅读排版 `typography.ts` 与 `ReaderSettingsDialog`、排版设置持久化）。
 - **第 6 切片**：PDF 固定版式阅读（`pdf/` 子模块：`PdfBookDocument` + `pdfjs-dist`、范围读取并发上限、过期渲染取消、Canvas 内存预算、缩放/页面适配与视口恢复、扫描页无文字层仍显示、`readerSetPdfViewport`/`readerSetPdfFlow` 命令）。对应工单 #14。
 - **第 7 切片**：Markdown 安全导入并阅读（`markdown/` 子模块：`marked` 渲染 + `sanitizeHtmlFragment` 清洗、按一级标题分段、内存 EPUB 组装、`MarkdownBookDocument` 复用 Foliate 宿主、标题/作者提取与文件名兜底、`library.openBook` 读取）。对应工单 #17。
 - **第 8 切片**：共享编辑 Markdown 并正式保存（按材料唯一的 `MarkdownDocumentSession`、CodeMirror 6 按需加载、`markdown.save`、Rust 原子替换、文档版本与完整指纹更新、脏关闭确认）。对应工单 #18。

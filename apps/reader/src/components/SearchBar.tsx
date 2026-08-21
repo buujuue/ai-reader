@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CaseSensitive, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CaseSensitive, Regex, X } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
@@ -59,6 +59,12 @@ export function SearchBar({ viewId }: { viewId: string }) {
       .catch(() => undefined);
   };
 
+  const handleToggleMode = () => {
+    void commands
+      .execute(COMMAND_IDS.readerSearchToggleMode, viewId, draft)
+      .catch(() => undefined);
+  };
+
   const handleNext = () => {
     void commands.execute(COMMAND_IDS.readerSearchNext, viewId).catch(() => undefined);
   };
@@ -99,7 +105,7 @@ export function SearchBar({ viewId }: { viewId: string }) {
           spellCheck={false}
           onChange={(event) => handleChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="在当前阅读材料中搜索…"
+          placeholder={view.mode === 'regex' ? '使用正则表达式搜索…' : '在当前阅读材料中搜索…'}
           aria-label="搜索关键词"
           className="h-8 min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-sky-500 focus:outline-none"
         />
@@ -115,6 +121,20 @@ export function SearchBar({ viewId }: { viewId: string }) {
           className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
         >
           <CaseSensitive size={16} aria-hidden />
+        </button>
+        <button
+          type="button"
+          aria-label="切换正则搜索"
+          aria-pressed={view.mode === 'regex'}
+          title={view.mode === 'regex' ? '正则搜索(已启用)' : '启用正则搜索'}
+          onClick={handleToggleMode}
+          className={`flex h-11 w-11 items-center justify-center rounded-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--prototype-focus)] ${
+            view.mode === 'regex'
+              ? 'bg-[var(--prototype-accent-soft)] text-[var(--prototype-accent-strong)]'
+              : 'text-[var(--prototype-text-muted)] hover:bg-[var(--prototype-surface-hover)] hover:text-[var(--prototype-text)]'
+          }`}
+        >
+          <Regex size={16} aria-hidden />
         </button>
         <button
           type="button"
@@ -168,6 +188,16 @@ export function SearchBar({ viewId }: { viewId: string }) {
             </li>
           ))}
         </ul>
+      )}
+      {view.error && (
+        <p role="alert" className="border-t border-[var(--prototype-danger)] px-3 py-1.5 text-xs text-[var(--prototype-danger)]">
+          {view.error}
+        </p>
+      )}
+      {view.status === 'cancelled' && (
+        <p role="status" className="border-t border-[var(--prototype-border)] px-3 py-1.5 text-xs text-[var(--prototype-text-secondary)]">
+          {view.mode === 'regex' ? '正则搜索已取消' : '搜索已取消'}
+        </p>
       )}
     </div>
   );

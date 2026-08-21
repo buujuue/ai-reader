@@ -21,8 +21,13 @@ export type SearchEvent =
   | { kind: 'progress'; progress: number }
   | { kind: 'match'; match: SearchMatch };
 
-/** 搜索选项。第一版支持普通文本与大小写开关。 */
+export type SearchMode = 'text' | 'regex';
+
+/** 搜索选项。正则模式的预算由领域层固定，调用方不能通过此接口放宽。 */
 export interface SearchOptions {
   query: string;
   matchCase?: boolean;
+  mode?: SearchMode;
+  /** 搜索任务取消时由运行时注入；不是持久化状态。 */
+  signal?: AbortSignal;
 }
