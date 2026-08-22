@@ -11,6 +11,18 @@ export interface ZipEntry {
   localHeaderOffset: number;
 }
 
+/** 只读、支持惰性 slice 的 ZIP 来源；ManagedFileSource 满足该边界。 */
+export interface ZipSource {
+  readonly size: number;
+  slice(start?: number, end?: number): Blob;
+}
+
+/** 已解析中央目录的惰性 ZIP；正文条目只在 readEntry 时读取。 */
+export interface ZipArchive {
+  readonly entries: readonly ZipEntry[];
+  readEntry(name: string, options?: ReadZipEntryOptions): Promise<Uint8Array | null>;
+}
+
 export type ZipErrorKind = 'corrupt' | 'budget' | 'encrypted';
 
 /** ZIP 解析、预算和加密状态的稳定领域错误。 */
@@ -143,10 +155,18 @@ export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
     throw new ZipError('ZIP 中央目录覆盖了 EOCD 或超出文件范围', 'corrupt');
   }
 
+  return parseCentralDirectory(
+    bytes.subarray(centralDirectoryOffset, centralDirectoryOffset + centralDirectorySize),
+    totalEntries,
+  );
+}
+
+function parseCentralDirectory(bytes: Uint8Array, totalEntries: number): ZipEntry[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const entries: ZipEntry[] = [];
   const names = new Set<string>();
-  let cursor = centralDirectoryOffset;
-  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+  let cursor = 0;
+  const centralDirectoryEnd = bytes.byteLength;
   for (let index = 0; index < totalEntries; index += 1) {
     ensureRange(bytes.byteLength, cursor, 46, '中央目录条目');
     if (readU32(view, cursor, '中央目录签名') !== CENTRAL_DIRECTORY_SIGNATURE) {
@@ -242,6 +262,167 @@ export async function readZipEntry(
     return inflated;
   }
   throw new ZipError(`不支持的 ZIP 压缩方式:${entry.compressionMethod}`, 'corrupt');
+}
+
+/**
+ * 从惰性来源读取 ZIP 中央目录。只读取文件尾部和中央目录，不读取正文数据。
+ */
+export async function openZipArchive(source: ZipSource): Promise<ZipArchive> {
+  assertSourceSize(source.size);
+  const tailLength = Math.min(source.size, 22 + 0xffff);
+  const tailOffset = source.size - tailLength;
+  const tail = await readSourceRange(source, tailOffset, tailLength);
+  const eocdOffset = findEndOfCentralDirectory(tail);
+  if (eocdOffset < 0) {
+    throw new ZipError('无效的 ZIP 文件:找不到中央目录结束标记', 'corrupt');
+  }
+
+  const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  const diskNumber = readU16(view, eocdOffset + 4, 'EOCD 磁盘编号');
+  const centralDisk = readU16(view, eocdOffset + 6, 'EOCD 中央目录磁盘编号');
+  const entriesOnDisk = readU16(view, eocdOffset + 8, 'EOCD 当前磁盘条目数');
+  const totalEntries = readU16(view, eocdOffset + 10, 'EOCD 条目数');
+  const centralDirectorySize = readU32(view, eocdOffset + 12, 'EOCD 中央目录大小');
+  const centralDirectoryOffset = readU32(view, eocdOffset + 16, 'EOCD 中央目录偏移');
+  if (
+    diskNumber !== 0 ||
+    centralDisk !== 0 ||
+    entriesOnDisk !== totalEntries ||
+    centralDirectorySize === ZIP64_SENTINEL ||
+    centralDirectoryOffset === ZIP64_SENTINEL
+  ) {
+    throw new ZipError('不支持多磁盘或 ZIP64 EPUB', 'corrupt');
+  }
+
+  ensureRange(source.size, centralDirectoryOffset, centralDirectorySize, '中央目录');
+  const eocdAbsoluteOffset = tailOffset + eocdOffset;
+  if (centralDirectoryOffset + centralDirectorySize > eocdAbsoluteOffset) {
+    throw new ZipError('ZIP 中央目录覆盖了 EOCD 或超出文件范围', 'corrupt');
+  }
+  const centralDirectory = await readSourceRange(
+    source,
+    centralDirectoryOffset,
+    centralDirectorySize,
+  );
+  const entries = parseCentralDirectory(centralDirectory, totalEntries);
+  return new LazyZipArchive(source, entries);
+}
+
+class LazyZipArchive implements ZipArchive {
+  readonly entries: readonly ZipEntry[];
+  readonly #source: ZipSource;
+  readonly #pending = new Map<string, Promise<Uint8Array | null>>();
+
+  constructor(source: ZipSource, entries: readonly ZipEntry[]) {
+    this.#source = source;
+    this.entries = entries;
+  }
+
+  readEntry(name: string, options: ReadZipEntryOptions = {}): Promise<Uint8Array | null> {
+    const entry = this.entries.find((candidate) => candidate.name === name);
+    if (!entry) return Promise.resolve(null);
+    const maxUncompressedBytes =
+      options.maxUncompressedBytes ?? EPUB_RESOURCE_BUDGET.maxEntryUncompressedBytes;
+    if (!Number.isSafeInteger(maxUncompressedBytes) || maxUncompressedBytes < 0) {
+      return Promise.reject(new ZipBudgetError('ZIP 解压预算无效'));
+    }
+    if (entry.uncompressedSize > maxUncompressedBytes) {
+      return Promise.reject(new ZipBudgetError(`ZIP 条目超过解压预算:${entry.name}`));
+    }
+    if (entry.flags & 0x0001) {
+      return Promise.reject(new ZipEncryptionError(`ZIP 条目已加密:${entry.name}`));
+    }
+
+    const pendingKey = `${entry.name}:${maxUncompressedBytes}`;
+    const pending = this.#pending.get(pendingKey);
+    if (pending) return pending;
+    const request = readLazyZipEntry(this.#source, entry, maxUncompressedBytes);
+    this.#pending.set(pendingKey, request);
+    void request.then(
+      () => this.#pending.delete(pendingKey),
+      () => this.#pending.delete(pendingKey),
+    );
+    return request;
+  }
+}
+
+async function readLazyZipEntry(
+  source: ZipSource,
+  entry: ZipEntry,
+  maxUncompressedBytes: number,
+): Promise<Uint8Array> {
+  const dataOffset = await readLocalDataOffsetFromSource(source, entry);
+  const compressed = await readSourceRange(source, dataOffset, entry.compressedSize);
+  if (entry.compressionMethod === 0) {
+    if (compressed.byteLength !== entry.uncompressedSize) {
+      throw new ZipError(`ZIP 条目大小声明不一致:${entry.name}`, 'corrupt');
+    }
+    return compressed;
+  }
+  if (entry.compressionMethod === 8) {
+    const inflated = await inflate(compressed, maxUncompressedBytes, entry.name);
+    if (inflated.byteLength !== entry.uncompressedSize) {
+      throw new ZipError(`ZIP 条目解压大小声明不一致:${entry.name}`, 'corrupt');
+    }
+    return inflated;
+  }
+  throw new ZipError(`不支持的 ZIP 压缩方式:${entry.compressionMethod}`, 'corrupt');
+}
+
+async function readLocalDataOffsetFromSource(
+  source: ZipSource,
+  entry: ZipEntry,
+): Promise<number> {
+  const offset = entry.localHeaderOffset;
+  const header = await readSourceRange(source, offset, 30);
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  if (readU32(view, 0, '本地文件头签名') !== LOCAL_HEADER_SIGNATURE) {
+    throw new ZipError('无效的 ZIP 文件:本地文件头签名错误', 'corrupt');
+  }
+  const localFlags = readU16(view, 6, '本地文件头标志');
+  const localMethod = readU16(view, 8, '本地文件头压缩方式');
+  const nameLength = readU16(view, 26, '本地文件头名称长度');
+  const extraLength = readU16(view, 28, '本地文件头扩展长度');
+  if (
+    localMethod !== entry.compressionMethod ||
+    (localFlags & 0x0001) !== (entry.flags & 0x0001)
+  ) {
+    throw new ZipError(`ZIP 本地文件头与中央目录不一致:${entry.name}`, 'corrupt');
+  }
+  const nameAndExtra = await readSourceRange(source, offset + 30, nameLength + extraLength);
+  if (decodeName(nameAndExtra, 0, nameLength) !== entry.name) {
+    throw new ZipError(`ZIP 本地文件头名称与中央目录不一致:${entry.name}`, 'corrupt');
+  }
+  const dataOffset = offset + 30 + nameLength + extraLength;
+  ensureRange(source.size, dataOffset, entry.compressedSize, `本地条目数据:${entry.name}`);
+  return dataOffset;
+}
+
+async function readSourceRange(
+  source: ZipSource,
+  offset: number,
+  length: number,
+): Promise<Uint8Array> {
+  if (
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(length) ||
+    offset < 0 ||
+    length < 0 ||
+    offset > source.size - length
+  ) {
+    throw new ZipError(`ZIP 读取越界:offset=${offset},length=${length}`, 'corrupt');
+  }
+  const bytes = new Uint8Array(await source.slice(offset, offset + length).arrayBuffer());
+  if (bytes.byteLength !== length) {
+    throw new ZipError(`ZIP 范围读取长度不匹配:期望 ${length},实际 ${bytes.byteLength}`, 'corrupt');
+  }
+  return bytes;
+}
+
+function assertSourceSize(size: number): void {
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw new ZipError(`ZIP 来源大小无效:${size}`, 'corrupt');
+  }
 }
 
 function readLocalDataOffset(

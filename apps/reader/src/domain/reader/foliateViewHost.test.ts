@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { UpstreamFoliateViewHost } from './foliateViewHost';
 import { openFoliateEpub } from './foliateEpubLoader';
@@ -70,6 +70,10 @@ function createHost(element: FakeViewElement) {
 }
 
 describe('UpstreamFoliateViewHost 安全接线', () => {
+  beforeEach(() => {
+    vi.mocked(openFoliateEpub).mockReset();
+  });
+
   it('搜索使用规范转换后的章节文档,跨标签保留 CFI 并排除脚本文本', async () => {
     const element = createFakeElement();
     const book = {
@@ -155,16 +159,16 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
       '<html xmlns="http://www.w3.org/1999/xhtml"><body><script>alert(1)</script><p>正文仍可读</p></body></html>',
     );
     const book = { sections: [section], loadText, transformTarget };
-    const viewModule = { makeBook: vi.fn().mockResolvedValue(book) };
+    vi.mocked(openFoliateEpub).mockResolvedValueOnce(book);
     const host = new UpstreamFoliateViewHost(
       element as unknown as import('foliate-js/view.js').View & HTMLElement,
-      Promise.resolve(viewModule as unknown as typeof import('foliate-js/view.js')),
+      Promise.resolve({} as typeof import('foliate-js/view.js')),
     );
 
     await host.open(new File(['epub'], 'book.epub'));
     const fallbackUrl = await section.load();
 
-    expect(viewModule.makeBook).toHaveBeenCalledOnce();
+    expect(openFoliateEpub).toHaveBeenCalledWith(expect.any(File), null);
     expect(element.open).toHaveBeenCalledWith(book);
     expect(fallbackUrl).toEqual(expect.any(String));
     expect(loadText).toHaveBeenCalledWith('chapter.xhtml');
@@ -175,13 +179,12 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
     element.open.mockRejectedValueOnce(new Error('原生 loader 不兼容'));
     const nativeBook = {};
     const pureJsBook = {};
-    const viewModule = {
-      makeBook: vi.fn().mockResolvedValue(pureJsBook),
-    };
-    vi.mocked(openFoliateEpub).mockResolvedValueOnce(nativeBook);
+    vi.mocked(openFoliateEpub)
+      .mockResolvedValueOnce(nativeBook)
+      .mockResolvedValueOnce(pureJsBook);
     const host = new UpstreamFoliateViewHost(
       element as unknown as import('foliate-js/view.js').View & HTMLElement,
-      Promise.resolve(viewModule as unknown as typeof import('foliate-js/view.js')),
+      Promise.resolve({} as typeof import('foliate-js/view.js')),
     );
 
     await host.open(new File(['epub'], 'book.epub'), {
@@ -198,7 +201,8 @@ describe('UpstreamFoliateViewHost 安全接线', () => {
       },
     });
 
-    expect(viewModule.makeBook).toHaveBeenCalledOnce();
+    expect(openFoliateEpub).toHaveBeenCalledTimes(2);
+    expect(openFoliateEpub).toHaveBeenNthCalledWith(2, expect.any(File), null);
     expect(element.open).toHaveBeenNthCalledWith(1, nativeBook);
     expect(element.open).toHaveBeenNthCalledWith(2, pureJsBook);
   });

@@ -63,4 +63,31 @@ describe('foliate EPUB loader 原生预取边界', () => {
 
     expect(loader.getSize('OEBPS/chapter1.xhtml')).toBe(456);
   });
+
+  it('同一条目的并发读取共享请求,完成后不保留正文结果', async () => {
+    const bytes = buildEpub({ title: '并发读取' });
+    const file = asFile(bytes);
+    const ranges: Array<[number, number]> = [];
+    const source = {
+      size: file.size,
+      slice(start?: number, end?: number) {
+        const normalizedStart = start ?? 0;
+        const normalizedEnd = end ?? file.size;
+        ranges.push([normalizedStart, normalizedEnd]);
+        return file.slice(normalizedStart, normalizedEnd);
+      },
+    };
+    const loader = await createFoliateEpubLoader(source);
+    const beforeEntryReads = ranges.length;
+
+    await Promise.all([
+      loader.loadText('OEBPS/chapter1.xhtml'),
+      loader.loadBlob('OEBPS/chapter1.xhtml'),
+    ]);
+    const firstReadCount = ranges.length - beforeEntryReads;
+    expect(firstReadCount).toBe(3);
+
+    await loader.loadText('OEBPS/chapter1.xhtml');
+    expect(ranges.length - beforeEntryReads).toBe(firstReadCount * 2);
+  });
 });

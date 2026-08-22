@@ -18,8 +18,8 @@ import {
 import type { CanonicalSearchIndexCache } from './canonicalSearch';
 
 export interface EpubBookDocumentOptions {
-  /** EPUB 字节内容。 */
-  bytes: Uint8Array;
+  /** EPUB 的只读、惰性 File/Blob 兼容来源。 */
+  source: Blob;
   /** 来源元数据(经 EpubInspector 提取)。 */
   metadata: BookDocumentMetadata;
   /** 可注入的 Foliate 视图宿主工厂(测试用)。 */
@@ -51,7 +51,7 @@ export class EpubBookDocument implements BookDocument {
   readonly format: 'epub' | 'markdown';
   readonly metadata: BookDocumentMetadata;
 
-  private readonly bytes: Uint8Array;
+  private readonly source: Blob;
   private readonly canonicalTransform: EpubCanonicalTransform;
   private readonly viewHostFactory: FoliateViewHostFactory;
   private readonly locationKind: 'epub' | 'markdown';
@@ -71,9 +71,9 @@ export class EpubBookDocument implements BookDocument {
   private contentCreateListeners = new Set<(doc: Document) => void>();
 
   constructor(options: EpubBookDocumentOptions) {
-    // BookDocument 只拥有原书的副本;清洗器与 renderer 后续只能处理派生字符串,
-    // 不能通过调用方缓冲区回写托管原书。
-    this.bytes = new Uint8Array(options.bytes);
+    // BookDocument 只持有只读来源;清洗器与 renderer 后续只能处理派生字符串,
+    // 不能通过格式层回写托管原书。ManagedFileSource 的内容由 slice() 按需读取。
+    this.source = options.source;
     this.metadata = options.metadata;
     this.viewHostFactory = options.viewHostFactory;
     this.format = options.format ?? 'epub';
@@ -102,13 +102,10 @@ export class EpubBookDocument implements BookDocument {
     const view = this.viewHostFactory(container);
     this.host = view;
 
-    const file = new File([this.bytes.buffer.slice(0) as ArrayBuffer], 'book.epub', {
-      type: 'application/epub+zip',
-    });
     // 必须在 view.open() 前接入安全监听器,否则 Foliate 可能在打开首章时
     // 已经消费 data 事件,导致首章绕过内容清洗。
     this.wireSecurity();
-    await view.open(file, {
+    await view.open(this.source, {
       epubPrefetch: this.nativePrefetch,
       ...(this.format === 'epub'
         ? {

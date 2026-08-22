@@ -58,6 +58,9 @@ async function main() {
       const { EpubBookDocument } = await import('/src/domain/reader/epubBookDocument.ts');
       const { createFoliateViewHostFactory } = await import('/src/domain/reader/foliateViewHost.ts');
       const factory = createFoliateViewHostFactory();
+      const asEpubSource = (bytes, name = 'book.epub') => new File([
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      ], name, { type: 'application/epub+zip' });
 
       const createContainer = () => {
         const container = document.createElement('div');
@@ -76,7 +79,7 @@ async function main() {
         const bytes = await buildEpubFixture(id);
         const container = createContainer();
         const book = new EpubBookDocument({
-          bytes,
+          source: asEpubSource(bytes, `${id}.epub`),
           metadata: { title: id, author: null, language: 'zh' },
           viewHostFactory: factory,
         });
@@ -194,7 +197,7 @@ async function main() {
           const bytes = buildEpub({ title: '章节切换', language: 'zh' });
           const container = createContainer();
           const book = new EpubBookDocument({
-            bytes,
+            source: asEpubSource(bytes, 'chapter-switch.epub'),
             metadata: { title: '章节切换', author: null, language: 'zh' },
             viewHostFactory: factory,
           });
@@ -212,7 +215,7 @@ async function main() {
 
           const restoredContainer = createContainer();
           const restoredBook = new EpubBookDocument({
-            bytes,
+            source: asEpubSource(bytes, 'chapter-switch.epub'),
             metadata: { title: '章节切换', author: null, language: 'zh' },
             viewHostFactory: factory,
           });

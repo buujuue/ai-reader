@@ -33,7 +33,9 @@ export class MarkdownBookDocument extends EpubBookDocument {
       metadata: options.metadata,
     });
     super({
-      bytes,
+      source: new File([
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      ], 'markdown.epub', { type: 'application/epub+zip' }),
       metadata: options.metadata,
       viewHostFactory: options.viewHostFactory,
       format: 'markdown',

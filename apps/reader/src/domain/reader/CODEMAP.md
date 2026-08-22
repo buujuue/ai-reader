@@ -14,8 +14,8 @@
 - `epubCanonical.ts`：规范 EPUB 转换入口与版本化派生缓存键。原书完整指纹和转换版本进入缓存键；清洗结果只作为阅读、搜索与 CFI 所见 DOM 的派生数据，排版设置不参与转换。
 - `canonicalSearch.ts`：按章节建立规范可读文本、文本偏移到 DOM Range 的映射和版本化搜索索引快照；普通搜索与安全正则共用字符预算、结果上限、章节超时和取消错误边界，正则实际在可终止 Worker 中执行，脚本、模板、CFI 忽略节点及展示辅助节点不进入结果，缓存损坏或版本变化只触发重建。
 - `epubCfi.ts`：EPUB CFI 的 spine 前缀解析与同章判断，供文本锚点回退限制在原章节内。
-- `epubBookDocument.ts`：`EpubBookDocument` 实现。把不可信内容清洗、Foliate 渲染器挂载、位置读取/恢复、目录读取、href 导航与书内/外部链接事件封装在窄接口后；`wireSecurity` 在文本资源进入渲染器前清洗各已知 MIME，把 relocate 事件转成 `ReadingLocation` 和可序列化进度反馈，并把书内/外部链接事件面向上层。
-- `foliateEpubLoader.ts`：把受预算的项目 ZIP loader 适配为 foliate-js EPUB loader；可选原生预取只覆盖已校验的 container/OPF/NAV/NCX 文本和资源尺寸，其余章节与资源继续由同一份 JS ZIP loader 按需读取。
+- `epubBookDocument.ts`：`EpubBookDocument` 实现。持有只读 `File/Blob` 兼容 Source，把不可信内容清洗、Foliate 渲染器挂载、位置读取/恢复、目录读取、href 导航与书内/外部链接事件封装在窄接口后；`wireSecurity` 在文本资源进入渲染器前清洗各已知 MIME，把 relocate 事件转成 `ReadingLocation` 和可序列化进度反馈，并把书内/外部链接事件面向上层。
+- `foliateEpubLoader.ts`：把受预算的惰性 ZIP loader 适配为 foliate-js EPUB loader；只读取中央目录和实际请求的条目，可选原生预取只覆盖已校验的 container/OPF/NAV/NCX 文本和资源尺寸，其余章节与资源继续按需读取。
 - `nativeEpub.ts` / `tauriEpubNative.ts`：定义原生 EPUB 预取协议、平台/能力/语义来源门控、错误分类与 Tauri Adapter；任意不支持、协议不匹配或 IPC 失败均返回纯 JS 路径。
 - `tauriDerivedTocCache.ts`：把 EPUB 推导目录缓存映射到 Rust 私有文件的 typed Tauri 命令；浏览器降级使用 `derivedToc.ts` 的内存 Adapter。
 - `viewHost.ts` / `foliateViewHost.ts`：`FoliateViewHost` 窄接口与 `FoliateViewHostFactory` 工厂。生产实现懒加载 `foliate-js` 的 `view.js` 并创建 `foliate-view` 元素；测试注入伪宿主。提供 `getTOC`/`goToHref`/`onInternalLink`/`onExternalLink`，以 preventDefault 阻止书内与外部链接的默认导航，把 href/URL 面向上层统一处理；`search`/`clearSearch` 把 foliate 的原始搜索产出归一化为领域事件并委托高亮；`canResolveAnnotation` 只在不改变阅读位置的前提下验证当前已加载章节的原 CFI；`getContentDocumentIndex` 把内容文档映射到 spine section 供单章节批注校验；`applyTypography` 把排版经分页器 attribute（flow/gap/margin/max-inline-size/max-block-size/max-column-count）与可选 `setStyles` 注入文档，以兼容固定版式渲染器；当前位置从 Foliate `lastLocation` 归一化为进度反馈，固定版式还提供当前 spread 索引回退；`getContentDocs`/`onContentCreate` 暴露内容文档（iframe 内）供上层附加统一阅读输入监听器，并对不可见 MathML 做局部可理解降级。所有对具体渲染器的直接调用都集中在本层。

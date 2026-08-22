@@ -10,7 +10,7 @@ status: accepted
 
 ## 决策
 
-- `ImportRepository` 增加 `openManagedFileSource(materialId)`，返回只读 `ManagedFileSource`。原有全量 `readManagedFile` 保留，EPUB、PDF、Markdown 的当前打开路径不在本决策中改写。
+- `ImportRepository` 增加 `openManagedFileSource(materialId)`，返回只读 `ManagedFileSource`。原有全量 `readManagedFile` 保留给仍明确需要完整字节的兼容/导出路径；EPUB 的打开路径由 ADR-0031 改为统一使用惰性 Source，PDF 与 Markdown 的使用方式分别见 ADR-0030、ADR-0029。
 - `ManagedFileSource` 继承 `File`，同步暴露 `name`、`size`、`type` 等元数据，`slice()`、`arrayBuffer()`、`text()` 和 `stream()` 延迟通过半开区间读取内容。格式层只依赖 File/Blob 兼容面，不依赖 Tauri 命令、SQLite 或文件系统路径。
 - Tauri 端先按稳定 `materialId` 获取托管文件名称和长度，再通过 `read_managed_file_range(materialId, offset, length)` 读取范围。范围语义为 `[offset, offset + length)`，单次最多 8 MiB；Rust 只接受活跃 `ready` 材料，越界、超限、未知材料和缺失托管副本都返回可诊断错误。
 - TypeScript 端按 128 KiB 分块缓存，最多保留 128 块，LRU 淘汰最久未使用分块；同一分块的并发读取共享 Promise。内存 Repository 使用相同 Source 契约，浏览器降级和测试不依赖 Tauri。

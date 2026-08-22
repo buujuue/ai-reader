@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { EpubInspectError, inspectEpub } from './epubInspector';
 import { buildDeflatedEpub, buildEpub, buildStoredZip, encode } from './testEpub';
+import { listZipEntries } from './zip';
 
 describe('EpubInspector', () => {
   it('从有效 EPUB 提取标题、作者与语言', async () => {
@@ -18,6 +19,43 @@ describe('EpubInspector', () => {
     const result = await inspectEpub(epub);
 
     expect(result.metadata.title).toBe('压缩书');
+  });
+
+  it('使用惰性 Source 打开大型 EPUB 时只读取入口、导航和首章', async () => {
+    const bytes = buildStoredZip([
+      { name: 'META-INF/container.xml', data: encode(containerXml()) },
+      { name: 'OEBPS/content.opf', data: encode(opfXml({})) },
+      {
+        name: 'OEBPS/nav.xhtml',
+        data: encode('<html><body><nav><ol><li><a href="chapter1.xhtml">第一章</a></li></ol></nav></body></html>'),
+      },
+      { name: 'OEBPS/chapter1.xhtml', data: encode('<html><body><p>首章</p></body></html>') },
+      { name: 'OEBPS/chapter2.xhtml', data: encode('<html><body><p>不应在打开阶段读取</p></body></html>') },
+      { name: 'OEBPS/images/unused.bin', data: new Uint8Array(256 * 1024) },
+    ]);
+    const file = new File([
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    ], 'large-book.epub', { type: 'application/epub+zip' });
+    const ranges: Array<[number, number]> = [];
+    const source = {
+      size: file.size,
+      slice(start?: number, end?: number) {
+        const normalizedStart = start ?? 0;
+        const normalizedEnd = end ?? file.size;
+        ranges.push([normalizedStart, normalizedEnd]);
+        return file.slice(normalizedStart, normalizedEnd);
+      },
+    };
+
+    const result = await inspectEpub(source);
+    const entries = listZipEntries(bytes);
+    const chapter2 = entries.find((entry) => entry.name === 'OEBPS/chapter2.xhtml')!;
+    const unused = entries.find((entry) => entry.name === 'OEBPS/images/unused.bin')!;
+
+    expect(result.metadata.title).toBe('预检书');
+    expect(ranges.some(([start, end]) => start === 0 && end === file.size)).toBe(false);
+    expect(ranges.some(([start]) => start === chapter2.localHeaderOffset)).toBe(false);
+    expect(ranges.some(([start]) => start === unused.localHeaderOffset)).toBe(false);
   });
 
   it('允许 EPUB XHTML 使用安全的 HTML5 DOCTYPE', async () => {

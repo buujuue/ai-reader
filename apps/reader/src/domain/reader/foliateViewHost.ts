@@ -213,8 +213,13 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       }
     }
     const makePureBook = async (): Promise<unknown> => {
-      if (typeof viewModule.makeBook === 'function' && isFileInput) {
-        return viewModule.makeBook(book as string | File);
+      if (typeof book === 'string' && typeof viewModule.makeBook === 'function') {
+        return viewModule.makeBook(book);
+      }
+      if (isFileInput) {
+        // 始终使用项目自己的惰性 ZIP loader；否则 foliate-js.makeBook 会
+        // 重新创建 zip.js BlobReader，绕过同条目并发去重与 Source 边界。
+        return openFoliateEpub(book as File, null);
       }
       return book;
     };

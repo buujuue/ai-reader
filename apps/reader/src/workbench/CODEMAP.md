@@ -60,3 +60,4 @@ workbench/
 ## 完整书库备份恢复
 
 `backupCommands.ts` 通过 `BackupSourcePicker` 选择 `.airbackup`，先 flush 阅读位置，再调用 `BackupRepository.restoreBackup`；Rust 完成整库校验和可恢复切换后，桌面端重载应用以加载新的工作区、位置和批注。
+- EPUB 打开路径获取一次 `ManagedFileSource`，检查器、BookDocument 与 Foliate 惰性 ZIP loader 共享该来源；同条目并发读取复用进行中的 Promise，完成后不保留正文。

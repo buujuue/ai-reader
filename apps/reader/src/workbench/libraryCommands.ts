@@ -281,8 +281,11 @@ export function registerLibraryCommands(
     container.style.cssText =
       'position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;';
     document.body.appendChild(container);
+    const source = new File([
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    ], candidate.staged.originalFileName, { type: 'application/epub+zip' });
     const documentModel = new EpubBookDocument({
-      bytes,
+      source,
       metadata: candidate.metadata,
       viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
       sourceFingerprint: candidate.staged.fingerprint,

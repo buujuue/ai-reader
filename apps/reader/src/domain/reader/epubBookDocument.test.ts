@@ -147,18 +147,22 @@ function createFakeHost(): FakeHost {
 
 function createDocument(hostFactory: (container: HTMLElement) => FoliateViewHost) {
   return new EpubBookDocument({
-    bytes: new Uint8Array([1, 2, 3]),
+    source: new File([new Uint8Array([1, 2, 3])], 'book.epub', {
+      type: 'application/epub+zip',
+    }),
     metadata: { title: '示例书', author: '作者', language: 'zh' },
     viewHostFactory: hostFactory,
   });
 }
 
 describe('EpubBookDocument', () => {
-  it('打开文档时挂载宿主并传入 EPUB 字节', async () => {
+  it('打开文档时挂载宿主并传入惰性 EPUB 来源', async () => {
     const host = createFakeHost();
     const container = document.createElement('div');
     const book = new EpubBookDocument({
-      bytes: new Uint8Array([1, 2, 3]),
+      source: new File([new Uint8Array([1, 2, 3])], 'book.epub', {
+        type: 'application/epub+zip',
+      }),
       metadata: { title: '示例书', author: '作者', language: 'zh' },
       viewHostFactory: () => host,
     });
@@ -169,21 +173,20 @@ describe('EpubBookDocument', () => {
     expect(book.getLocation()).toBeNull();
   });
 
-  it('打开时使用原书字节副本,后续修改调用方缓冲区不会改变导出来源', async () => {
+  it('打开时复用调用方提供的来源', async () => {
     const host = createFakeHost();
-    const bytes = new Uint8Array([1, 2, 3]);
+    const source = new File([new Uint8Array([1, 2, 3])], 'book.epub', {
+      type: 'application/epub+zip',
+    });
     const book = new EpubBookDocument({
-      bytes,
+      source,
       metadata: { title: '示例书', author: '作者', language: 'zh' },
       viewHostFactory: () => host,
     });
 
-    bytes[0] = 99;
     await book.open(document.createElement('div'));
 
-    expect(new Uint8Array(await (host.openedBytes as File).arrayBuffer())).toEqual(
-      new Uint8Array([1, 2, 3]),
-    );
+    expect(host.openedBytes).toBe(source);
   });
 
   it('relocate 事件把 CFI 转成可序列化的 ReadingLocation 并通知订阅者', async () => {

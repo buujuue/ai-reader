@@ -1,10 +1,11 @@
 import {
-  listZipEntries,
-  readZipEntry,
+  openZipArchive,
   ZipBudgetError,
   ZipEncryptionError,
   ZipError,
+  type ZipArchive,
   type ZipEntry,
+  type ZipSource,
 } from './zip';
 import { EPUB_RESOURCE_BUDGET } from './epubBudget';
 import type { SourceMetadata } from '../material';
@@ -109,19 +110,21 @@ const FONT_OBFUSCATION_ALGORITHMS = new Set([
  * 在书库状态变化前完成 EPUB 结构、安全和资源预算预检。
  * 该函数不写文件、不调用 Repository，也不把任何输入交给渲染器。
  */
-export async function inspectEpub(bytes: Uint8Array): Promise<EpubInspectResult> {
-  if (bytes.length === 0) {
+export async function inspectEpub(input: ZipSource | Uint8Array): Promise<EpubInspectResult> {
+  const source = toZipSource(input);
+  if (source.size === 0) {
     throw new EpubInspectError('文件内容为空,无法导入', 'empty');
   }
 
-  let entries: ZipEntry[];
+  let archive: ZipArchive;
+  const zipHeader = await hasZipHeader(source);
   try {
-    entries = listZipEntries(bytes);
+    archive = await openZipArchive(source);
   } catch (error) {
     if (error instanceof ZipError && error.kind === 'budget') {
       throw new EpubInspectError('EPUB 资源预算超限,无法安全导入', 'budget', 'budget');
     }
-    const kind = hasZipHeader(bytes) ? 'corrupt' : 'unsupported';
+    const kind = zipHeader ? 'corrupt' : 'unsupported';
     throw new EpubInspectError(
       kind === 'corrupt'
         ? 'EPUB 包损坏,无法解析 ZIP 结构'
@@ -132,7 +135,7 @@ export async function inspectEpub(bytes: Uint8Array): Promise<EpubInspectResult>
   }
 
   try {
-    return await inspectEpubInner(bytes, entries);
+    return await inspectEpubInner(source, archive, [...archive.entries]);
   } catch (error) {
     if (error instanceof EpubInspectError) {
       throw error;
@@ -151,7 +154,8 @@ export async function inspectEpub(bytes: Uint8Array): Promise<EpubInspectResult>
 }
 
 async function inspectEpubInner(
-  bytes: Uint8Array,
+  source: ZipSource,
+  archive: ZipArchive,
   entries: ZipEntry[],
 ): Promise<EpubInspectResult> {
   if (entries.length > EPUB_RESOURCE_BUDGET.maxEntryCount) {
@@ -176,7 +180,7 @@ async function inspectEpubInner(
   if (!containerEntry) {
     throw new EpubInspectError('缺少 META-INF/container.xml,不是有效的 EPUB', 'unsupported', 'container');
   }
-  const containerXml = await readRequiredXml(bytes, containerEntry, 'container.xml');
+  const containerXml = await readRequiredXml(archive, containerEntry, 'container.xml');
   const container = parseXml(containerXml, 'container.xml');
   const rootfile = elementsByLocalName(container, 'rootfile').find(
     (candidate) => candidate.getAttribute('full-path'),
@@ -190,7 +194,7 @@ async function inspectEpubInner(
   if (!opfEntry) {
     throw new EpubInspectError(`缺少 OPF 清单文件:${opfPath}`, 'corrupt', 'opf');
   }
-  const opfXml = await readRequiredXml(bytes, opfEntry, 'OPF 清单');
+  const opfXml = await readRequiredXml(archive, opfEntry, 'OPF 清单');
   const opf = parseXml(opfXml, 'OPF 清单');
 
   // OPF 的元数据和封面可观察结果必须由 foliate-js 产生。这里的 DOM
@@ -206,9 +210,9 @@ async function inspectEpubInner(
     throw new EpubInspectError('EPUB spine 没有可阅读章节', 'corrupt', 'spine');
   }
 
-  await inspectEncryption(bytes, byName, manifest);
+  await inspectEncryption(source, archive, byName, manifest);
   const foliateSemantics = await readFoliateSemantics(
-    bytes,
+    source,
     opfPath,
     opfXml,
     containerXml,
@@ -217,7 +221,7 @@ async function inspectEpubInner(
   const report: EpubPreflightReport = {
     unavailableChapters: [],
     degradedResources: [],
-    navigation: await inspectNavigation(bytes, byName, manifest, spineElement),
+    navigation: await inspectNavigation(archive, byName, manifest, spineElement),
   };
 
   const firstReadableIndex = findFirstReadableSpineIndex(spine);
@@ -226,7 +230,13 @@ async function inspectEpubInner(
   }
   for (const [spineIndex, item] of spine.entries()) {
     const isFirstReadable = spineIndex === firstReadableIndex;
-    const result = await inspectChapter(bytes, byName, item, spineIndex, isFirstReadable);
+    const result = await inspectChapter(
+      archive,
+      byName,
+      item,
+      spineIndex,
+      isFirstReadable,
+    );
     if (result) {
       report.unavailableChapters.push(result);
     }
@@ -285,13 +295,13 @@ async function inspectEpubInner(
 
   return {
     metadata,
-    hasCover: foliateSemantics.hasCover,
+    hasCover: foliateSemantics.hasCover || coverPath !== null && coverPath !== undefined,
     preflight: report,
   };
 }
 
 async function readFoliateSemantics(
-  bytes: Uint8Array,
+  source: ZipSource,
   opfPath: string,
   opfBytes: Uint8Array,
   containerBytes: Uint8Array,
@@ -300,10 +310,6 @@ async function readFoliateSemantics(
   hasCover: boolean;
 }> {
   try {
-    const buffer = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer;
     // 合法 EPUB 直接保留原始 container.xml；旧测试夹具没有命名空间时，
     // 只为让 foliate-js 看到规范 XML 形状而生成等价的单 rootfile 入口。
     const containerXml = new TextDecoder('utf-8', { fatal: true }).decode(containerBytes);
@@ -327,8 +333,9 @@ async function readFoliateSemantics(
       sizes: new Map(),
     };
     const semantics = await readFoliateEpubSemantics(
-      new Blob([buffer], { type: 'application/epub+zip' }),
+      source,
       prefetch,
+      { loadCover: false },
     );
     if (!semantics.title) {
       throw new EpubInspectError('EPUB 缺少书名(title)', 'corrupt', 'opf');
@@ -375,7 +382,7 @@ function buildContainerXml(opfPath: string): string {
 }
 
 async function inspectChapter(
-  bytes: Uint8Array,
+  archive: ZipArchive,
   byName: Map<string, ZipEntry>,
   item: SpineItem,
   spineIndex: number,
@@ -413,8 +420,12 @@ async function inspectChapter(
     }
     return unavailable('budget');
   }
+  // 非当前章节只用中央目录的声明做预算/存在性检查；正文 XML 延迟到阅读时读取。
+  if (!isFirstReadable) {
+    return null;
+  }
   try {
-    const chapter = await readZipEntry(bytes, path, {
+    const chapter = await archive.readEntry(path, {
       maxUncompressedBytes: EPUB_RESOURCE_BUDGET.maxChapterUncompressedBytes,
     });
     if (!chapter) {
@@ -442,7 +453,7 @@ async function inspectChapter(
 }
 
 async function inspectNavigation(
-  bytes: Uint8Array,
+  archive: ZipArchive,
   byName: Map<string, ZipEntry>,
   manifest: ManifestItem[],
   spine: Element,
@@ -473,7 +484,7 @@ async function inspectNavigation(
       continue;
     }
     try {
-      const data = await readZipEntry(bytes, item.path, {
+      const data = await archive.readEntry(item.path, {
         maxUncompressedBytes: EPUB_RESOURCE_BUDGET.maxEntryUncompressedBytes,
       });
       if (!data) {
@@ -494,7 +505,8 @@ async function inspectNavigation(
 }
 
 async function inspectEncryption(
-  bytes: Uint8Array,
+  source: ZipSource,
+  archive: ZipArchive,
   byName: Map<string, ZipEntry>,
   manifest: ManifestItem[],
 ): Promise<void> {
@@ -506,7 +518,7 @@ async function inspectEncryption(
   if (!encryptionEntry) {
     return;
   }
-  const encryptionXml = await readRequiredXml(bytes, encryptionEntry, 'encryption.xml');
+  const encryptionXml = await readRequiredXml(archive, encryptionEntry, 'encryption.xml');
   const encryption = parseXml(encryptionXml, 'encryption.xml');
   const encryptedData = elementsByLocalName(encryption, 'EncryptedData');
   if (encryptedData.length === 0) {
@@ -524,7 +536,7 @@ async function inspectEncryption(
 }
 
 async function readRequiredXml(
-  bytes: Uint8Array,
+  archive: ZipArchive,
   entry: ZipEntry,
   label: string,
 ): Promise<Uint8Array> {
@@ -532,7 +544,7 @@ async function readRequiredXml(
   if (reason) {
     throw new EpubInspectError(`${label}超过安全资源预算`, 'budget', 'budget');
   }
-  const data = await readZipEntry(bytes, entry.name, {
+  const data = await archive.readEntry(entry.name, {
     maxUncompressedBytes: EPUB_RESOURCE_BUDGET.maxEntryUncompressedBytes,
   });
   if (!data) {
@@ -807,7 +819,21 @@ function isNonNull<T>(value: T | null): value is T {
   return value !== null;
 }
 
-function hasZipHeader(bytes: Uint8Array): boolean {
+function toZipSource(input: ZipSource | Uint8Array): ZipSource {
+  if (typeof (input as ZipSource).size === 'number') {
+    return input as ZipSource;
+  }
+  const bytes = input as Uint8Array;
+  const buffer = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+  return new Blob([buffer], { type: 'application/epub+zip' });
+}
+
+async function hasZipHeader(source: ZipSource): Promise<boolean> {
+  if (source.size < 4) return false;
+  const bytes = new Uint8Array(await source.slice(0, 4).arrayBuffer());
   return (
     bytes.length >= 4 &&
     bytes[0] === 0x50 &&

@@ -196,15 +196,15 @@ async function createEpubDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
 ): Promise<BookDocument | null> {
-  let bytes: Uint8Array;
+  let source: Blob;
   try {
-    bytes = await dependencies.importRepository.readManagedFile(material.id);
+    source = await dependencies.importRepository.openManagedFileSource(material.id);
   } catch (error) {
     throw new Error(`读取 EPUB 失败：${describeDocumentOpenError(error)}`);
   }
   let metadata;
   try {
-    const result = await inspectEpub(bytes);
+    const result = await inspectEpub(source);
     metadata = result.metadata;
   } catch (error) {
     throw new Error(`解析 EPUB 失败：${describeDocumentOpenError(error)}`);
@@ -219,7 +219,7 @@ async function createEpubDocument(
     }
   }
   return new EpubBookDocument({
-    bytes,
+    source,
     metadata,
     viewHostFactory: dependencies.viewHostFactory ?? createFoliateViewHostFactory(),
     nativePrefetch,

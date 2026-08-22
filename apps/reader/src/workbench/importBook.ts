@@ -151,7 +151,11 @@ async function inspectFile(
     return { metadata: result.metadata };
   }
   if (format === 'epub') {
-    const result = await inspectEpub(bytes);
+    const buffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+    const result = await inspectEpub(new Blob([buffer], { type: 'application/epub+zip' }));
     return { metadata: result.metadata, preflight: result.preflight };
   }
   if (format === 'markdown') {

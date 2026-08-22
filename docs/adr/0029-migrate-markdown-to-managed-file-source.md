@@ -12,7 +12,7 @@ status: accepted
 
 - Markdown 的打开、编辑放弃、脏关闭放弃、保存后阅读视图重建和重新打开，统一通过 `ImportRepository.openManagedFileSource(materialId)` 获取来源。
 - 完整 UTF-8 文本只在 `domain/reader/markdown/markdownSource.ts` 内物化；该模块只依赖 Blob 兼容来源的 `stream()`，按 128 KiB 分块顺序读取，因此单次范围请求不会超过 Source/Rust 的协议上限。
-- EPUB 与 PDF 继续保留各自需要完整字节缓冲的打开路径，不把 Markdown 的文本物化 helper 或 Source 回退逻辑扩展到其它格式。
+- EPUB 与 PDF 也统一从 `ManagedFileSource` 打开：EPUB 交给惰性 ZIP loader，PDF 交给范围传输；Markdown 的文本物化 helper 不扩展到其它格式。
 - 当前 Markdown 解析器仍要求完整字符串；增量 Markdown 解析不在工单 #34 范围内。
 
 ## 理由与边界

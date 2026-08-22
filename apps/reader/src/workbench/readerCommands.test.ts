@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMMAND_IDS, CommandRegistry, type CommandId } from '../commands/commandRegistry';
 import { createInMemoryImportRepository, addInMemorySource } from '../domain/library/inMemoryImportRepository';
 import { buildEpub } from '../domain/library/epub/zipWriter';
+import { ManagedFileSource } from '../domain/library/managedFileSource';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
 import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
@@ -193,7 +194,12 @@ describe('Reader 命令', () => {
 
   it('材料解析失败时保留标签并把解析错误写入运行时状态', async () => {
     const material = await setupWithEpub();
-    vi.spyOn(importRepository, 'readManagedFile').mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.spyOn(importRepository, 'openManagedFileSource').mockResolvedValue(
+      new ManagedFileSource(
+        { name: 'broken.epub', size: 3 },
+        async () => new Uint8Array([1, 2, 3]),
+      ),
+    );
     registerReaderCommands(registry, { importRepository, workspaceRepository });
 
     await expect(registry.execute(COMMAND_IDS.libraryOpenBook, material)).rejects.toThrow(
@@ -243,7 +249,10 @@ describe('Reader 命令', () => {
 
   it('重复打开同一本书会跳转到原标签,不重复创建文档', async () => {
     const material = await setupWithEpub();
-    const readManagedFile = vi.spyOn(importRepository, 'readManagedFile');
+    const readManagedFile = vi
+      .spyOn(importRepository, 'readManagedFile')
+      .mockRejectedValue(new Error('EPUB 打开不应调用全量文件接口'));
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
     registerReaderCommands(registry, {
       importRepository,
       workspaceRepository,
@@ -263,7 +272,8 @@ describe('Reader 命令', () => {
     expect(group.views).toHaveLength(2);
     expect(group.activeViewId).toBe(firstViewId);
     expect(useReaderRuntime.getState().getDocument(firstViewId)).toBe(firstDocument);
-    expect(readManagedFile).toHaveBeenCalledTimes(1);
+    expect(openManagedFileSource).toHaveBeenCalledTimes(1);
+    expect(readManagedFile).not.toHaveBeenCalled();
   });
 
   it('switches tabs with one active runtime and restores the saved location', async () => {

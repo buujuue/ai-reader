@@ -1,7 +1,7 @@
 import {
-  listZipEntries,
-  readZipEntry,
+  openZipArchive,
   type ZipEntry,
+  type ZipSource,
 } from '../library/epub/zip';
 import type { NativeEpubPrefetch } from './nativeEpub';
 
@@ -58,11 +58,11 @@ function resolveEntry(
  * EPUB 语义，也不会产生“半原生”章节对象。
  */
 export async function createFoliateEpubLoader(
-  file: Blob,
+  file: ZipSource,
   prefetch?: NativeEpubPrefetch | null,
 ): Promise<FoliateEpubLoader> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const zipEntries = listZipEntries(bytes);
+  const archive = await openZipArchive(file);
+  const zipEntries = archive.entries;
   const entries = zipEntries.map((entry) => ({
     filename: entry.name,
     uncompressedSize: entry.uncompressedSize,
@@ -71,10 +71,19 @@ export async function createFoliateEpubLoader(
   const textCache = prefetch?.textCache;
   const sizeCache = prefetch?.sizes;
 
-  const read = async (name: string): Promise<Uint8Array | null> => {
+  const pendingReads = new Map<string, Promise<Uint8Array | null>>();
+  const read = (name: string): Promise<Uint8Array | null> => {
     const entry = resolveEntry(zipEntries, name);
-    if (!entry) return null;
-    return readZipEntry(bytes, entry.name);
+    if (!entry) return Promise.resolve(null);
+    const pending = pendingReads.get(entry.name);
+    if (pending) return pending;
+    const request = archive.readEntry(entry.name);
+    pendingReads.set(entry.name, request);
+    void request.then(
+      () => pendingReads.delete(entry.name),
+      () => pendingReads.delete(entry.name),
+    );
+    return request;
   };
 
   return {
@@ -105,7 +114,7 @@ export async function createFoliateEpubLoader(
 
 /** 用同一个 foliate-js EPUB 实现打开有/无原生预取的 Book。 */
 export async function openFoliateEpub(
-  file: Blob,
+  file: ZipSource,
   prefetch?: NativeEpubPrefetch | null,
 ): Promise<unknown> {
   const module = (await import('foliate-js/epub.js')) as unknown as {
@@ -120,6 +129,11 @@ export interface FoliateEpubSemanticSnapshot {
   author: string | null;
   language: string | null;
   hasCover: boolean;
+}
+
+export interface ReadFoliateEpubSemanticsOptions {
+  /** 预检只需要结构性封面标记时关闭二进制封面读取。 */
+  loadCover?: boolean;
 }
 
 interface FoliateBookSemanticShape {
@@ -160,11 +174,14 @@ function flattenMetadata(value: unknown): string | null {
 
 /** 统一暴露 Foliate 的 EPUB 可观察语义，避免其它格式模块直接触碰 Book 对象。 */
 export async function readFoliateEpubSemantics(
-  file: Blob,
+  file: ZipSource,
   prefetch?: NativeEpubPrefetch | null,
+  options: ReadFoliateEpubSemanticsOptions = {},
 ): Promise<FoliateEpubSemanticSnapshot> {
   const book = (await openFoliateEpub(file, prefetch)) as FoliateBookSemanticShape;
-  const cover = await book.getCover?.().catch(() => null);
+  const cover = options.loadCover === false
+    ? null
+    : await book.getCover?.().catch(() => null);
   return {
     title: flattenMetadata(book.metadata?.title),
     author: flattenMetadata(book.metadata?.author),

@@ -169,7 +169,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 17 切片**：显式 EPUB 版本迁移（元数据仅作候选信号、完整指纹保持材料身份边界、进度/批注预览、同 spine 唯一引文重锚、孤儿保留，以及 SQLite/托管文件/工作区/批注的一次性可恢复提交与持续迁移快照）。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
-- **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。EPUB/PDF 仍可使用明确的完整字节缓冲路径，Markdown 打开/编辑/重新打开统一使用 Source。具体决策见 ADR-0028 与 ADR-0029。
+- **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 检查与阅读共享 Source 并经 `PDFDataRangeTransport` 按需加载；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。具体决策见 ADR-0028、ADR-0029、ADR-0030 与 ADR-0031。
 
 macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`；iPadOS 的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`；Android 平板的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS/iPadOS/Android 启动、导入、阅读与重启恢复不计入浏览器降级证据，统一由 `.github/workflows/cross-platform.yml` 承载对应平台的自动校验；未能在 CI 自动完成的移动系统交互按冒烟文档记录人工证据。
 
