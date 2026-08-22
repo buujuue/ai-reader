@@ -317,6 +317,7 @@ export function registerLibraryCommands(
       materialId: preview.candidate.material.id,
       staged: preview.candidate.staged,
       metadata: preview.candidate.metadata,
+      sourceCover: preview.candidate.sourceCover ?? null,
       expectedSourceFingerprint: preview.candidate.material.fingerprint,
       expectedTargetFingerprint: preview.candidate.staged.fingerprint,
       annotations: preview.migratedAnnotations,

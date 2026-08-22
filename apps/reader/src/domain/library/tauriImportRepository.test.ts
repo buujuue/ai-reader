@@ -33,6 +33,7 @@ function createFakeTauriBackend(): {
   const managedBytes = new Map<string, Uint8Array>();
   const trashedBytes = new Map<string, Uint8Array>();
   const covers = new Map<string, Uint8Array>();
+  const sourceCovers = new Map<string, { bytes: Uint8Array; mimeType: string }>();
   const trashed = new Set<string>();
   const markdownRecoveries = new Map<
     string,
@@ -50,6 +51,7 @@ function createFakeTauriBackend(): {
       source: { title, author, language },
       override: { title: null, author: null, coverSource: null },
       coverSource: null,
+      sourceCoverSource: null,
       documentVersion: 0,
       managedFileAvailable: true,
     };
@@ -85,6 +87,9 @@ function createFakeTauriBackend(): {
       case IMPORT_COMMAND_NAMES.commit: {
         const staged = (args as { staged?: unknown }).staged as StagedImport;
         const metadata = (args as { metadata: { title: string; author: string | null; language: string | null } }).metadata;
+        const sourceCover = (args as {
+          sourceCover?: { bytes?: string; mimeType?: string } | null;
+        }).sourceCover;
         const existing = byIdentity.get(
           `${formatFromSourceFileName(staged.originalFileName)}:${staged.fingerprint}`,
         );
@@ -94,10 +99,20 @@ function createFakeTauriBackend(): {
           if (!managedBytes.has(stored.id) && stagedBytes) {
             managedBytes.set(stored.id, new Uint8Array(stagedBytes));
           }
+          if (sourceCover) {
+            sourceCovers.set(stored.id, {
+              bytes: base64ToBytes(sourceCover.bytes!),
+              mimeType: sourceCover.mimeType!,
+            });
+          }
           trashedBytes.delete(stored.id);
           stashed.delete(staged.id);
           trashed.delete(stored.id);
-          const relinked = { ...stored, managedFileAvailable: managedBytes.has(stored.id) };
+          const relinked = {
+            ...stored,
+            sourceCoverSource: sourceCovers.has(stored.id) ? stored.id : null,
+            managedFileAvailable: managedBytes.has(stored.id),
+          };
           materials.set(stored.id, relinked);
           byIdentity.set(
             `${formatFromSourceFileName(relinked.sourceFileName)}:${relinked.fingerprint}`,
@@ -121,6 +136,13 @@ function createFakeTauriBackend(): {
         const bytes = stashed.get(staged.id)?.bytes;
         if (bytes) {
           managedBytes.set(material.id, bytes);
+        }
+        if (sourceCover) {
+          sourceCovers.set(material.id, {
+            bytes: base64ToBytes(sourceCover.bytes!),
+            mimeType: sourceCover.mimeType!,
+          });
+          material.sourceCoverSource = material.id;
         }
         stashed.delete(staged.id);
         return material;
@@ -226,6 +248,7 @@ function createFakeTauriBackend(): {
         managedBytes.delete(materialId);
         trashedBytes.delete(materialId);
         covers.delete(materialId);
+        sourceCovers.delete(materialId);
         markdownRecoveries.delete(materialId);
         trashed.delete(materialId);
         return null;
@@ -305,10 +328,13 @@ function createFakeTauriBackend(): {
       case IMPORT_COMMAND_NAMES.readCover: {
         const { materialId } = args as { materialId: string };
         const bytes = covers.get(materialId);
+        const source = sourceCovers.get(materialId);
         if (!bytes) {
-          return null;
+          return source
+            ? { bytes: btoaBinary(source.bytes), mimeType: source.mimeType }
+            : null;
         }
-        return btoaBinary(bytes);
+        return { bytes: btoaBinary(bytes), mimeType: 'image/jpeg' };
       }
       case IMPORT_COMMAND_NAMES.saveMarkdown: {
         const { materialId, content } = args as { materialId: string; content: string };
@@ -579,4 +605,9 @@ function btoaBinary(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }

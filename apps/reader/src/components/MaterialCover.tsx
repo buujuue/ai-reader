@@ -26,6 +26,7 @@ export function MaterialCover({
   const objectUrlRef = useRef<string | null>(null);
   const [visible, setVisible] = useState(!lazy);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
 
   // 懒加载:进入视口才标记可见,从而触发实际读取。
@@ -51,12 +52,18 @@ export function MaterialCover({
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    setCoverUrl(null);
     void importRepository
       .readCover(materialId)
       .then((bytes) => {
         if (cancelled) return;
+        setLoading(false);
         if (bytes) {
-          const objectUrl = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
+          const objectUrl = URL.createObjectURL(
+            new Blob([bytes.bytes.buffer as ArrayBuffer], { type: bytes.mimeType }),
+          );
           objectUrlRef.current = objectUrl;
           setCoverUrl(objectUrl);
         } else {
@@ -64,7 +71,10 @@ export function MaterialCover({
         }
       })
       .catch(() => {
-        if (!cancelled) setFailed(true);
+        if (!cancelled) {
+          setLoading(false);
+          setFailed(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -76,13 +86,30 @@ export function MaterialCover({
   }, [visible, materialId, importRepository]);
 
   let content: React.ReactNode;
-  if (coverUrl) {
+  if (loading) {
+    content = (
+      <div
+        className="flex h-full w-full items-center justify-center bg-[var(--prototype-app-bg)] px-2 text-center text-zinc-500"
+        role="status"
+        aria-label="封面加载中"
+      >
+        <span className="text-[11px]">封面加载中</span>
+      </div>
+    );
+  } else if (coverUrl && !failed) {
     content = (
       <img
         src={coverUrl}
         alt=""
         aria-hidden
-        onError={() => setFailed(true)}
+        onError={() => {
+          if (objectUrlRef.current) {
+            URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = null;
+          }
+          setCoverUrl(null);
+          setFailed(true);
+        }}
         className="absolute inset-0 h-full w-full object-cover"
       />
     );
@@ -106,6 +133,8 @@ export function MaterialCover({
   return (
     <div
       ref={containerRef}
+      aria-label={`${title} 封面`}
+      data-cover-state={loading ? 'loading' : failed ? 'failed' : coverUrl ? 'ready' : 'placeholder'}
       className={`relative aspect-[3/4] w-full overflow-hidden rounded-md border border-[var(--prototype-border)] bg-[var(--prototype-app-bg)] ${className}`}
     >
       {content}

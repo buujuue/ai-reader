@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildEpubFixture } from './epubFixtures';
-import { openFoliateEpub } from '../../../domain/reader/foliateEpubLoader';
+import {
+  openFoliateEpub,
+  readFoliateEpubSemantics,
+} from '../../../domain/reader/foliateEpubLoader';
 
 interface FoliateP0Book {
   dir?: string;
@@ -29,6 +32,20 @@ describe('EPUB P0 foliate 语义矩阵', () => {
     expect(epub3.toc?.[0]).toMatchObject({ label: '第一章' });
     expect(epub2.sections).toHaveLength(1);
     expect(epub3.sections).toHaveLength(1);
+  });
+
+  it('EPUB 2/3 的来源封面都由 Foliate getCover 选择', async () => {
+    const epub2 = await readFoliateEpubSemantics(
+      asFile(await buildEpubFixture('epub2-ncx-flowable')),
+    );
+    const epub3 = await readFoliateEpubSemantics(
+      asFile(await buildEpubFixture('epub3-nav-rich')),
+    );
+
+    expect(epub2.cover).not.toBeNull();
+    expect(epub3.cover).not.toBeNull();
+    expect(epub2.cover?.type).toBe('image/png');
+    expect(epub3.cover?.type).toBe('image/png');
   });
 
   it('固定版式和 RTL 方向由同一份 foliate Book 语义提供', async () => {

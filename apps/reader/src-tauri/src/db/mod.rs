@@ -156,16 +156,30 @@ impl DatabaseHandle {
         let safety_material = paths
             .stash_dir
             .join(format!(".migration-restore-{safety_id}.material"));
+        let safety_source_cover = paths
+            .stash_dir
+            .join(format!(".migration-restore-{safety_id}.source-cover"));
+        let current_source_cover = paths.source_cover_path(&material_id);
+        let snapshot_source_cover = snapshot_dir.join("source-cover");
         let had_current_material = current_material.is_file();
+        let had_current_source_cover = current_source_cover.is_file();
         connection.backup("main", &safety_db, None)?;
         if had_current_material {
             crate::fs::atomic_copy(&current_material, &safety_material)?;
+        }
+        if had_current_source_cover {
+            crate::fs::atomic_copy(&current_source_cover, &safety_source_cover)?;
         }
 
         guard.take();
         let result = (|| {
             crate::fs::atomic_copy(&snapshot_db, &paths.database_path())?;
             crate::fs::atomic_copy(&snapshot_material, &current_material)?;
+            if snapshot_source_cover.is_file() {
+                crate::fs::atomic_copy(&snapshot_source_cover, &current_source_cover)?;
+            } else if current_source_cover.is_file() {
+                std::fs::remove_file(&current_source_cover).map_err(crate::error::classify_io_error)?;
+            }
             let reopened = open_database(&paths.database_path())?;
             import::ImportRepository::new(&reopened).recover(paths)?;
             let material = import::ImportRepository::new(&reopened)
@@ -196,6 +210,7 @@ impl DatabaseHandle {
             Ok(value) => {
                 let _ = std::fs::remove_file(safety_db);
                 let _ = std::fs::remove_file(safety_material);
+                let _ = std::fs::remove_file(safety_source_cover);
                 Ok(value)
             }
             Err(error) => {
@@ -213,12 +228,24 @@ impl DatabaseHandle {
                         }
                     },
                 )
+                .and_then(|_| {
+                    if had_current_source_cover {
+                        crate::fs::atomic_copy(&safety_source_cover, &current_source_cover)
+                    } else {
+                        match std::fs::remove_file(&current_source_cover) {
+                            Ok(()) => Ok(()),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                            Err(error) => Err(crate::error::classify_io_error(error)),
+                        }
+                    }
+                })
                 .and_then(|_| open_database(&paths.database_path()));
                 match rollback {
                     Ok(reopened) => {
                         *guard = Some(reopened);
                         let _ = std::fs::remove_file(safety_db);
                         let _ = std::fs::remove_file(safety_material);
+                        let _ = std::fs::remove_file(safety_source_cover);
                         Err(error)
                     }
                     Err(rollback_error) => Err(AppError::BackupRestore(format!(

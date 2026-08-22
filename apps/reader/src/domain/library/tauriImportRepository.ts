@@ -4,6 +4,7 @@ import type { TauriInvoke } from '../tauriInvoke';
 import type { ImportRepository, MarkdownRecoverySnapshot } from './importRepository';
 import type { Annotation } from '../annotation/annotation';
 import type {
+  CoverAsset,
   MaterialOverride,
   ReadingMaterial,
   SourceMetadata,
@@ -112,6 +113,7 @@ function assertMaterialShape(raw: unknown): ReadingMaterial {
     source: assertSourceMetadata(candidate.source),
     override: assertOverride(candidate.override),
     coverSource: candidate.coverSource ?? null,
+    sourceCoverSource: candidate.sourceCoverSource ?? null,
     documentVersion: typeof candidate.documentVersion === 'number' ? candidate.documentVersion : 0,
     managedFileAvailable:
       typeof candidate.managedFileAvailable === 'boolean' ? candidate.managedFileAvailable : true,
@@ -199,6 +201,39 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function coverPayload(cover: CoverAsset | null | undefined):
+  { bytes: string; mimeType: string } | null {
+  return cover
+    ? { bytes: bytesToBase64(cover.bytes), mimeType: cover.mimeType }
+    : null;
+}
+
+function assertCoverPayload(raw: unknown): CoverAsset | null {
+  if (raw === null) return null;
+  if (typeof raw === 'string') {
+    return { bytes: base64ToBytes(raw), mimeType: 'application/octet-stream' };
+  }
+  const candidate = raw as { bytes?: unknown; mimeType?: unknown } | null;
+  if (
+    !candidate ||
+    typeof candidate.bytes !== 'string' ||
+    typeof candidate.mimeType !== 'string' ||
+    !candidate.mimeType.startsWith('image/')
+  ) {
+    throw new Error('cover payload is malformed');
+  }
+  return { bytes: base64ToBytes(candidate.bytes), mimeType: candidate.mimeType };
+}
+
 export function createTauriImportRepository(invokeFn: TauriInvoke): ImportRepository {
   return {
     async stageImport(sourcePath: string): Promise<StagedImport> {
@@ -215,8 +250,16 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     async discardImport(staged: StagedImport): Promise<void> {
       await invokeFn(IMPORT_COMMAND_NAMES.discard, { staged });
     },
-    async commitImport(staged: StagedImport, metadata: SourceMetadata): Promise<ReadingMaterial> {
-      const raw = await invokeFn(IMPORT_COMMAND_NAMES.commit, { staged, metadata });
+    async commitImport(
+      staged: StagedImport,
+      metadata: SourceMetadata,
+      sourceCover?: CoverAsset | null,
+    ): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.commit, {
+        staged,
+        metadata,
+        sourceCover: coverPayload(sourceCover),
+      });
       return assertMaterialShape(raw);
     },
     async listMaterials(): Promise<ReadingMaterial[]> {
@@ -292,20 +335,16 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.restore, { materialId });
       return assertMaterialShape(raw);
     },
-    async readCover(materialId: string): Promise<Uint8Array | null> {
+    async readCover(materialId: string): Promise<CoverAsset | null> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.readCover, { materialId });
-      if (raw === null) {
-        return null;
-      }
-      if (typeof raw !== 'string') {
-        throw new Error('cover bytes payload is not a string');
-      }
-      return base64ToBytes(raw);
+      return assertCoverPayload(raw);
     },
     async commitVersionMigration(
       request: VersionMigrationCommitRequest,
     ): Promise<VersionMigrationCommitResult> {
-      const raw = await invokeFn(IMPORT_COMMAND_NAMES.commitVersionMigration, { request });
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.commitVersionMigration, {
+        request: { ...request, sourceCover: coverPayload(request.sourceCover) },
+      });
       const candidate = raw as Partial<VersionMigrationCommitResult> | null;
       if (typeof candidate !== 'object' || candidate === null || typeof candidate.snapshotId !== 'string') {
         throw new Error('version migration commit payload is malformed');

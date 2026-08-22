@@ -2,7 +2,8 @@ use base64::Engine;
 use tauri::State;
 
 use crate::db::import::{
-    ImportRepository, ManagedFileInfo, MaterialMetadata, ReadingMaterial, StagedImport,
+    CoverPayload, ImportRepository, ManagedFileInfo, MaterialMetadata, ReadingMaterial, SourceCover,
+    StagedImport,
     VersionMigrationCommitRequest, VersionMigrationCommitResult, VersionMigrationSnapshot,
 };
 use crate::db::DatabaseHandle;
@@ -11,6 +12,10 @@ use crate::fs::LibraryPaths;
 
 fn set_managed_file_availability(material: &mut ReadingMaterial, paths: &LibraryPaths) {
     material.managed_file_available = paths.managed_path(&material.id).is_file();
+    material.source_cover_source = paths
+        .source_cover_path(&material.id)
+        .is_file()
+        .then(|| material.id.clone());
 }
 
 /// 暂存一份 EPUB:把外部文件全部字节流式复制到暂存区并计算完整内容指纹。
@@ -56,9 +61,15 @@ pub fn commit_import(
     paths: State<'_, LibraryPaths>,
     staged: StagedImport,
     metadata: MaterialMetadata,
+    source_cover: Option<SourceCover>,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        let mut material = ImportRepository::new(connection).commit(&staged, &metadata, &paths)?;
+        let mut material = ImportRepository::new(connection).commit_with_source_cover(
+            &staged,
+            &metadata,
+            &paths,
+            source_cover.as_ref(),
+        )?;
         set_managed_file_availability(&mut material, &paths);
         Ok(material)
     })
@@ -278,11 +289,10 @@ pub fn read_material_cover(
     database: State<'_, DatabaseHandle>,
     paths: State<'_, LibraryPaths>,
     material_id: String,
-) -> Result<Option<String>, AppError> {
-    let bytes = database.with_connection(|connection| {
-        ImportRepository::new(connection).read_cover(&material_id, &paths)
-    })?;
-    Ok(bytes.map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)))
+) -> Result<Option<CoverPayload>, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).read_cover_payload(&material_id, &paths)
+    })
 }
 
 /// 用户确认后一次性提交 EPUB 版本迁移及全部迁移结果。

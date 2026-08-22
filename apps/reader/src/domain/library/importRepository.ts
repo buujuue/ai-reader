@@ -1,4 +1,4 @@
-import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
+import type { CoverAsset, ReadingMaterial, SourceMetadata, StagedImport } from './material';
 import type {
   VersionMigrationCommitRequest,
   VersionMigrationCommitResult,
@@ -27,7 +27,11 @@ export interface ImportRepository {
   /** 丢弃一份不再需要的暂存文件(检查失败或用户中止时调用);暂存文件不存在时幂等。 */
   discardImport(staged: StagedImport): Promise<void>;
   /** 提交导入:去重、生成 BookId、写入 ready 记录并原子移动托管文件。 */
-  commitImport(staged: StagedImport, metadata: SourceMetadata): Promise<ReadingMaterial>;
+  commitImport(
+    staged: StagedImport,
+    metadata: SourceMetadata,
+    sourceCover?: CoverAsset | null,
+  ): Promise<ReadingMaterial>;
   /** 列出活跃书库中的阅读材料(带覆盖优先、来源兜底的有效元数据)。 */
   listMaterials(): Promise<ReadingMaterial[]>;
   /** 列出回收站中的阅读材料(普通删除仅隐藏入口并移除正文副本,保留用户数据)。 */
@@ -63,8 +67,8 @@ export interface ImportRepository {
   removeMaterialCover(materialId: string): Promise<ReadingMaterial>;
   /** 一键清除全部覆盖并恢复来源标题、作者与封面。返回更新后的有效材料。 */
   restoreSourceMetadata(materialId: string): Promise<ReadingMaterial>;
-  /** 读取托管封面文件的原始字节供界面渲染;无自定义封面时返回 null。 */
-  readCover(materialId: string): Promise<Uint8Array | null>;
+  /** 读取有效封面(自定义优先、来源兜底)及可验证 MIME;无封面返回 null。 */
+  readCover(materialId: string): Promise<CoverAsset | null>;
   /**
    * 显式提交一份 EPUB 版本迁移。Rust 在同一可恢复操作中校验旧/新指纹,
    * 创建本地快照,替换托管文件并提交材料、批注和工作区状态。

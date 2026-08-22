@@ -106,6 +106,9 @@ async function buildFixtureArchive(definition: EpubFixtureDefinition): Promise<U
   if (features.has('image')) {
     entries.push({ name: 'OEBPS/images/pixel.png', data: ONE_PIXEL_PNG });
   }
+  if (features.has('cover')) {
+    entries.push({ name: 'OEBPS/images/cover.png', data: ONE_PIXEL_PNG });
+  }
   if (features.has('svg')) {
     entries.push({ name: 'OEBPS/images/figure.svg', data: encode(svgImage()) });
   }
@@ -174,6 +177,9 @@ function opfXml(features: Set<EpubFixtureFeature>, definition: EpubFixtureDefini
   const imageItems = features.has('image')
     ? '<item id="image" href="images/pixel.png" media-type="image/png"/>'
     : '';
+  const coverItem = features.has('cover')
+    ? '<item id="cover-image" href="images/cover.png" media-type="image/png" properties="cover-image"/>'
+    : '';
   const svgItem = features.has('svg')
     ? '<item id="svg" href="images/figure.svg" media-type="image/svg+xml"/>'
     : '';
@@ -185,9 +191,10 @@ function opfXml(features: Set<EpubFixtureFeature>, definition: EpubFixtureDefini
     <dc:creator>AI Reader fixture generator</dc:creator>
     <dc:language>zh</dc:language>
     ${layout}
+    ${features.has('cover') && features.has('epub2') ? '<meta name="cover" content="cover-image"/>' : ''}
   </metadata>
   <manifest>
-    ${navItem}${ncxItem}
+    ${navItem}${ncxItem}${coverItem}
     <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
     ${imageItems}${svgItem}${fontItem}${mediaItems}${scriptItem}
   </manifest>

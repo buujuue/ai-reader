@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,21 @@ pub struct MaterialMetadata {
     pub language: Option<String>,
 }
 
+/// TS 侧生成的受控封面缩略图。Rust 不参与 EPUB 封面选择，只负责落盘。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCover {
+    pub bytes: String,
+    pub mime_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverPayload {
+    pub bytes: String,
+    pub mime_type: String,
+}
+
 /// 托管材料范围读取的同步元数据。正文仍通过 read_managed_range 按需读取。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +59,8 @@ pub struct VersionMigrationCommitRequest {
     pub material_id: String,
     pub staged: StagedImport,
     pub metadata: MaterialMetadata,
+    #[serde(default)]
+    pub source_cover: Option<SourceCover>,
     pub expected_source_fingerprint: String,
     pub expected_target_fingerprint: String,
     pub annotations: Vec<Annotation>,
@@ -119,6 +137,7 @@ pub struct ReadingMaterial {
     pub author: Option<String>,
     pub language: Option<String>,
     pub cover_source: Option<String>,
+    pub source_cover_source: Option<String>,
     /// 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,保持 0)。
     pub document_version: i64,
     /// 托管副本是否存在;缺失时保留数据库中的材料与用户数据。
@@ -406,6 +425,7 @@ impl<'a> ImportRepository<'a> {
         )?;
         let snapshot_path = paths.version_migration_path(&snapshot_id)?;
         let managed_path = paths.managed_path(&request.material_id);
+        let source_cover_path = paths.source_cover_path(&request.material_id);
         let transaction = match rusqlite::Transaction::new_unchecked(
             self.connection,
             TransactionBehavior::Immediate,
@@ -419,6 +439,11 @@ impl<'a> ImportRepository<'a> {
 
         if let Err(error) = atomic_copy(&staged_path, &managed_path)
             .and_then(|_| {
+                if let Some(source_cover) = request.source_cover.as_ref() {
+                    write_source_cover(&request.material_id, source_cover, paths)?;
+                } else if source_cover_path.is_file() {
+                    std::fs::remove_file(&source_cover_path).map_err(classify_io_error)?;
+                }
                 transaction.execute(
                     "UPDATE materials
                      SET fingerprint = ?1, title = ?2, author = ?3, language = ?4,
@@ -458,6 +483,7 @@ impl<'a> ImportRepository<'a> {
             })
         {
             let _ = atomic_copy(&snapshot_path.join("material.epub"), &managed_path);
+            let _ = restore_version_migration_source_cover(&snapshot_path, &source_cover_path);
             let _ = std::fs::remove_dir_all(&snapshot_path);
             return Err(error);
         }
@@ -545,6 +571,10 @@ impl<'a> ImportRepository<'a> {
             self.connection
                 .backup("main", temp_path.join("database.sqlite"), None)?;
             atomic_copy(&managed_path, &temp_path.join("material.epub"))?;
+            let source_cover_path = paths.source_cover_path(material_id);
+            if source_cover_path.is_file() {
+                atomic_copy(&source_cover_path, &temp_path.join("source-cover"))?;
+            }
             let manifest = VersionMigrationManifest {
                 id: id.clone(),
                 material_id: material_id.to_string(),
@@ -575,11 +605,23 @@ impl<'a> ImportRepository<'a> {
     /// SQLite 事务与文件系统不能组成一个跨系统事务。进程若在文件移动和
     /// SQLite 提交之间中断,启动恢复会核对文件指纹;不匹配就删除 pending 和
     /// 半成品,匹配则完成提交。因此 ready 记录不会依赖外部源文件路径。
+    #[allow(dead_code)]
     pub fn commit(
         &self,
         staged: &StagedImport,
         metadata: &MaterialMetadata,
         paths: &LibraryPaths,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.commit_with_source_cover(staged, metadata, paths, None)
+    }
+
+    /// 提交时可选写入 TS 已生成的来源封面;自定义封面不会被覆盖。
+    pub fn commit_with_source_cover(
+        &self,
+        staged: &StagedImport,
+        metadata: &MaterialMetadata,
+        paths: &LibraryPaths,
+        source_cover: Option<&SourceCover>,
     ) -> Result<ReadingMaterial, AppError> {
         let format = format_from_file_name(&staged.original_file_name);
         let pending_status: Option<String> = self
@@ -647,6 +689,9 @@ impl<'a> ImportRepository<'a> {
                     [&staged.id],
                 )?;
             }
+            if let Some(source_cover) = source_cover {
+                write_source_cover(&staged.id, source_cover, paths)?;
+            }
             transaction.commit()?;
             let _ = std::fs::remove_file(stash_path);
             return self
@@ -690,6 +735,9 @@ impl<'a> ImportRepository<'a> {
                     [&existing_id],
                 )?;
             }
+            if let Some(source_cover) = source_cover {
+                write_source_cover(&existing_id, source_cover, paths)?;
+            }
             transaction.commit()?;
             // 暂存文件已不再需要。清理失败不把已成功的去重导入报告为失败;
             // 下次启动恢复会删除无数据库记录的暂存孤儿。
@@ -712,6 +760,14 @@ impl<'a> ImportRepository<'a> {
             let _ = transaction.rollback();
             let _ = std::fs::remove_file(&managed_path);
             return Err(error.into());
+        }
+
+        if let Some(source_cover) = source_cover {
+            if let Err(error) = write_source_cover(&staged.id, source_cover, paths) {
+                let _ = transaction.rollback();
+                let _ = std::fs::remove_file(&managed_path);
+                return Err(error);
+            }
         }
 
         if let Err(error) = transaction.commit() {
@@ -877,6 +933,10 @@ impl<'a> ImportRepository<'a> {
         if cover_path.is_file() {
             std::fs::remove_file(&cover_path).map_err(classify_io_error)?;
         }
+        let source_cover_path = paths.source_cover_path(id);
+        if source_cover_path.is_file() {
+            std::fs::remove_file(&source_cover_path).map_err(classify_io_error)?;
+        }
         let recovery_path = paths.recovery_path(id)?;
         if recovery_path.is_file() {
             std::fs::remove_file(&recovery_path).map_err(classify_io_error)?;
@@ -970,14 +1030,29 @@ impl<'a> ImportRepository<'a> {
             .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
     }
 
-    /// 读取托管封面文件的原始字节;无自定义封面时返回 None。
+    /// 读取有效托管封面文件的原始字节;自定义优先、来源兜底。
     pub fn read_cover(&self, id: &str, paths: &LibraryPaths) -> Result<Option<Vec<u8>>, AppError> {
         self.ensure_ready(id)?;
-        let cover_path = paths.cover_path(id);
+        let cover_path = if paths.cover_path(id).is_file() {
+            paths.cover_path(id)
+        } else {
+            paths.source_cover_path(id)
+        };
         if !cover_path.is_file() {
             return Ok(None);
         }
         Ok(Some(read_file_bytes(&cover_path)?))
+    }
+
+    pub fn read_cover_payload(
+        &self,
+        id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<Option<CoverPayload>, AppError> {
+        Ok(self.read_cover(id, paths)?.map(|bytes| CoverPayload {
+            mime_type: image_mime_type(&bytes),
+            bytes: base64::engine::general_purpose::STANDARD.encode(bytes),
+        }))
     }
 
     /// 启动恢复:处理 pending 记录,并清理确认无主的暂存与托管文件。
@@ -1103,6 +1178,13 @@ impl<'a> ImportRepository<'a> {
             }
         }
         for entry in std::fs::read_dir(&paths.covers_dir)? {
+            let entry = entry?;
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            if entry.path().is_file() && self.find_by_id(&file_name)?.is_none() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        for entry in std::fs::read_dir(&paths.source_covers_dir)? {
             let entry = entry?;
             let file_name = entry.file_name().to_string_lossy().into_owned();
             if entry.path().is_file() && self.find_by_id(&file_name)?.is_none() {
@@ -1239,12 +1321,67 @@ fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<(ReadingMaterial, 
                 .or_else(|| source_author.clone()),
             language: source_language,
             cover_source: user_override.cover_source.clone(),
+            source_cover_source: None,
             user_override,
             document_version,
             managed_file_available: true,
         },
         deleted_at.is_some(),
     ))
+}
+
+fn write_source_cover(
+    material_id: &str,
+    cover: &SourceCover,
+    paths: &LibraryPaths,
+) -> Result<(), AppError> {
+    const MAX_SOURCE_COVER_BYTES: usize = 64 * 1024 * 1024;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&cover.bytes)
+        .map_err(|_| AppError::BackupValidation("来源封面不是有效 Base64".to_string()))?;
+    if bytes.is_empty() || bytes.len() > MAX_SOURCE_COVER_BYTES {
+        return Err(AppError::BackupValidation("来源封面超过资源预算".to_string()));
+    }
+    if !matches!(
+        cover.mime_type.as_str(),
+        "image/jpeg" | "image/png" | "image/webp" | "image/gif"
+    ) {
+        return Err(AppError::BackupValidation(format!(
+            "来源封面 MIME 不受支持:{}",
+            cover.mime_type
+        )));
+    }
+    if image_mime_type(&bytes) != cover.mime_type {
+        return Err(AppError::BackupValidation(
+            "来源封面 MIME 与字节签名不一致".to_string(),
+        ));
+    }
+    crate::fs::atomic_write(&paths.source_cover_path(material_id), &bytes)
+}
+
+fn restore_version_migration_source_cover(snapshot_path: &Path, target: &Path) -> Result<(), AppError> {
+    let snapshot_cover = snapshot_path.join("source-cover");
+    if snapshot_cover.is_file() {
+        atomic_copy(&snapshot_cover, target)
+    } else if target.is_file() {
+        std::fs::remove_file(target).map_err(classify_io_error)
+    } else {
+        Ok(())
+    }
+}
+
+fn image_mime_type(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        "image/jpeg".to_string()
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        "image/png".to_string()
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp".to_string()
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
 }
 
 fn format_from_file_name(file_name: &str) -> &'static str {
@@ -1369,6 +1506,10 @@ pub fn recover_version_migrations(paths: &LibraryPaths) -> Result<(), AppError> 
         if database.is_file() && material.is_file() {
             atomic_copy(&database, &paths.database_path())?;
             atomic_copy(&material, &paths.managed_path(&manifest.material_id))?;
+            restore_version_migration_source_cover(
+                &root,
+                &paths.source_cover_path(&manifest.material_id),
+            )?;
         }
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1596,8 +1737,12 @@ mod tests {
         let paths = temp_paths();
         let old_source = write_source(&paths, "old.epub", b"old-epub");
         let old_staged = repository.stage(&old_source, &paths).unwrap();
+        let old_source_cover = SourceCover {
+            bytes: "/9j/2Q==".to_string(),
+            mime_type: "image/jpeg".to_string(),
+        };
         let old_material = repository
-            .commit(
+            .commit_with_source_cover(
                 &old_staged,
                 &MaterialMetadata {
                     title: "同一本书".to_string(),
@@ -1605,6 +1750,7 @@ mod tests {
                     language: Some("zh".to_string()),
                 },
                 &paths,
+                Some(&old_source_cover),
             )
             .unwrap();
         let annotation = Annotation {
@@ -1635,6 +1781,10 @@ mod tests {
 
         let new_source = write_source(&paths, "new.epub", b"new-epub");
         let new_staged = repository.stage(&new_source, &paths).unwrap();
+        let new_source_cover = SourceCover {
+            bytes: "/9j/3Q==".to_string(),
+            mime_type: "image/jpeg".to_string(),
+        };
         let migrated = repository
             .commit_version_migration(
                 &VersionMigrationCommitRequest {
@@ -1645,6 +1795,7 @@ mod tests {
                         author: Some("作者".to_string()),
                         language: Some("zh".to_string()),
                     },
+                    source_cover: Some(new_source_cover),
                     expected_source_fingerprint: old_material.fingerprint.clone(),
                     expected_target_fingerprint: new_staged.fingerprint.clone(),
                     annotations: vec![annotation.clone()],
@@ -1660,6 +1811,10 @@ mod tests {
         assert_eq!(
             std::fs::read(paths.managed_path(&old_material.id)).unwrap(),
             b"new-epub"
+        );
+        assert_eq!(
+            std::fs::read(paths.source_cover_path(&old_material.id)).unwrap(),
+            vec![0xff, 0xd8, 0xff, 0xdd]
         );
         assert!(matches!(
             repository.list_version_migration_snapshots(&paths).unwrap()[0].status.as_str(),
@@ -1682,6 +1837,10 @@ mod tests {
         assert_eq!(
             std::fs::read(paths.managed_path(&old_material.id)).unwrap(),
             b"old-epub"
+        );
+        assert_eq!(
+            std::fs::read(paths.source_cover_path(&old_material.id)).unwrap(),
+            vec![0xff, 0xd8, 0xff, 0xd9]
         );
         assert_eq!(
             crate::db::annotations::AnnotationRepository::new(&recovered_connection)
@@ -2356,6 +2515,47 @@ mod tests {
         // 内容身份稳定。
         assert_eq!(updated.fingerprint, material.fingerprint);
         assert_eq!(updated.source.title, "来源标题");
+    }
+
+    #[test]
+    fn source_cover_is_persisted_separately_and_custom_cover_falls_back_to_it() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"metadata-content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let metadata = MaterialMetadata {
+            title: "来源标题".to_string(),
+            author: None,
+            language: Some("zh".to_string()),
+        };
+        let source_cover = SourceCover {
+            bytes: "/9j/2Q==".to_string(),
+            mime_type: "image/jpeg".to_string(),
+        };
+        let material = repository
+            .commit_with_source_cover(&staged, &metadata, &paths, Some(&source_cover))
+            .unwrap();
+
+        assert_eq!(
+            repository.read_cover(&material.id, &paths).unwrap().unwrap(),
+            vec![0xff, 0xd8, 0xff, 0xd9]
+        );
+        assert!(paths.source_cover_path(&material.id).is_file());
+        assert!(!paths.cover_path(&material.id).is_file());
+
+        let custom = paths.stash_dir.join("custom.jpg");
+        std::fs::write(&custom, b"custom-cover").unwrap();
+        repository.set_cover(&material.id, &custom, &paths).unwrap();
+        assert_eq!(
+            repository.read_cover(&material.id, &paths).unwrap().unwrap(),
+            b"custom-cover"
+        );
+        repository.remove_cover(&material.id, &paths).unwrap();
+        assert_eq!(
+            repository.read_cover(&material.id, &paths).unwrap().unwrap(),
+            vec![0xff, 0xd8, 0xff, 0xd9]
+        );
     }
 
     #[test]

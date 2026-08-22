@@ -24,6 +24,7 @@ export type EpubFixtureFeature =
   | 'obfuscated-font'
   | 'footnote'
   | 'image'
+  | 'cover'
   | 'svg'
   | 'mathml'
   | 'missing-toc'
@@ -92,6 +93,7 @@ export const REQUIRED_EPUB_FEATURES: readonly EpubFixtureFeature[] = [
   'obfuscated-font',
   'footnote',
   'image',
+  'cover',
   'svg',
   'mathml',
   'missing-toc',
@@ -150,14 +152,14 @@ export const EPUB_FIXTURES: readonly EpubFixtureDefinition[] = [
   defineEpubFixture(
     'epub2-ncx-flowable',
     'EPUB 2 + NCX + 流式章节',
-    ['epub2', 'flowable', 'ncx'],
+    ['epub2', 'flowable', 'ncx', 'cover'],
     'supported',
     '导入成功，打开后显示流式正文与分层目录。',
   ),
   defineEpubFixture(
     'epub3-nav-rich',
     'EPUB 3 + NAV + 图片/SVG/脚注',
-    ['epub3', 'flowable', 'nav', 'image', 'svg', 'footnote'],
+    ['epub3', 'flowable', 'nav', 'image', 'svg', 'footnote', 'cover'],
     'supported',
     '导入成功，图片、SVG、脚注跳转和 NAV 目录可用。',
   ),

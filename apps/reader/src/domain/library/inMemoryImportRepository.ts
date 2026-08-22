@@ -6,6 +6,7 @@ import type {
   VersionMigrationSnapshot,
 } from './versionMigrationPersistence';
 import type {
+  CoverAsset,
   MaterialOverride,
   ReadingMaterial,
   SourceMetadata,
@@ -14,6 +15,7 @@ import type {
 import { emptyMaterialOverride } from './material';
 import { formatFromSourceFileName } from './materialFormat';
 import { ManagedFileSource, managedFileTypeFromName } from './managedFileSource';
+import { sniffImageMimeType } from './cover';
 
 /** 内部存储:材料身份与来源快照(不可编辑)分开保存,覆盖值独立保存。 */
 interface InternalMaterial {
@@ -40,6 +42,7 @@ export function createInMemoryImportRepository(
   const stagedBytes = new Map<string, Uint8Array>();
   const overrides = new Map<string, MaterialOverride>();
   const covers = new Map<string, Uint8Array>();
+  const sourceCovers = new Map<string, CoverAsset>();
   /** 回收站:id 集合。普通删除隐藏入口并移除正文副本;恢复即移除标记。 */
   const trashed = new Set<string>();
   /** pending 记录:id → 暂存句柄。stage 时写入,commit/discard/recover 时移除。 */
@@ -54,6 +57,7 @@ export function createInMemoryImportRepository(
       snapshot: VersionMigrationSnapshot;
       material: InternalMaterial;
       bytes: Uint8Array;
+      sourceCover: CoverAsset | null;
       annotations: VersionMigrationCommitRequest['previousAnnotations'];
       workspaceState: VersionMigrationCommitRequest['previousWorkspaceState'];
     }
@@ -71,6 +75,7 @@ export function createInMemoryImportRepository(
       author: override.author ?? internal.source.author,
       language: internal.source.language,
       coverSource: override.coverSource ?? null,
+      sourceCoverSource: sourceCovers.has(internal.id) ? internal.id : null,
       documentVersion: internal.documentVersion,
       managedFileAvailable: managedBytes.has(internal.id),
     };
@@ -103,7 +108,7 @@ export function createInMemoryImportRepository(
       pending.delete(stagedImport.id);
     },
 
-    async commitImport(stagedImport, metadata): Promise<ReadingMaterial> {
+    async commitImport(stagedImport, metadata, sourceCover): Promise<ReadingMaterial> {
       const existing = byIdentity.get(
         materialIdentityKey(stagedImport.fingerprint, stagedImport.originalFileName),
       );
@@ -111,6 +116,12 @@ export function createInMemoryImportRepository(
         const stagedBytesForExisting = stagedBytes.get(stagedImport.id);
         if (!managedBytes.has(existing.id) && stagedBytesForExisting) {
           managedBytes.set(existing.id, new Uint8Array(stagedBytesForExisting));
+        }
+        if (sourceCover) {
+          sourceCovers.set(existing.id, {
+            bytes: new Uint8Array(sourceCover.bytes),
+            mimeType: sourceCover.mimeType,
+          });
         }
         trashedBytes.delete(existing.id);
         stagedBytes.delete(stagedImport.id);
@@ -139,6 +150,12 @@ export function createInMemoryImportRepository(
       const bytes = stagedBytes.get(stagedImport.id);
       if (bytes) {
         managedBytes.set(internal.id, new Uint8Array(bytes));
+      }
+      if (sourceCover) {
+        sourceCovers.set(internal.id, {
+          bytes: new Uint8Array(sourceCover.bytes),
+          mimeType: sourceCover.mimeType,
+        });
       }
       stagedBytes.delete(stagedImport.id);
       pending.delete(stagedImport.id);
@@ -215,6 +232,7 @@ export function createInMemoryImportRepository(
       managedBytes.delete(materialId);
       trashedBytes.delete(materialId);
       covers.delete(materialId);
+      sourceCovers.delete(materialId);
       overrides.delete(materialId);
       markdownRecoveries.delete(materialId);
       for (const [snapshotId, stored] of versionMigrationSnapshots) {
@@ -287,12 +305,18 @@ export function createInMemoryImportRepository(
       return toMaterial(internal);
     },
 
-    async readCover(materialId): Promise<Uint8Array | null> {
-      const bytes = covers.get(materialId);
-      if (!bytes) {
-        return null;
+    async readCover(materialId): Promise<CoverAsset | null> {
+      const custom = covers.get(materialId);
+      if (custom) {
+        return {
+          bytes: new Uint8Array(custom),
+          mimeType: sniffImageMimeType(custom) ?? 'application/octet-stream',
+        };
       }
-      return new Uint8Array(bytes);
+      const source = sourceCovers.get(materialId);
+      return source
+        ? { bytes: new Uint8Array(source.bytes), mimeType: source.mimeType }
+        : null;
     },
 
     async commitVersionMigration(
@@ -330,6 +354,12 @@ export function createInMemoryImportRepository(
         },
         material: { ...internal, source: { ...internal.source } },
         bytes: new Uint8Array(managedBytes.get(internal.id) ?? []),
+        sourceCover: sourceCovers.get(internal.id)
+          ? {
+              bytes: new Uint8Array(sourceCovers.get(internal.id)!.bytes),
+              mimeType: sourceCovers.get(internal.id)!.mimeType,
+            }
+          : null,
         annotations: structuredClone(request.previousAnnotations),
         workspaceState: structuredClone(request.previousWorkspaceState),
       });
@@ -339,6 +369,15 @@ export function createInMemoryImportRepository(
       internal.sourceFileName = request.staged.originalFileName;
       internal.source = { ...request.metadata };
       managedBytes.set(internal.id, new Uint8Array(bytes));
+      // 版本迁移只替换来源层;用户自定义封面始终独立保留。
+      if (request.sourceCover) {
+        sourceCovers.set(internal.id, {
+          bytes: new Uint8Array(request.sourceCover.bytes),
+          mimeType: request.sourceCover.mimeType,
+        });
+      } else {
+        sourceCovers.delete(internal.id);
+      }
       byIdentity.set(targetKey, internal);
       stagedBytes.delete(request.staged.id);
       pending.delete(request.staged.id);
@@ -360,6 +399,14 @@ export function createInMemoryImportRepository(
       byIdentity.delete(materialIdentityKey(current.fingerprint, current.sourceFileName));
       materials.set(stored.material.id, { ...stored.material, source: { ...stored.material.source } });
       managedBytes.set(stored.material.id, new Uint8Array(stored.bytes));
+      if (stored.sourceCover) {
+        sourceCovers.set(stored.material.id, {
+          bytes: new Uint8Array(stored.sourceCover.bytes),
+          mimeType: stored.sourceCover.mimeType,
+        });
+      } else {
+        sourceCovers.delete(stored.material.id);
+      }
       byIdentity.set(
         materialIdentityKey(stored.material.fingerprint, stored.material.sourceFileName),
         materials.get(stored.material.id)!,

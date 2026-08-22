@@ -5,7 +5,7 @@ import {
   type EpubPreflightReport,
 } from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
-import type { ReadingMaterial, SourceMetadata, StagedImport } from '../domain/library/material';
+import type { CoverAsset, ReadingMaterial, SourceMetadata, StagedImport } from '../domain/library/material';
 import { formatFromSourceFileName } from '../domain/library/materialFormat';
 import {
   findVersionMigrationCandidates,
@@ -104,6 +104,7 @@ async function importOneFile(
       material,
       staged: stagedImport,
       metadata: inspected.metadata,
+      sourceCover: inspected.sourceCover,
     }));
     if (candidates.length > 0) {
       return {
@@ -114,7 +115,11 @@ async function importOneFile(
         ...(inspected.preflight ? { preflight: inspected.preflight } : {}),
       };
     }
-    const material = await dependencies.importRepository.commitImport(stagedImport, inspected.metadata);
+    const material = await dependencies.importRepository.commitImport(
+      stagedImport,
+      inspected.metadata,
+      inspected.sourceCover,
+    );
     return {
       kind: 'success',
       sourcePath,
@@ -144,11 +149,15 @@ async function inspectFile(
   bytes: Uint8Array,
   originalFileName: string,
   pdfLib?: PdfJsLib,
-): Promise<{ metadata: SourceMetadata; preflight?: EpubPreflightReport }> {
+): Promise<{
+  metadata: SourceMetadata;
+  sourceCover: CoverAsset | null;
+  preflight?: EpubPreflightReport;
+}> {
   const format = formatFromSourceFileName(originalFileName);
   if (format === 'pdf') {
     const result = await inspectPdf(createPdfSourceFromBytes(bytes), pdfLib);
-    return { metadata: result.metadata };
+    return { metadata: result.metadata, sourceCover: null };
   }
   if (format === 'epub') {
     const buffer = bytes.buffer.slice(
@@ -156,11 +165,15 @@ async function inspectFile(
       bytes.byteOffset + bytes.byteLength,
     ) as ArrayBuffer;
     const result = await inspectEpub(new Blob([buffer], { type: 'application/epub+zip' }));
-    return { metadata: result.metadata, preflight: result.preflight };
+    return {
+      metadata: result.metadata,
+      sourceCover: result.sourceCover,
+      preflight: result.preflight,
+    };
   }
   if (format === 'markdown') {
     const result = await inspectMarkdown(bytes, originalFileName);
-    return { metadata: result.metadata };
+    return { metadata: result.metadata, sourceCover: null };
   }
   throw new MarkdownInspectError('不支持的文件格式:仅支持 EPUB、PDF 与 Markdown', 'unsupported');
 }

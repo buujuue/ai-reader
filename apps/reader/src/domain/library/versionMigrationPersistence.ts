@@ -1,12 +1,13 @@
 import type { Annotation } from '../annotation/annotation';
 import type { WorkspaceState } from '../workspace/workspaceState';
-import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
+import type { CoverAsset, ReadingMaterial, SourceMetadata, StagedImport } from './material';
 
 /** 版本迁移确认后一次性提交到 Rust 的完整载荷。 */
 export interface VersionMigrationCommitRequest {
   materialId: string;
   staged: StagedImport;
   metadata: SourceMetadata;
+  sourceCover?: CoverAsset | null;
   expectedSourceFingerprint: string;
   expectedTargetFingerprint: string;
   annotations: readonly Annotation[];

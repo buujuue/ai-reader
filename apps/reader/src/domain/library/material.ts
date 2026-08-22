@@ -18,6 +18,12 @@ export interface MaterialOverride {
   coverSource: string | null;
 }
 
+/** 已通过安全解码/缩放的封面字节；Rust 只负责受控持久化。 */
+export interface CoverAsset {
+  bytes: Uint8Array;
+  mimeType: string;
+}
+
 /** 空覆盖:全部回落来源。 */
 export function emptyMaterialOverride(): MaterialOverride {
   return { title: null, author: null, coverSource: null };
@@ -40,6 +46,8 @@ export interface ReadingMaterial {
   language: string | null;
   /** 有效封面托管文件名(自定义封面);无自定义封面时为 null。 */
   coverSource: string | null;
+  /** 来源封面托管文件名;无来源封面时为 null。与 coverSource 分层保存。 */
+  sourceCoverSource?: string | null;
   /** 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,为 0)。 */
   documentVersion: number;
   /** 托管副本是否存在且可供阅读;缺失时仍保留材料元数据与用户数据。 */

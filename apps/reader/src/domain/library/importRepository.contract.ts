@@ -42,6 +42,42 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     expect(first?.language).toBe('zh');
   });
 
+  it('来源封面与自定义覆盖分层,读取时自定义优先且清除后回落来源', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.epub', encodeUtf8('cover-book'));
+    const sourceCover = { bytes: Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    const material = await repository.commitImport(staged, {
+      title: '封面书',
+      author: null,
+      language: null,
+    }, sourceCover);
+
+    expect((await repository.readCover(material.id))?.mimeType).toBe('image/jpeg');
+    expect(await repository.readCover(material.id)).toMatchObject({ bytes: sourceCover.bytes });
+    expect((await repository.listMaterials())[0]?.sourceCoverSource).toBe(material.id);
+
+    if (harness.registerCoverSource) {
+      harness.registerCoverSource('custom.jpg', Uint8Array.from([0xff, 0xd8, 0xff, 0xd8]));
+      const custom = await repository.setMaterialCover(material.id, 'custom.jpg');
+      expect(custom.coverSource).toBe(material.id);
+      expect(await repository.readCover(material.id)).toMatchObject({
+        bytes: Uint8Array.from([0xff, 0xd8, 0xff, 0xd8]),
+      });
+      await repository.removeMaterialCover(material.id);
+      expect(await repository.readCover(material.id)).toMatchObject({ bytes: sourceCover.bytes });
+      expect((await repository.listMaterials())[0]?.sourceCoverSource).toBe(material.id);
+
+      await repository.trashMaterial(material.id);
+      expect(await repository.readCover(material.id)).toMatchObject({ bytes: sourceCover.bytes });
+      await repository.restoreMaterial(material.id);
+      expect(await repository.readCover(material.id)).toMatchObject({ bytes: sourceCover.bytes });
+      await repository.trashMaterial(material.id);
+      await repository.purgeMaterial(material.id);
+      expect(await repository.listMaterials()).toHaveLength(0);
+      expect(await repository.listTrashed()).toHaveLength(0);
+    }
+  });
+
   it('相同内容指纹只保留一份', async () => {
     const repository = harness.createRepository();
     const first = await harness.stage('a.epub', encodeUtf8('same-content'));

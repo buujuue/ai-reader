@@ -34,6 +34,8 @@ pub struct BackupMaterial {
     pub fingerprint: String,
     pub trashed: bool,
     pub has_cover: bool,
+    #[serde(default)]
+    pub has_source_cover: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -491,6 +493,7 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
     let mut database_count = 0;
     let mut material_ids = HashSet::new();
     let mut cover_ids = HashSet::new();
+    let mut source_cover_ids = HashSet::new();
     for entry in &manifest.entries {
         if !paths.insert(&entry.path) {
             return Err(AppError::BackupValidation(format!(
@@ -540,6 +543,21 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
                     )));
                 }
             }
+            "source-cover" => {
+                let id = entry
+                    .path
+                    .strip_prefix("source-covers/")
+                    .ok_or_else(|| AppError::BackupValidation("来源封面路径不合法".to_string()))?;
+                validate_material_id(id)?;
+                if entry.material_id.as_deref() != Some(id)
+                    || !materials.contains(id)
+                    || !source_cover_ids.insert(id.to_string())
+                {
+                    return Err(AppError::BackupValidation(format!(
+                        "来源封面条目与 manifest 不匹配:{id}"
+                    )));
+                }
+            }
             _ => {
                 return Err(AppError::BackupValidation(format!(
                     "未知或不安全的 manifest 条目:{}",
@@ -558,6 +576,12 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
         if has_cover != material.has_cover {
             return Err(AppError::BackupValidation(format!(
                 "封面条目标记不一致:{}",
+                material.id
+            )));
+        }
+        if source_cover_ids.contains(&material.id) != material.has_source_cover {
+            return Err(AppError::BackupValidation(format!(
+                "来源封面条目标记不一致:{}",
                 material.id
             )));
         }
@@ -694,6 +718,14 @@ fn staged_entry_path(stage_dir: &Path, entry: &BackupManifestEntry) -> Result<Pa
             validate_material_id(id)?;
             Ok(stage_dir.join("covers").join(id))
         }
+        "source-cover" => {
+            let id = entry
+                .path
+                .strip_prefix("source-covers/")
+                .ok_or_else(|| AppError::BackupValidation("来源封面暂存路径不合法".to_string()))?;
+            validate_material_id(id)?;
+            Ok(stage_dir.join("source-covers").join(id))
+        }
         _ => Err(AppError::BackupValidation(format!(
             "无法暂存未知条目:{}",
             entry.path
@@ -713,6 +745,12 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
         if material.fingerprint != entry.sha256 {
             return Err(AppError::BackupValidation(format!(
                 "书籍完整指纹与文件指纹不一致:{}",
+                material.id
+            )));
+        }
+        if material.has_source_cover && !stage_dir.join("source-covers").join(&material.id).is_file() {
+            return Err(AppError::BackupValidation(format!(
+                "缺少来源封面:{}",
                 material.id
             )));
         }
@@ -829,6 +867,7 @@ fn create_current_snapshot(
     std::fs::create_dir_all(snapshot_dir.join("database")).map_err(classify_io_error)?;
     std::fs::create_dir_all(snapshot_dir.join("library")).map_err(classify_io_error)?;
     std::fs::create_dir_all(snapshot_dir.join("covers")).map_err(classify_io_error)?;
+    std::fs::create_dir_all(snapshot_dir.join("source-covers")).map_err(classify_io_error)?;
     connection.backup(
         "main",
         snapshot_dir.join("database").join("ai-reader.db"),
@@ -836,6 +875,10 @@ fn create_current_snapshot(
     )?;
     copy_tree(&paths.managed_dir, &snapshot_dir.join("library"))?;
     copy_tree(&paths.covers_dir, &snapshot_dir.join("covers"))?;
+    copy_tree(
+        &paths.source_covers_dir,
+        &snapshot_dir.join("source-covers"),
+    )?;
     Ok(())
 }
 
@@ -867,6 +910,7 @@ fn estimate_current_library_bytes(paths: &LibraryPaths) -> Result<u64, AppError>
     let mut total = database.len();
     total = total.saturating_add(directory_size(&paths.managed_dir)?);
     total = total.saturating_add(directory_size(&paths.covers_dir)?);
+    total = total.saturating_add(directory_size(&paths.source_covers_dir)?);
     Ok(total)
 }
 
@@ -970,10 +1014,12 @@ fn swap_database_and_directories(
     let old_database = state.old_dir.join("database").join("ai-reader.db");
     let old_library = state.old_dir.join("library");
     let old_covers = state.old_dir.join("covers");
+    let old_source_covers = state.old_dir.join("source-covers");
     std::fs::create_dir_all(old_database.parent().unwrap()).map_err(classify_io_error)?;
 
     move_active_directory(&paths.managed_dir, &old_library)?;
     move_active_directory(&paths.covers_dir, &old_covers)?;
+    move_active_directory(&paths.source_covers_dir, &old_source_covers)?;
     move_active_file(&paths.database_path(), &old_database)?;
     for suffix in ["-wal", "-shm"] {
         let active = PathBuf::from(format!("{}{}", paths.database_path().display(), suffix));
@@ -985,6 +1031,10 @@ fn swap_database_and_directories(
 
     move_active_directory(&state.stage_dir.join("library"), &paths.managed_dir)?;
     move_active_directory(&state.stage_dir.join("covers"), &paths.covers_dir)?;
+    move_active_directory(
+        &state.stage_dir.join("source-covers"),
+        &paths.source_covers_dir,
+    )?;
     move_active_file(
         &state.stage_dir.join("database").join("ai-reader.db"),
         &paths.database_path(),
@@ -1025,6 +1075,10 @@ fn move_active_file(source: &Path, destination: &Path) -> Result<(), AppError> {
 fn restore_old_paths(paths: &LibraryPaths, state: &RestoreState) -> Result<(), AppError> {
     restore_directory(&paths.managed_dir, &state.old_dir.join("library"))?;
     restore_directory(&paths.covers_dir, &state.old_dir.join("covers"))?;
+    restore_directory(
+        &paths.source_covers_dir,
+        &state.old_dir.join("source-covers"),
+    )?;
     restore_file(
         &paths.database_path(),
         &state.old_dir.join("database").join("ai-reader.db"),
@@ -1133,12 +1187,28 @@ fn collect_backup_entries(
             });
         }
 
+        let source_cover_path = material_path(&paths.source_covers_dir, &id)?;
+        let has_source_cover = source_cover_path.is_file();
+        if has_source_cover {
+            let source_cover_manifest = file_manifest_entry(
+                &format!("source-covers/{id}"),
+                "source-cover",
+                Some(id.clone()),
+                &source_cover_path,
+            )?;
+            entries.push(BackupSourceEntry {
+                manifest: source_cover_manifest,
+                source_path: source_cover_path,
+            });
+        }
+
         materials.push(BackupMaterial {
             id,
             source_file_name,
             fingerprint,
             trashed,
             has_cover,
+            has_source_cover,
         });
     }
 
@@ -1477,6 +1547,34 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM annotations", [], |row| row.get(0))
             .unwrap();
         assert_eq!(annotation_count, 1);
+    }
+
+    #[test]
+    fn export_and_restore_preserve_source_cover_as_a_separate_entry() {
+        let (connection, paths, root) = setup();
+        std::fs::write(paths.source_cover_path("material-1"), b"source-cover").unwrap();
+        materialize_database(&connection, &paths);
+        let destination = root.join("source-cover.airbackup");
+
+        let result = BackupRepository::new(&connection)
+            .export(&paths, &destination)
+            .unwrap();
+        let entries = read_tar_entries(&std::fs::read(&destination).unwrap());
+        let names: Vec<_> = entries.iter().map(|(name, _)| name.as_str()).collect();
+
+        assert_eq!(result.entry_count, 5);
+        assert!(names.contains(&"covers/material-1"));
+        assert!(names.contains(&"source-covers/material-1"));
+        let manifest: BackupManifest = serde_json::from_slice(&entries[0].1).unwrap();
+        assert!(manifest.materials[0].has_cover);
+        assert!(manifest.materials[0].has_source_cover);
+
+        let handle = crate::db::DatabaseHandle::new(connection);
+        handle.restore_backup(&paths, &destination).unwrap();
+        assert_eq!(
+            std::fs::read(paths.source_cover_path("material-1")).unwrap(),
+            b"source-cover"
+        );
     }
 
     #[test]

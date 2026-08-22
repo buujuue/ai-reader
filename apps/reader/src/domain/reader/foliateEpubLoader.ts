@@ -129,6 +129,8 @@ export interface FoliateEpubSemanticSnapshot {
   author: string | null;
   language: string | null;
   hasCover: boolean;
+  /** 由同一份 foliate-js 语义选择出的来源封面;预检可关闭二进制读取。 */
+  cover: Blob | null;
 }
 
 export interface ReadFoliateEpubSemanticsOptions {
@@ -179,13 +181,14 @@ export async function readFoliateEpubSemantics(
   options: ReadFoliateEpubSemanticsOptions = {},
 ): Promise<FoliateEpubSemanticSnapshot> {
   const book = (await openFoliateEpub(file, prefetch)) as FoliateBookSemanticShape;
-  const cover = options.loadCover === false
+  const cover: Blob | null = options.loadCover === false
     ? null
-    : await book.getCover?.().catch(() => null);
+    : (await book.getCover?.().catch(() => null)) ?? null;
   return {
     title: flattenMetadata(book.metadata?.title),
     author: flattenMetadata(book.metadata?.author),
     language: flattenMetadata(book.metadata?.language),
     hasCover: cover !== null && cover !== undefined,
+    cover,
   };
 }

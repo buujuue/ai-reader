@@ -9,6 +9,8 @@ import {
 } from './zip';
 import { EPUB_RESOURCE_BUDGET } from './epubBudget';
 import type { SourceMetadata } from '../material';
+import type { CoverAsset } from '../material';
+import { normalizeCoverBlob } from '../cover';
 import { readFoliateEpubSemantics } from '../../reader/foliateEpubLoader';
 import type { NativeEpubPrefetch } from '../../reader/nativeEpub';
 
@@ -80,8 +82,10 @@ export interface EpubPreflightReport {
 
 export interface EpubInspectResult {
   metadata: SourceMetadata;
-  /** 是否在清单中检测到封面条目。封面二进制持久化属于后续切片。 */
+  /** 是否由 foliate-js 或安全预检检测到封面条目。 */
   hasCover: boolean;
+  /** 由 foliate-js 选择并在 TS 侧生成的来源缩略图;封面失败只局部降级。 */
+  sourceCover: CoverAsset | null;
   /** 结构、安全与资源预算预检报告；只有整本核心闭环可用时才会返回。 */
   preflight: EpubPreflightReport;
 }
@@ -231,6 +235,15 @@ async function inspectEpubInner(
     containerXml,
   );
   const metadata = foliateSemantics.metadata;
+  let sourceCover: CoverAsset | null = null;
+  if (foliateSemantics.cover) {
+    try {
+      sourceCover = await normalizeCoverBlob(foliateSemantics.cover);
+    } catch {
+      // 封面是可降级派生资源,不能阻断可正常阅读的正文导入。
+      sourceCover = null;
+    }
+  }
   const report: EpubPreflightReport = {
     unavailableChapters: [],
     degradedResources: [],
@@ -309,6 +322,7 @@ async function inspectEpubInner(
   return {
     metadata,
     hasCover: foliateSemantics.hasCover || coverPath !== null && coverPath !== undefined,
+    sourceCover,
     preflight: report,
   };
 }
@@ -321,6 +335,7 @@ async function readFoliateSemantics(
 ): Promise<{
   metadata: SourceMetadata;
   hasCover: boolean;
+  cover: Blob | null;
 }> {
   try {
     // 合法 EPUB 直接保留原始 container.xml；旧测试夹具没有命名空间时，
@@ -348,7 +363,6 @@ async function readFoliateSemantics(
     const semantics = await readFoliateEpubSemantics(
       source,
       prefetch,
-      { loadCover: false },
     );
     if (!semantics.title) {
       throw new EpubInspectError('EPUB 缺少书名(title)', 'corrupt', 'opf');
@@ -360,6 +374,7 @@ async function readFoliateSemantics(
         language: semantics.language,
       },
       hasCover: semantics.hasCover,
+      cover: semantics.cover,
     };
   } catch (error) {
     if (error instanceof EpubInspectError) {

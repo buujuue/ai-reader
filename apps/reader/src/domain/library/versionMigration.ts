@@ -7,7 +7,7 @@ import {
 import type { BookDocument } from '../reader/bookDocument';
 import type { ReadingLocation } from '../reader/readingLocation';
 import type { WorkspaceState } from '../workspace/workspaceState';
-import type { ReadingMaterial, SourceMetadata, StagedImport } from './material';
+import type { CoverAsset, ReadingMaterial, SourceMetadata, StagedImport } from './material';
 import { formatFromSourceFileName, type MaterialFormat } from './materialFormat';
 
 /** 仅用于显式版本迁移候选筛选的临时匹配信号,不是材料身份或查重键。 */
@@ -29,6 +29,7 @@ export interface VersionMigrationCandidate {
   material: ReadingMaterial;
   staged: StagedImport;
   metadata: SourceMetadata;
+  sourceCover?: CoverAsset | null;
 }
 
 /** 只有 EPUB 才进入该切片; PDF/Markdown 不会因元数据相似而进入迁移流程。 */

@@ -19,6 +19,8 @@ pub struct LibraryPaths {
     /// 普通删除移出的正文副本;仅永久清理才物理删除。
     pub trashed_dir: PathBuf,
     pub covers_dir: PathBuf,
+    /// EPUB 来源封面目录,与用户自定义封面目录分开保存。
+    pub source_covers_dir: PathBuf,
     pub recovery_dir: PathBuf,
     /// 显式 EPUB 版本迁移的本地恢复快照,不进入备份归档或同步边界。
     pub version_migration_dir: PathBuf,
@@ -33,6 +35,7 @@ impl LibraryPaths {
         let managed_dir = app_data_dir.join("library");
         let trashed_dir = app_data_dir.join("recycle-bin");
         let covers_dir = app_data_dir.join("covers");
+        let source_covers_dir = app_data_dir.join("source-covers");
         let recovery_dir = app_data_dir.join("recovery");
         let version_migration_dir = app_data_dir.join("version-migrations");
         let derived_toc_cache_dir = app_data_dir.join("derived-toc-cache");
@@ -40,6 +43,7 @@ impl LibraryPaths {
         std::fs::create_dir_all(&managed_dir)?;
         std::fs::create_dir_all(&trashed_dir)?;
         std::fs::create_dir_all(&covers_dir)?;
+        std::fs::create_dir_all(&source_covers_dir)?;
         std::fs::create_dir_all(&recovery_dir)?;
         std::fs::create_dir_all(&version_migration_dir)?;
         std::fs::create_dir_all(&derived_toc_cache_dir)?;
@@ -49,6 +53,7 @@ impl LibraryPaths {
             managed_dir,
             trashed_dir,
             covers_dir,
+            source_covers_dir,
             recovery_dir,
             version_migration_dir,
             derived_toc_cache_dir,
@@ -73,6 +78,10 @@ impl LibraryPaths {
 
     pub fn cover_path(&self, id: &str) -> PathBuf {
         self.covers_dir.join(id)
+    }
+
+    pub fn source_cover_path(&self, id: &str) -> PathBuf {
+        self.source_covers_dir.join(id)
     }
 
     pub fn recovery_path(&self, material_id: &str) -> Result<PathBuf, AppError> {
@@ -369,12 +378,17 @@ mod tests {
         assert!(paths.managed_dir.is_dir());
         assert!(paths.trashed_dir.is_dir());
         assert!(paths.covers_dir.is_dir());
+        assert!(paths.source_covers_dir.is_dir());
         assert!(paths.recovery_dir.is_dir());
         assert!(paths.version_migration_dir.is_dir());
         assert!(paths.derived_toc_cache_dir.is_dir());
         assert_eq!(paths.stash_path("abc"), dir.join("stash").join("abc"));
         assert_eq!(paths.managed_path("abc"), dir.join("library").join("abc"));
         assert_eq!(paths.cover_path("abc"), dir.join("covers").join("abc"));
+        assert_eq!(
+            paths.source_cover_path("abc"),
+            dir.join("source-covers").join("abc")
+        );
         assert_eq!(
             paths.recovery_path("abc").unwrap(),
             dir.join("recovery").join("abc.json")
