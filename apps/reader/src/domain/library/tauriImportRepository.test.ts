@@ -30,6 +30,7 @@ function createFakeTauriBackend(): {
   const materials = new Map<string, ReadingMaterial>();
   const byIdentity = new Map<string, ReadingMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
+  const trashedBytes = new Map<string, Uint8Array>();
   const covers = new Map<string, Uint8Array>();
   const trashed = new Set<string>();
   const markdownRecoveries = new Map<
@@ -49,6 +50,7 @@ function createFakeTauriBackend(): {
       override: { title: null, author: null, coverSource: null },
       coverSource: null,
       documentVersion: 0,
+      managedFileAvailable: true,
     };
   }
 
@@ -86,9 +88,21 @@ function createFakeTauriBackend(): {
           `${formatFromSourceFileName(staged.originalFileName)}:${staged.fingerprint}`,
         );
         if (existing) {
+          const stored = materials.get(existing.id) ?? existing;
+          const stagedBytes = stashed.get(staged.id)?.bytes;
+          if (!managedBytes.has(stored.id) && stagedBytes) {
+            managedBytes.set(stored.id, new Uint8Array(stagedBytes));
+          }
+          trashedBytes.delete(stored.id);
           stashed.delete(staged.id);
-          trashed.delete(existing.id);
-          return existing;
+          trashed.delete(stored.id);
+          const relinked = { ...stored, managedFileAvailable: managedBytes.has(stored.id) };
+          materials.set(stored.id, relinked);
+          byIdentity.set(
+            `${formatFromSourceFileName(relinked.sourceFileName)}:${relinked.fingerprint}`,
+            relinked,
+          );
+          return relinked;
         }
         const material = base(
           crypto.randomUUID(),
@@ -129,7 +143,14 @@ function createFakeTauriBackend(): {
           throw new Error('material missing');
         }
         trashed.add(materialId);
-        return current;
+        const managed = managedBytes.get(materialId);
+        if (managed) {
+          trashedBytes.set(materialId, managed);
+          managedBytes.delete(materialId);
+        }
+        const updated = { ...current, managedFileAvailable: false };
+        materials.set(materialId, updated);
+        return updated;
       }
       case IMPORT_COMMAND_NAMES.restoreMaterial: {
         const { materialId } = args as { materialId: string };
@@ -138,7 +159,34 @@ function createFakeTauriBackend(): {
           throw new Error('material missing');
         }
         trashed.delete(materialId);
-        return current;
+        const trashedCopy = trashedBytes.get(materialId);
+        if (trashedCopy) {
+          managedBytes.set(materialId, new Uint8Array(trashedCopy));
+          trashedBytes.delete(materialId);
+        }
+        const updated = { ...current, managedFileAvailable: managedBytes.has(materialId) };
+        materials.set(materialId, updated);
+        return updated;
+      }
+      case IMPORT_COMMAND_NAMES.relink: {
+        const { materialId, staged } = args as { materialId: string; staged: StagedImport };
+        const current = materials.get(materialId);
+        const stagedFile = stashed.get(staged.id);
+        if (
+          !current ||
+          !stagedFile ||
+          current.fingerprint !== staged.fingerprint ||
+          formatFromSourceFileName(current.sourceFileName) !==
+            formatFromSourceFileName(staged.originalFileName)
+        ) {
+          throw new Error('relink failed');
+        }
+        managedBytes.set(materialId, new Uint8Array(stagedFile.bytes));
+        trashedBytes.delete(materialId);
+        stashed.delete(staged.id);
+        const relinked = { ...current, managedFileAvailable: true };
+        materials.set(materialId, relinked);
+        return relinked;
       }
       case IMPORT_COMMAND_NAMES.purge: {
         const { materialId } = args as { materialId: string };
@@ -151,6 +199,7 @@ function createFakeTauriBackend(): {
           `${formatFromSourceFileName(current.sourceFileName)}:${current.fingerprint}`,
         );
         managedBytes.delete(materialId);
+        trashedBytes.delete(materialId);
         covers.delete(materialId);
         markdownRecoveries.delete(materialId);
         trashed.delete(materialId);
@@ -375,6 +424,7 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.listTrashed).toBe('list_trashed');
     expect(IMPORT_COMMAND_NAMES.trash).toBe('trash_material');
     expect(IMPORT_COMMAND_NAMES.restoreMaterial).toBe('restore_material');
+    expect(IMPORT_COMMAND_NAMES.relink).toBe('relink_material');
     expect(IMPORT_COMMAND_NAMES.purge).toBe('purge_material');
     expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');
     expect(IMPORT_COMMAND_NAMES.recover).toBe('recover_imports');

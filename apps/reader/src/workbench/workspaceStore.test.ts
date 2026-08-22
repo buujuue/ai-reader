@@ -91,6 +91,20 @@ describe('Workspace Store', () => {
     expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-2');
   });
 
+  it('永久清理材料时移除所有组中的标签与材料级排版状态', () => {
+    useWorkspaceStore.getState().openView('material-1');
+    useWorkspaceStore.getState().openView('material-2');
+    useWorkspaceStore.getState().setMaterialTypography('material-1', { fontSize: 22 });
+
+    useWorkspaceStore.getState().removeMaterial('material-1');
+
+    const state = useWorkspaceStore.getState();
+    expect(state.editorGroups.flatMap((group) => group.views)).toHaveLength(1);
+    expect(state.editorGroups[0]?.views[0]?.materialId).toBe('material-2');
+    expect(state.materialTypography).not.toHaveProperty('material-1');
+    expect(state.primaryMaterialId).toBe('material-2');
+  });
+
   it('重复打开同一本书会复用原标签并激活它', () => {
     const first = useWorkspaceStore.getState().openView('material-1');
     useWorkspaceStore.getState().openView('material-2');

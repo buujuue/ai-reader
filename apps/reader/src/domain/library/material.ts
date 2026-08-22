@@ -42,6 +42,8 @@ export interface ReadingMaterial {
   coverSource: string | null;
   /** 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,为 0)。 */
   documentVersion: number;
+  /** 托管副本是否存在且可供阅读;缺失时仍保留材料元数据与用户数据。 */
+  managedFileAvailable?: boolean;
 }
 
 /** Rust 暂存后的导入句柄。 */

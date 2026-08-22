@@ -7,9 +7,12 @@ import {
   type FoliateViewHostFactory,
 } from '../domain/reader/foliateViewHost';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
+import type { StagedImport } from '../domain/library/material';
 import { serializeWorkspaceState } from './workbenchCommands';
 import { useAnnotationStore } from './annotationStore';
 import { useLibraryStore } from './libraryStore';
+import { useMarkdownSessionStore } from './markdownSessionStore';
+import { useReaderRuntime } from './readerRuntime';
 import { importBooks, type ImportBookDependencies } from './importBook';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
@@ -39,6 +42,8 @@ export function registerLibraryCommands(
     syncVersionMigrationState?: boolean;
     /** Tauri 恢复/提交后重建活动 Reader Runtime，避免继续显示旧 EPUB 字节。 */
     reloadApplication?: () => void;
+    /** 浏览器降级模式重建当前材料视图，不依赖整页刷新。 */
+    reloadMaterialViews?: (materialId: string) => Promise<void>;
   },
 ): void {
   registry.register(COMMAND_IDS.libraryRefresh, async () => {
@@ -137,11 +142,65 @@ export function registerLibraryCommands(
       throw new Error('永久删除资料命令缺少材料 ID');
     }
     await dependencies.importRepository.purgeMaterial(materialId);
+    const viewIds = useWorkspaceStore
+      .getState()
+      .editorGroups.flatMap((group) =>
+        group.views.filter((view) => view.materialId === materialId).map((view) => view.id),
+      );
+    for (const viewId of viewIds) {
+      useReaderRuntime.getState().removeDocument(viewId);
+    }
+    useWorkspaceStore.getState().removeMaterial(materialId);
+    useAnnotationStore.getState().removeMaterialAnnotations(materialId);
+    useMarkdownSessionStore.getState().removeSession(materialId);
+    if (dependencies.workspaceRepository) {
+      await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    }
     useLibraryStore.getState().removeTrashedMaterial(materialId);
     useShellUiStore.getState().setStatusMessage('已永久删除');
   });
 
+  registry.register(COMMAND_IDS.libraryRelink, async (...args: unknown[]) => {
+    const materialId = args[0] as string | undefined;
+    if (!materialId) {
+      throw new Error('重新关联命令缺少材料 ID');
+    }
+    const sourcePaths = await dependencies.filePicker.pickBooks();
+    if (!sourcePaths || sourcePaths.length === 0) {
+      return;
+    }
+    if (sourcePaths.length !== 1) {
+      throw new Error('重新关联一次只能选择一份文件');
+    }
+
+    let staged: StagedImport | undefined;
+    try {
+      staged = await dependencies.importRepository.stageImport(sourcePaths[0]!);
+      const relinked = await dependencies.importRepository.relinkMaterial(materialId, staged);
+      const [materials, trashedMaterials] = await Promise.all([
+        dependencies.importRepository.listMaterials(),
+        dependencies.importRepository.listTrashed(),
+      ]);
+      useLibraryStore.getState().setMaterials(materials);
+      useLibraryStore.getState().setTrashedMaterials(trashedMaterials);
+      useShellUiStore.getState().setStatusMessage(`已重新关联:${relinked.title}`);
+      await dependencies.reloadMaterialViews?.(materialId);
+      dependencies.reloadApplication?.();
+    } catch (error) {
+      if (staged) {
+        await dependencies.importRepository.discardImport(staged).catch(() => undefined);
+      }
+      throw error;
+    }
+  });
+
   registry.register(COMMAND_IDS.libraryImport, async () => {
+    const unavailableMaterialIds = new Set(
+      useLibraryStore
+        .getState()
+        .materials.filter((material) => material.managedFileAvailable === false)
+        .map((material) => material.id),
+    );
     useLibraryStore.getState().setImporting(true);
     try {
       const outcomes = await importBooks(dependencies);
@@ -152,6 +211,20 @@ export function registerLibraryCommands(
 
       const materials = await dependencies.importRepository.listMaterials();
       useLibraryStore.getState().setMaterials(materials);
+
+      if (
+        outcomes.some(
+          (outcome) =>
+            outcome.kind === 'success' && unavailableMaterialIds.has(outcome.material.id),
+        )
+      ) {
+        for (const outcome of outcomes) {
+          if (outcome.kind === 'success' && unavailableMaterialIds.has(outcome.material.id)) {
+            await dependencies.reloadMaterialViews?.(outcome.material.id);
+          }
+        }
+        dependencies.reloadApplication?.();
+      }
 
       const succeeded = outcomes.filter((outcome) => outcome.kind === 'success').length;
       const migrationCandidates = outcomes.flatMap((outcome) =>

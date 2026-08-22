@@ -51,6 +51,7 @@ export interface WorkspaceStoreState {
   getEffectiveTypography: (materialId: string) => ReadingTypography;
   openView: (materialId: string) => string;
   closeView: (viewId: string) => void;
+  removeMaterial: (materialId: string) => void;
   setActiveView: (groupId: string, viewId: string) => void;
   setViewSourceMode: (viewId: string, sourceMode: boolean) => void;
   setViewLocation: (viewId: string, location: WorkspaceState['editorGroups'][number]['views'][number]['location']) => void;
@@ -304,6 +305,39 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
             : materials.length === 0
               ? null
               : state.primaryMaterialId,
+      };
+    });
+  },
+
+  removeMaterial: (materialId) => {
+    set((state) => {
+      const filteredGroups = state.editorGroups
+        .map((group) => {
+          const views = group.views.filter((view) => view.materialId !== materialId);
+          const activeViewId = views.some((view) => view.id === group.activeViewId)
+            ? group.activeViewId
+            : views.at(-1)?.id ?? null;
+          return { ...group, views, activeViewId };
+        })
+        .filter((group) => group.views.length > 0 || state.editorGroups.length === 1);
+      const nextGroups = filteredGroups.length > 0
+        ? filteredGroups
+        : [structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups[0]!)];
+      const activeGroupId = nextGroups.some((group) => group.id === state.activeEditorGroupId)
+        ? state.activeEditorGroupId
+        : nextGroups[0]?.id ?? state.activeEditorGroupId;
+      const materialTypography = { ...state.materialTypography };
+      delete materialTypography[materialId];
+      const remainingMaterialIds = uniqueMaterialIds(nextGroups);
+      return {
+        splitDirection: nextGroups.length === 2 ? state.splitDirection : null,
+        activeEditorGroupId: activeGroupId,
+        editorGroups: nextGroups,
+        primaryMaterialId:
+          state.primaryMaterialId === materialId
+            ? remainingMaterialIds[0] ?? null
+            : state.primaryMaterialId,
+        materialTypography,
       };
     });
   },

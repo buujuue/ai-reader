@@ -3,12 +3,15 @@ use tauri::State;
 
 use crate::db::import::{
     ImportRepository, MaterialMetadata, ReadingMaterial, StagedImport,
-    VersionMigrationCommitRequest, VersionMigrationCommitResult,
-    VersionMigrationSnapshot,
+    VersionMigrationCommitRequest, VersionMigrationCommitResult, VersionMigrationSnapshot,
 };
 use crate::db::DatabaseHandle;
 use crate::error::AppError;
 use crate::fs::LibraryPaths;
+
+fn set_managed_file_availability(material: &mut ReadingMaterial, paths: &LibraryPaths) {
+    material.managed_file_available = paths.managed_path(&material.id).is_file();
+}
 
 /// 暂存一份 EPUB:把外部文件全部字节流式复制到暂存区并计算完整内容指纹。
 /// 参数为外部文件路径,由前端系统文件选择器提供。
@@ -55,7 +58,9 @@ pub fn commit_import(
     metadata: MaterialMetadata,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).commit(&staged, &metadata, &paths)
+        let mut material = ImportRepository::new(connection).commit(&staged, &metadata, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -63,26 +68,43 @@ pub fn commit_import(
 #[tauri::command]
 pub fn list_materials(
     database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
 ) -> Result<Vec<ReadingMaterial>, AppError> {
-    database.with_connection(|connection| ImportRepository::new(connection).list_materials())
+    database.with_connection(|connection| {
+        let mut materials = ImportRepository::new(connection).list_materials()?;
+        for material in &mut materials {
+            set_managed_file_availability(material, &paths);
+        }
+        Ok(materials)
+    })
 }
 
-/// 列出回收站中的阅读材料(普通删除保留全部数据,仅从活跃书库隐藏)。
+/// 列出回收站中的阅读材料(普通删除移除正文副本,仅从活跃书库隐藏)。
 #[tauri::command]
 pub fn list_trashed(
     database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
 ) -> Result<Vec<ReadingMaterial>, AppError> {
-    database.with_connection(|connection| ImportRepository::new(connection).list_trashed())
+    database.with_connection(|connection| {
+        let mut materials = ImportRepository::new(connection).list_trashed()?;
+        for material in &mut materials {
+            set_managed_file_availability(material, &paths);
+        }
+        Ok(materials)
+    })
 }
 
-/// 普通删除:把阅读材料移入回收站并从活跃书库隐藏,保留 BookId、托管文件、封面与全部数据。
+/// 普通删除:把阅读材料移入回收站并移除正文副本,保留 BookId、封面与全部用户数据。
 #[tauri::command]
 pub fn trash_material(
     database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
     material_id: String,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).trash(&material_id)
+        let mut material = ImportRepository::new(connection).trash(&material_id, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -90,10 +112,29 @@ pub fn trash_material(
 #[tauri::command]
 pub fn restore_material(
     database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
     material_id: String,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).restore(&material_id)
+        let mut material = ImportRepository::new(connection).restore(&material_id, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
+    })
+}
+
+/// 用完整内容指纹相同的暂存文件恢复既有材料的托管副本。
+#[tauri::command]
+pub fn relink_material(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+    staged: StagedImport,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        let mut material =
+            ImportRepository::new(connection).relink(&material_id, &staged, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -132,7 +173,10 @@ pub fn save_markdown(
     content: String,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).save_markdown(&material_id, &content, &paths)
+        let mut material =
+            ImportRepository::new(connection).save_markdown(&material_id, &content, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -149,16 +193,19 @@ pub fn recover_imports(
 #[tauri::command]
 pub fn apply_material_metadata(
     database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
     material_id: String,
     title: Option<String>,
     author: Option<String>,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).apply_metadata(
+        let mut material = ImportRepository::new(connection).apply_metadata(
             &material_id,
             title.as_deref(),
             author.as_deref(),
-        )
+        )?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -171,11 +218,13 @@ pub fn set_material_cover(
     source_path: String,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).set_cover(
+        let mut material = ImportRepository::new(connection).set_cover(
             &material_id,
             std::path::Path::new(&source_path),
             &paths,
-        )
+        )?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -187,7 +236,9 @@ pub fn remove_material_cover(
     material_id: String,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).remove_cover(&material_id, &paths)
+        let mut material = ImportRepository::new(connection).remove_cover(&material_id, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -199,7 +250,10 @@ pub fn restore_source_metadata(
     material_id: String,
 ) -> Result<ReadingMaterial, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).restore_source(&material_id, &paths)
+        let mut material =
+            ImportRepository::new(connection).restore_source(&material_id, &paths)?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
     })
 }
 
@@ -224,7 +278,10 @@ pub fn commit_version_migration(
     request: VersionMigrationCommitRequest,
 ) -> Result<VersionMigrationCommitResult, AppError> {
     database.with_connection(|connection| {
-        ImportRepository::new(connection).commit_version_migration(&request, &paths)
+        let mut result =
+            ImportRepository::new(connection).commit_version_migration(&request, &paths)?;
+        set_managed_file_availability(&mut result.material, &paths);
+        Ok(result)
     })
 }
 
@@ -258,5 +315,7 @@ pub fn restore_version_migration_snapshot(
     paths: State<'_, LibraryPaths>,
     snapshot_id: String,
 ) -> Result<crate::db::import::VersionMigrationRestoreResult, AppError> {
-    database.restore_version_migration_snapshot(&paths, &snapshot_id)
+    let mut result = database.restore_version_migration_snapshot(&paths, &snapshot_id)?;
+    set_managed_file_availability(&mut result.material, &paths);
+    Ok(result)
 }

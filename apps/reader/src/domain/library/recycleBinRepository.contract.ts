@@ -6,7 +6,7 @@ const COVER_PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
 
 /**
  * 回收站契约:内存 Adapter 与 Tauri Adapter 必须通过同一组断言。
- * 验证「普通删除只隐藏、恢复保留原 BookId、重新导入同指纹恢复原记录、永久删除清空」的领域语义。
+ * 验证「普通删除移除正文副本但保留数据、恢复保留原 BookId、重新导入同指纹恢复原记录、永久删除清空」的领域语义。
  */
 export function recycleBinRepositoryContract(harness: ImportContractHarness): void {
   async function stageOne(repository = harness.createRepository()) {
@@ -35,10 +35,8 @@ export function recycleBinRepositoryContract(harness: ImportContractHarness): vo
     expect(trash).toHaveLength(1);
     expect(trash[0]?.id).toBe(material.id);
     expect(trash[0]?.title).toBe('整理标题');
-    // 托管文件与封面仍可读取(数据保留)。
-    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
-      'recycle-content',
-    );
+    // 正文副本按普通删除策略移除,用户数据与封面仍保留。
+    await expect(repository.readManagedFile(material.id)).rejects.toThrow();
     expect(await repository.readCover(material.id)).not.toBeNull();
   });
 
@@ -53,8 +51,27 @@ export function recycleBinRepositoryContract(harness: ImportContractHarness): vo
     expect(restored.title).toBe('整理标题');
     expect(restored.author).toBe('整理作者');
     expect(restored.source.title).toBe('来源标题');
+    expect(restored.managedFileAvailable).toBe(true);
+    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
+      'recycle-content',
+    );
     expect(await repository.listMaterials()).toHaveLength(1);
     expect(await repository.listTrashed()).toHaveLength(0);
+  });
+
+  it('相同完整内容指纹可以重新关联既有材料并保留原 BookId', async () => {
+    const { repository, material } = await stageOne();
+    const replacement = await harness.stage('replacement.epub', encodeUtf8('recycle-content'));
+
+    const relinked = await repository.relinkMaterial(material.id, replacement);
+
+    expect(relinked.id).toBe(material.id);
+    expect(relinked.fingerprint).toBe(material.fingerprint);
+    expect(relinked.managedFileAvailable).toBe(true);
+    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
+      'recycle-content',
+    );
+    await expect(repository.readManagedFile(replacement.id)).rejects.toThrow();
   });
 
   it('重新导入回收站中相同内容指纹时恢复原 BookId,而不是新建', async () => {

@@ -26,6 +26,7 @@ export const IMPORT_COMMAND_NAMES = {
   listTrashed: 'list_trashed',
   trash: 'trash_material',
   restoreMaterial: 'restore_material',
+  relink: 'relink_material',
   purge: 'purge_material',
   readManaged: 'read_managed_file',
   recover: 'recover_imports',
@@ -110,6 +111,8 @@ function assertMaterialShape(raw: unknown): ReadingMaterial {
     override: assertOverride(candidate.override),
     coverSource: candidate.coverSource ?? null,
     documentVersion: typeof candidate.documentVersion === 'number' ? candidate.documentVersion : 0,
+    managedFileAvailable:
+      typeof candidate.managedFileAvailable === 'boolean' ? candidate.managedFileAvailable : true,
   };
 }
 
@@ -208,6 +211,10 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     },
     async restoreMaterial(materialId: string): Promise<ReadingMaterial> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.restoreMaterial, { materialId });
+      return assertMaterialShape(raw);
+    },
+    async relinkMaterial(materialId: string, staged: StagedImport): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.relink, { materialId, staged });
       return assertMaterialShape(raw);
     },
     async purgeMaterial(materialId: string): Promise<void> {

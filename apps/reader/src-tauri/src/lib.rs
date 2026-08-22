@@ -63,6 +63,7 @@ pub fn run() {
             commands::import::list_trashed,
             commands::import::trash_material,
             commands::import::restore_material,
+            commands::import::relink_material,
             commands::import::purge_material,
             commands::import::read_managed_file,
             commands::import::save_markdown,

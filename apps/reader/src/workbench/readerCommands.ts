@@ -96,6 +96,11 @@ const defaultCanonicalSearchIndexCache = createCanonicalSearchIndexCache();
 const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
 
 function describeDocumentOpenError(error: unknown): string {
+  const rawMessage =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : String(error);
+  if (/托管书库|托管副本|managed file|managed.*missing/i.test(rawMessage)) {
+    return '正文当前不可用：托管副本已丢失。请重新导入相同内容的文件以重新关联；内容不同的文件请使用版本迁移。';
+  }
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
@@ -266,8 +271,8 @@ async function createMarkdownDocument(
   let bytes: Uint8Array;
   try {
     bytes = await dependencies.importRepository.readManagedFile(material.id);
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`读取 Markdown 失败：${describeDocumentOpenError(error)}`);
   }
   const text = new TextDecoder('utf-8').decode(bytes);
   // 打开 Markdown 视图时建立或复用该材料的共享会话(缓冲区、脏标记、已保存版本)。
@@ -346,6 +351,26 @@ async function disposeViewRuntime(viewId: string): Promise<void> {
   useReaderRuntime.getState().removeDocument(viewId);
 }
 
+/** 重新关联或恢复正文后,重建当前材料的活动阅读视图;浏览器降级不依赖整页刷新。 */
+export function reloadMaterialViews(
+  dependencies: ReaderCommandDependencies,
+  materialId: string,
+): Promise<void> {
+  return enqueueRuntimeTransition(async () => {
+    const material = useLibraryStore.getState().materials.find((item) => item.id === materialId);
+    if (!material) return;
+    const viewIds = useWorkspaceStore
+      .getState()
+      .editorGroups.flatMap((group) => group.views)
+      .filter((view) => view.materialId === materialId && isViewActive(view.id))
+      .map((view) => view.id);
+    for (const viewId of viewIds) {
+      await disposeViewRuntime(viewId);
+      await ensureActiveViewDocument(dependencies, viewId, material);
+    }
+  });
+}
+
 async function ensureActiveViewDocument(
   dependencies: ReaderCommandDependencies,
   viewId: string,
@@ -375,6 +400,14 @@ async function ensureActiveViewDocument(
     runtime.setDocumentState(viewId, {
       status: 'error',
       message: '找不到该阅读材料的托管文件。',
+    });
+    return null;
+  }
+  if (targetMaterial.managedFileAvailable === false) {
+    runtime.setDocumentState(viewId, {
+      status: 'error',
+      message:
+        '正文当前不可用：托管副本已丢失。请重新导入相同内容的文件以重新关联；内容不同的文件请使用版本迁移。',
     });
     return null;
   }

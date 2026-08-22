@@ -13,6 +13,8 @@ pub struct LibraryPaths {
     pub app_data_dir: PathBuf,
     pub stash_dir: PathBuf,
     pub managed_dir: PathBuf,
+    /// 普通删除移出的正文副本;仅永久清理才物理删除。
+    pub trashed_dir: PathBuf,
     pub covers_dir: PathBuf,
     pub recovery_dir: PathBuf,
     /// 显式 EPUB 版本迁移的本地恢复快照,不进入备份归档或同步边界。
@@ -26,12 +28,14 @@ impl LibraryPaths {
     pub fn new(app_data_dir: &Path) -> Result<Self, AppError> {
         let stash_dir = app_data_dir.join("stash");
         let managed_dir = app_data_dir.join("library");
+        let trashed_dir = app_data_dir.join("recycle-bin");
         let covers_dir = app_data_dir.join("covers");
         let recovery_dir = app_data_dir.join("recovery");
         let version_migration_dir = app_data_dir.join("version-migrations");
         let derived_toc_cache_dir = app_data_dir.join("derived-toc-cache");
         std::fs::create_dir_all(&stash_dir)?;
         std::fs::create_dir_all(&managed_dir)?;
+        std::fs::create_dir_all(&trashed_dir)?;
         std::fs::create_dir_all(&covers_dir)?;
         std::fs::create_dir_all(&recovery_dir)?;
         std::fs::create_dir_all(&version_migration_dir)?;
@@ -40,6 +44,7 @@ impl LibraryPaths {
             app_data_dir: app_data_dir.to_path_buf(),
             stash_dir,
             managed_dir,
+            trashed_dir,
             covers_dir,
             recovery_dir,
             version_migration_dir,
@@ -57,6 +62,10 @@ impl LibraryPaths {
 
     pub fn managed_path(&self, id: &str) -> PathBuf {
         self.managed_dir.join(id)
+    }
+
+    pub fn trashed_path(&self, id: &str) -> PathBuf {
+        self.trashed_dir.join(id)
     }
 
     pub fn cover_path(&self, id: &str) -> PathBuf {
@@ -202,6 +211,43 @@ pub fn atomic_copy(path: &Path, target: &Path) -> Result<(), AppError> {
     }
 }
 
+/// 从应用私有文件流式复制并原子替换目标,兼容 Windows 目标文件已存在的情况。
+/// 目标替换失败时尽力恢复原目标,避免重新关联把已有托管副本变成半成品。
+pub fn atomic_copy_replace(path: &Path, target: &Path) -> Result<(), AppError> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let temp_path = parent.join(format!(".{file_name}.replace-tmp-{}", uuid::Uuid::new_v4()));
+    let backup_path = parent.join(format!(".{file_name}.replace-bak-{}", uuid::Uuid::new_v4()));
+    stream_copy_with_fingerprint(path, &temp_path)?;
+
+    let had_existing = target.exists();
+    if had_existing {
+        if let Err(error) = std::fs::rename(target, &backup_path) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(classify_io_error(error));
+        }
+    }
+
+    match std::fs::rename(&temp_path, target) {
+        Ok(()) => {
+            if had_existing {
+                let _ = std::fs::remove_file(&backup_path);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp_path);
+            if had_existing {
+                let _ = std::fs::rename(&backup_path, target);
+            }
+            Err(classify_io_error(error))
+        }
+    }
+}
+
 /// 把用户选择的导出内容先完整写入临时文件,再替换目标文件。
 /// 目标已存在时先移到同目录备份,从而兼容 Windows 的 rename 语义并避免留下半份导出。
 pub fn atomic_write_export_file(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
@@ -290,6 +336,7 @@ mod tests {
 
         assert!(paths.stash_dir.is_dir());
         assert!(paths.managed_dir.is_dir());
+        assert!(paths.trashed_dir.is_dir());
         assert!(paths.covers_dir.is_dir());
         assert!(paths.recovery_dir.is_dir());
         assert!(paths.version_migration_dir.is_dir());

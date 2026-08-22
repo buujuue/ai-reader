@@ -35,10 +35,11 @@ export function createInMemoryImportRepository(
   const materials = new Map<string, InternalMaterial>();
   const byIdentity = new Map<string, InternalMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
+  const trashedBytes = new Map<string, Uint8Array>();
   const stagedBytes = new Map<string, Uint8Array>();
   const overrides = new Map<string, MaterialOverride>();
   const covers = new Map<string, Uint8Array>();
-  /** 回收站:id 集合。普通删除只隐藏,保留全部数据;恢复即移除。 */
+  /** 回收站:id 集合。普通删除隐藏入口并移除正文副本;恢复即移除标记。 */
   const trashed = new Set<string>();
   /** pending 记录:id → 暂存句柄。stage 时写入,commit/discard/recover 时移除。 */
   const pending = new Map<string, { originalFileName: string; fingerprint: string }>();
@@ -70,6 +71,7 @@ export function createInMemoryImportRepository(
       language: internal.source.language,
       coverSource: override.coverSource ?? null,
       documentVersion: internal.documentVersion,
+      managedFileAvailable: managedBytes.has(internal.id),
     };
   }
 
@@ -105,6 +107,11 @@ export function createInMemoryImportRepository(
         materialIdentityKey(stagedImport.fingerprint, stagedImport.originalFileName),
       );
       if (existing) {
+        const stagedBytesForExisting = stagedBytes.get(stagedImport.id);
+        if (!managedBytes.has(existing.id) && stagedBytesForExisting) {
+          managedBytes.set(existing.id, new Uint8Array(stagedBytesForExisting));
+        }
+        trashedBytes.delete(existing.id);
         stagedBytes.delete(stagedImport.id);
         pending.delete(stagedImport.id);
         // 回收站中相同内容指纹时恢复原 BookId,不新建。
@@ -155,6 +162,11 @@ export function createInMemoryImportRepository(
         throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
       }
       trashed.add(materialId);
+      const managed = managedBytes.get(materialId);
+      if (managed) {
+        trashedBytes.set(materialId, managed);
+        managedBytes.delete(materialId);
+      }
       return toMaterial(internal);
     },
 
@@ -164,6 +176,31 @@ export function createInMemoryImportRepository(
         throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
       }
       trashed.delete(materialId);
+      const trashedCopy = trashedBytes.get(materialId);
+      if (trashedCopy) {
+        managedBytes.set(materialId, new Uint8Array(trashedCopy));
+        trashedBytes.delete(materialId);
+      }
+      return toMaterial(internal);
+    },
+
+    async relinkMaterial(materialId, stagedImport): Promise<ReadingMaterial> {
+      const internal = requireInternal(materials, materialId);
+      if (
+        internal.fingerprint !== stagedImport.fingerprint ||
+        formatFromSourceFileName(internal.sourceFileName) !==
+          formatFromSourceFileName(stagedImport.originalFileName)
+      ) {
+        throw new Error('重新关联文件的完整内容指纹不匹配');
+      }
+      const bytes = stagedBytes.get(stagedImport.id);
+      if (!bytes) {
+        throw new Error('重新关联暂存文件不存在');
+      }
+      managedBytes.set(materialId, new Uint8Array(bytes));
+      trashedBytes.delete(materialId);
+      stagedBytes.delete(stagedImport.id);
+      pending.delete(stagedImport.id);
       return toMaterial(internal);
     },
 
@@ -175,9 +212,15 @@ export function createInMemoryImportRepository(
       materials.delete(materialId);
       byIdentity.delete(materialIdentityKey(internal.fingerprint, internal.sourceFileName));
       managedBytes.delete(materialId);
+      trashedBytes.delete(materialId);
       covers.delete(materialId);
       overrides.delete(materialId);
       markdownRecoveries.delete(materialId);
+      for (const [snapshotId, stored] of versionMigrationSnapshots) {
+        if (stored.snapshot.materialId === materialId) {
+          versionMigrationSnapshots.delete(snapshotId);
+        }
+      }
       trashed.delete(materialId);
     },
 

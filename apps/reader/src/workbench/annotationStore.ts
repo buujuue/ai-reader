@@ -16,6 +16,8 @@ export interface AnnotationStoreState {
   upsertAnnotation: (annotation: Annotation) => void;
   /** 从某材料集合中移除一条批注(逻辑删除后不再展示)。 */
   removeAnnotation: (materialId: string, annotationId: string) => void;
+  /** 永久清理材料时移除该材料的运行时批注缓存。 */
+  removeMaterialAnnotations: (materialId: string) => void;
   /** 读取某材料的批注集合。 */
   getMaterialAnnotations: (materialId: string) => Annotation[];
   resetToDefault: () => void;
@@ -49,6 +51,14 @@ export const useAnnotationStore = create<AnnotationStoreState>()((set, get) => (
           [materialId]: existing.filter((item) => item.id !== annotationId),
         },
       };
+    }),
+
+  removeMaterialAnnotations: (materialId) =>
+    set((state) => {
+      if (!(materialId in state.byMaterial)) return state;
+      const byMaterial = { ...state.byMaterial };
+      delete byMaterial[materialId];
+      return { byMaterial };
     }),
 
   getMaterialAnnotations: (materialId) => get().byMaterial[materialId] ?? [],

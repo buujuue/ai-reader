@@ -3,7 +3,9 @@ import {
   Archive,
   BookOpenCheck,
   FilePlus2,
+  FileWarning,
   LibraryBig,
+  Link2,
   MoreHorizontal,
   Pencil,
   RotateCcw,
@@ -106,6 +108,13 @@ export function PrimarySidebar() {
     void commands.execute(COMMAND_IDS.libraryImport).catch(() => undefined);
   };
 
+  const handleRelink = (materialId: string) => {
+    void commands.execute(COMMAND_IDS.libraryRelink, materialId).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : '请重新选择相同内容的文件';
+      useShellUiStore.getState().setStatusMessage(`重新关联失败:${message}`);
+    });
+  };
+
   const focusMaterial = (materialId: string) => {
     setFocusedMaterialId(materialId);
   };
@@ -152,6 +161,19 @@ export function PrimarySidebar() {
                     <span className="library-more-menu-eyebrow">当前书卡</span>
                     <strong title={focusedMaterial.title}>{focusedMaterial.title}</strong>
                   </div>
+                  {focusedMaterial.managedFileAvailable === false ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        handleRelink(focusedMaterial.id);
+                        closeMoreMenu();
+                      }}
+                    >
+                      <Link2 size={14} aria-hidden />
+                      <span>重新关联正文</span>
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     role="menuitem"
@@ -265,7 +287,11 @@ export function PrimarySidebar() {
                         openMoreMenuForMaterial(material.id);
                       }
                     }}
-                    title={`打开 ${material.title}`}
+                    title={
+                      material.managedFileAvailable === false
+                        ? `${material.title}（正文不可用，可重新导入相同文件以恢复）`
+                        : `打开 ${material.title}`
+                    }
                     aria-label={`打开 ${material.title}`}
                     className="flex w-full flex-col gap-1.5 rounded-md text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
                   >
@@ -277,8 +303,21 @@ export function PrimarySidebar() {
                       <p className="truncate text-[10px] text-zinc-500">
                         {material.author ?? '未知作者'}
                       </p>
-                      <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-zinc-500">
-                        {formatLabel(format)}
+                      <p
+                        className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium tracking-wide ${
+                          material.managedFileAvailable === false
+                            ? 'text-amber-300'
+                            : 'uppercase text-zinc-500'
+                        }`}
+                      >
+                        {material.managedFileAvailable === false ? (
+                          <>
+                            <FileWarning size={10} aria-hidden />
+                            正文不可用
+                          </>
+                        ) : (
+                          formatLabel(format)
+                        )}
                       </p>
                     </div>
                   </button>

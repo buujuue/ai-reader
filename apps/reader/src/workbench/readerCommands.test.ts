@@ -122,6 +122,27 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.has(group.views[0]!.id)).toBe(true);
   });
 
+  it('托管副本缺失时保留标签并明确提示正文不可用', async () => {
+    const material = {
+      ...(await setupWithEpub()),
+      managedFileAvailable: false,
+    };
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await expect(registry.execute(COMMAND_IDS.libraryOpenBook, material)).rejects.toThrow(
+      '无法打开阅读材料',
+    );
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({
+      status: 'error',
+      message: expect.stringContaining('正文当前不可用'),
+    });
+  });
+
   it('阅读文档打开失败时把错误写入运行时状态而不是留下无提示空白', async () => {
     const material = await setupWithEpub();
     const openError = new Error('WebView 阅读器初始化失败');

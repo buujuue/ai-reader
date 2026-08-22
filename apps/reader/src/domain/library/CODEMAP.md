@@ -4,13 +4,13 @@
 
 阅读材料领域模型与导入契约，是「托管导入一份 EPUB」的核心。
 
-- `material.ts`：`ReadingMaterial`（稳定 BookId，含 `source` 来源快照、`override` 覆盖值与 `title/author/language/coverSource` 有效元数据）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
+- `material.ts`：`ReadingMaterial`（稳定 BookId，含 `source` 来源快照、`override` 覆盖值、有效元数据和托管副本可用状态）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
 - `materialFormat.ts`：`formatFromSourceFileName` 从源文件扩展名推断材料格式（epub/pdf/markdown/unknown），`formatLabel` 输出简体中文标签；不依赖跨 TS/Rust 契约新增字段。
 - `libraryFilter.ts`：`filterMaterialsByQuery` 基于有效元数据（title/author）即时筛选书库的纯函数。
-- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。
-- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、元数据、`save_markdown`、Markdown 恢复命令和版本迁移命令，并校验跨端 DTO 形状。
+- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。
+- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、同指纹 `relink_material`、元数据、`save_markdown`、Markdown 恢复命令和版本迁移命令，并校验跨端 DTO 形状。
 - `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。
-- `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并按「完整指纹 + 格式」模拟 pending/ready 查重、来源快照/覆盖值合并与回收站（普通删除只隐藏、恢复/永久删除）。
+- `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并按「完整指纹 + 格式」模拟 pending/ready 查重、来源快照/覆盖值合并、托管副本缺失后的重新关联与回收站（普通删除移除正文副本、恢复/永久删除同步清理迁移快照）。
 - `importRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的导入、正式 Markdown 保存与恢复快照契约测试。
 - `metadataRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的元数据覆盖契约测试。
 - `recycleBinRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的回收站契约测试。

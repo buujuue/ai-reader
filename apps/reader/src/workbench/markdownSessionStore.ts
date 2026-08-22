@@ -42,6 +42,8 @@ export interface MarkdownSessionStoreState {
   discard: (materialId: string, savedText: string) => void;
   /** 用户确认恢复快照后,把快照载入共享脏缓冲区。 */
   restoreRecovery: (materialId: string, text: string, savedVersion: number) => void;
+  /** 永久清理材料时移除运行时 Markdown 缓冲区。 */
+  removeSession: (materialId: string) => void;
   /** 读取一个会话;不存在时返回 null。 */
   getSession: (materialId: string) => MarkdownDocumentSession | null;
   resetToDefault: () => void;
@@ -116,6 +118,14 @@ export const useMarkdownSessionStore = create<MarkdownSessionStoreState>()(
           [materialId]: { materialId, text, dirty: true, savedVersion },
         },
       })),
+
+    removeSession: (materialId) =>
+      set((state) => {
+        if (!state.sessions[materialId]) return state;
+        const sessions = { ...state.sessions };
+        delete sessions[materialId];
+        return { sessions };
+      }),
 
     getSession: (materialId) => get().sessions[materialId] ?? null,
 

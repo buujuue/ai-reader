@@ -19,6 +19,7 @@ import { registerMarkdownCommands } from '../workbench/markdownCommands';
 import {
   registerReaderCommands,
   flushReaderPositions,
+  reloadMaterialViews,
   type ReaderCommandDependencies,
 } from '../workbench/readerCommands';
 import { registerWorkbenchCommands } from '../workbench/workbenchCommands';
@@ -240,6 +241,17 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
       : createEpubDerivedTocCache());
 
   const commands = new CommandRegistry();
+  const readerCommandDependencies: ReaderCommandDependencies = {
+    importRepository: importServices.importRepository,
+    workspaceRepository,
+    annotationRepository,
+    ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
+    externalUrlOpener,
+    pdfLib: options.pdfLib,
+    pdfRasterize: options.pdfRasterize,
+    epubNativeAccelerator,
+    epubDerivedTocCache,
+  };
   registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
   registerBackupCommands(commands, {
     backupRepository,
@@ -254,6 +266,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     annotationRepository,
     workspaceRepository,
     syncVersionMigrationState: !isTauriRuntime(),
+    reloadMaterialViews: (materialId) => reloadMaterialViews(readerCommandDependencies, materialId),
     ...(isTauriRuntime() ? { reloadApplication: () => window.location.reload() } : {}),
     ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
   });
@@ -272,30 +285,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
   if (typeof window !== 'undefined') {
     (window as unknown as { __annotationStore: unknown }).__annotationStore = useAnnotationStore;
   }
-  if (options.viewHostFactory) {
-    registerReaderCommands(commands, {
-      importRepository: importServices.importRepository,
-      workspaceRepository,
-      annotationRepository,
-      viewHostFactory: options.viewHostFactory,
-      externalUrlOpener,
-      pdfLib: options.pdfLib,
-      pdfRasterize: options.pdfRasterize,
-      epubNativeAccelerator,
-      epubDerivedTocCache,
-    });
-  } else {
-    registerReaderCommands(commands, {
-      importRepository: importServices.importRepository,
-      workspaceRepository,
-      annotationRepository,
-      externalUrlOpener,
-      pdfLib: options.pdfLib,
-      pdfRasterize: options.pdfRasterize,
-      epubNativeAccelerator,
-      epubDerivedTocCache,
-    });
-  }
+  registerReaderCommands(commands, readerCommandDependencies);
   return {
     commands,
     workspaceRepository,
