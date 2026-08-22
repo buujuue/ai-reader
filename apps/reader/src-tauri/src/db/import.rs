@@ -7,7 +7,7 @@ use crate::db::annotations::{Annotation, AnnotationRepository};
 use crate::error::{classify_io_error, AppError};
 use crate::fs::{
     atomic_copy, atomic_copy_replace, atomic_write, fingerprint_bytes, fingerprint_file,
-    read_file_bytes, stream_copy_with_fingerprint, LibraryPaths,
+    read_file_bytes, read_file_range, stream_copy_with_fingerprint, LibraryPaths,
 };
 
 /// Rust 暂存后的导入句柄。`id` 同时作为暂存文件名,TS 端据此读取字节检查格式。
@@ -26,6 +26,14 @@ pub struct MaterialMetadata {
     pub title: String,
     pub author: Option<String>,
     pub language: Option<String>,
+}
+
+/// 托管材料范围读取的同步元数据。正文仍通过 read_managed_range 按需读取。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedFileInfo {
+    pub name: String,
+    pub size: u64,
 }
 
 /// 用户确认后的显式 EPUB 版本迁移载荷。
@@ -201,6 +209,39 @@ impl<'a> ImportRepository<'a> {
         read_file_bytes(&managed_path)
     }
 
+    /// 返回活跃托管材料的名称与字节长度，不暴露内部路径。
+    pub fn managed_file_info(
+        &self,
+        material_id: &str,
+        paths: &LibraryPaths,
+    ) -> Result<ManagedFileInfo, AppError> {
+        self.ensure_active(material_id)?;
+        let material = self
+            .find_by_id(material_id)?
+            .ok_or_else(|| AppError::MaterialNotFound(material_id.to_string()))?;
+        let managed_path = self.managed_file_path(material_id, paths)?;
+        let size = std::fs::metadata(&managed_path)
+            .map_err(classify_io_error)?
+            .len();
+        Ok(ManagedFileInfo {
+            name: material.source_file_name,
+            size,
+        })
+    }
+
+    /// 按半开区间读取活跃托管材料，不接受前端路径。
+    pub fn read_managed_range(
+        &self,
+        material_id: &str,
+        offset: u64,
+        length: u64,
+        paths: &LibraryPaths,
+    ) -> Result<Vec<u8>, AppError> {
+        self.ensure_active(material_id)?;
+        let managed_path = self.managed_file_path(material_id, paths)?;
+        read_file_range(&managed_path, offset, length)
+    }
+
     /// 返回已提交托管文件的内部路径,只供 Rust 原生机械读取使用。
     /// 路径不跨 typed Command 边界,前端仍只使用稳定 BookId。
     pub fn managed_file_path(
@@ -208,6 +249,13 @@ impl<'a> ImportRepository<'a> {
         material_id: &str,
         paths: &LibraryPaths,
     ) -> Result<std::path::PathBuf, AppError> {
+        let mut components = Path::new(material_id).components();
+        let is_single_normal_component =
+            matches!(components.next(), Some(std::path::Component::Normal(_)))
+                && components.next().is_none();
+        if material_id.is_empty() || !is_single_normal_component {
+            return Err(AppError::InvalidMaterialId(material_id.to_string()));
+        }
         if self.find_by_id(material_id)?.is_none() {
             return Err(AppError::ManagedFileMissing(material_id.to_string()));
         }
@@ -215,7 +263,12 @@ impl<'a> ImportRepository<'a> {
         if !managed_path.is_file() {
             return Err(AppError::ManagedFileMissing(material_id.to_string()));
         }
-        Ok(managed_path)
+        let managed_root = std::fs::canonicalize(&paths.managed_dir).map_err(classify_io_error)?;
+        let canonical_path = std::fs::canonicalize(&managed_path).map_err(classify_io_error)?;
+        if canonical_path.parent() != Some(managed_root.as_path()) {
+            return Err(AppError::ManagedFileMissing(material_id.to_string()));
+        }
+        Ok(canonical_path)
     }
 
     /// 正式保存 Markdown 内容(ADR-0009):用托管文件原子替换、递增文档版本并更新
@@ -1894,6 +1947,89 @@ mod tests {
         let bytes = repository.read_managed(&material.id, &paths).unwrap();
 
         assert_eq!(bytes, b"managed-epub-bytes");
+    }
+
+    #[test]
+    fn managed_file_info_returns_name_and_size_without_a_path() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"managed-epub-bytes");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        let info = repository.managed_file_info(&material.id, &paths).unwrap();
+
+        assert_eq!(info.name, "book.epub");
+        assert_eq!(info.size, b"managed-epub-bytes".len() as u64);
+    }
+
+    #[test]
+    fn read_managed_range_uses_half_open_offsets_and_rejects_invalid_requests() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"0123456789");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .read_managed_range(&material.id, 2, 4, &paths)
+                .unwrap(),
+            b"2345"
+        );
+        assert_eq!(
+            repository
+                .read_managed_range(&material.id, 10, 0, &paths)
+                .unwrap(),
+            b""
+        );
+        assert!(matches!(
+            repository.read_managed_range(&material.id, 0, 8 * 1024 * 1024 + 1, &paths),
+            Err(AppError::ManagedRangeTooLarge(_))
+        ));
+        assert!(matches!(
+            repository.read_managed_range(&material.id, 8, 3, &paths),
+            Err(AppError::ManagedRangeOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn read_managed_range_rejects_unknown_trashed_and_missing_material_files() {
+        let connection = migrated_connection();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let source = write_source(&paths, "book.epub", b"content");
+        let staged = repository.stage(&source, &paths).unwrap();
+        let material = repository
+            .commit(&staged, &MaterialMetadata::default(), &paths)
+            .unwrap();
+
+        assert!(matches!(
+            repository.read_managed_range("missing", 0, 1, &paths),
+            Err(AppError::MaterialNotFound(_))
+        ));
+        assert!(matches!(
+            repository.managed_file_path("../outside", &paths),
+            Err(AppError::InvalidMaterialId(_))
+        ));
+        repository.trash(&material.id, &paths).unwrap();
+        assert!(matches!(
+            repository.read_managed_range(&material.id, 0, 1, &paths),
+            Err(AppError::MaterialNotFound(_))
+        ));
+
+        let restored = repository.restore(&material.id, &paths).unwrap();
+        std::fs::remove_file(paths.managed_path(&restored.id)).unwrap();
+        assert!(matches!(
+            repository.read_managed_range(&restored.id, 0, 1, &paths),
+            Err(AppError::ManagedFileMissing(_))
+        ));
     }
 
     #[test]

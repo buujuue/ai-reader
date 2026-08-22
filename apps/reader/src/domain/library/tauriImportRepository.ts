@@ -16,6 +16,7 @@ import type {
   VersionMigrationSnapshot,
 } from './versionMigrationPersistence';
 import type { WorkspaceState } from '../workspace/workspaceState';
+import { ManagedFileSource, managedFileTypeFromName } from './managedFileSource';
 
 export const IMPORT_COMMAND_NAMES = {
   stage: 'stage_import',
@@ -29,6 +30,8 @@ export const IMPORT_COMMAND_NAMES = {
   relink: 'relink_material',
   purge: 'purge_material',
   readManaged: 'read_managed_file',
+  managedInfo: 'get_managed_file_info',
+  readManagedRange: 'read_managed_file_range',
   recover: 'recover_imports',
   applyMetadata: 'apply_material_metadata',
   setCover: 'set_material_cover',
@@ -121,6 +124,26 @@ function assertMaterialList(raw: unknown): ReadingMaterial[] {
     throw new Error('materials payload is not an array');
   }
   return raw.map(assertMaterialShape);
+}
+
+interface ManagedFileInfo {
+  name: string;
+  size: number;
+}
+
+function assertManagedFileInfo(raw: unknown): ManagedFileInfo {
+  const candidate = raw as Partial<ManagedFileInfo> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.name !== 'string' ||
+    typeof candidate.size !== 'number' ||
+    !Number.isSafeInteger(candidate.size) ||
+    candidate.size < 0
+  ) {
+    throw new Error('managed file info payload is malformed');
+  }
+  return { name: candidate.name, size: candidate.size };
 }
 
 function assertAnnotationList(raw: unknown): Annotation[] {
@@ -226,6 +249,29 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
         throw new Error('managed file bytes payload is not a string');
       }
       return base64ToBytes(raw);
+    },
+    async openManagedFileSource(materialId: string): Promise<ManagedFileSource> {
+      const info = assertManagedFileInfo(
+        await invokeFn(IMPORT_COMMAND_NAMES.managedInfo, { materialId }),
+      );
+      return new ManagedFileSource(
+        {
+          name: info.name,
+          size: info.size,
+          type: managedFileTypeFromName(info.name),
+        },
+        async (offset, length) => {
+          const raw = await invokeFn(IMPORT_COMMAND_NAMES.readManagedRange, {
+            materialId,
+            offset,
+            length,
+          });
+          if (typeof raw !== 'string') {
+            throw new Error('managed file range bytes payload is not a string');
+          }
+          return base64ToBytes(raw);
+        },
+      );
     },
     async recoverImports(): Promise<void> {
       await invokeFn(IMPORT_COMMAND_NAMES.recover);

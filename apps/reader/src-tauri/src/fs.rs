@@ -1,10 +1,13 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 use crate::error::{classify_io_error, AppError};
+
+/// 单次托管材料范围读取的硬上限，避免 IPC 请求把大文件重新变成全量读取。
+pub const MAX_MANAGED_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// 应用托管文件布局。所有阅读材料与暂存文件都位于应用数据目录下的私有空间,
 /// 外部原文件永不被修改或删除。
@@ -167,6 +170,34 @@ pub fn fingerprint_bytes(bytes: &[u8]) -> String {
 /// 不用于大文件指纹计算(那部分始终走流式)。
 pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>, AppError> {
     std::fs::read(path).map_err(classify_io_error)
+}
+
+/// 按半开区间 `[offset, offset + length)` 读取托管文件的一段内容。
+/// 该函数只接受已由数据库层解析出的私有托管路径，且在分配缓冲区前完成
+/// 单次上限与文件长度校验。
+pub fn read_file_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, AppError> {
+    if length > MAX_MANAGED_RANGE_BYTES {
+        return Err(AppError::ManagedRangeTooLarge(length));
+    }
+
+    let size = std::fs::metadata(path).map_err(classify_io_error)?.len();
+    if offset > size || length > size - offset {
+        return Err(AppError::ManagedRangeOutOfBounds {
+            offset,
+            length,
+            size,
+        });
+    }
+
+    let length = usize::try_from(length).map_err(|_| AppError::ManagedRangeTooLarge(length))?;
+    let mut file = File::open(path).map_err(classify_io_error)?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(classify_io_error)?;
+    let mut bytes = vec![0u8; length];
+    if length > 0 {
+        file.read_exact(&mut bytes).map_err(classify_io_error)?;
+    }
+    Ok(bytes)
 }
 
 /// 原子写入:把字节写入同一目录下的临时文件,再原子替换目标路径。
@@ -397,6 +428,36 @@ mod tests {
         let error = stream_copy_with_fingerprint(&dir.join("missing.bin"), &dir.join("out.bin"))
             .unwrap_err();
         assert!(matches!(error, AppError::Io(_)));
+    }
+
+    #[test]
+    fn read_file_range_uses_half_open_offsets_and_allows_empty_ranges() {
+        let dir = temp_dir();
+        let path = dir.join("range.bin");
+        std::fs::write(&path, b"0123456789").unwrap();
+
+        assert_eq!(read_file_range(&path, 2, 4).unwrap(), b"2345");
+        assert_eq!(read_file_range(&path, 10, 0).unwrap(), b"");
+    }
+
+    #[test]
+    fn read_file_range_rejects_limits_and_bounds_before_reading() {
+        let dir = temp_dir();
+        let path = dir.join("range.bin");
+        std::fs::write(&path, b"0123456789").unwrap();
+
+        assert!(matches!(
+            read_file_range(&path, 0, MAX_MANAGED_RANGE_BYTES + 1),
+            Err(AppError::ManagedRangeTooLarge(_))
+        ));
+        assert!(matches!(
+            read_file_range(&path, 8, 3),
+            Err(AppError::ManagedRangeOutOfBounds { .. })
+        ));
+        assert!(matches!(
+            read_file_range(&path, 11, 0),
+            Err(AppError::ManagedRangeOutOfBounds { .. })
+        ));
     }
 
     #[test]

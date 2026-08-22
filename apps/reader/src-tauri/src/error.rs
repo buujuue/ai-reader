@@ -24,6 +24,10 @@ pub enum AppError {
     StagedFileMissing(String),
     #[error("托管书库中不存在该阅读材料:{0}")]
     ManagedFileMissing(String),
+    #[error("托管材料单次范围读取超过 8 MiB 上限:{0} bytes")]
+    ManagedRangeTooLarge(u64),
+    #[error("托管材料范围越界:offset={offset},length={length},size={size}")]
+    ManagedRangeOutOfBounds { offset: u64, length: u64, size: u64 },
     #[error("阅读材料不存在:{0}")]
     MaterialNotFound(String),
     #[error("阅读材料内容与已有材料重复:{0}")]

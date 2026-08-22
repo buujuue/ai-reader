@@ -5,6 +5,7 @@ import type {
   VersionMigrationRestoreResult,
   VersionMigrationSnapshot,
 } from './versionMigrationPersistence';
+import type { ManagedFileSource } from './managedFileSource';
 
 export type MarkdownRecoveryStatus = 'available' | 'conflict' | 'corrupt';
 
@@ -44,6 +45,11 @@ export interface ImportRepository {
   purgeMaterial(materialId: string): Promise<void>;
   /** 读取已提交托管文件的原始字节,交给前端 BookDocument 打开阅读。 */
   readManagedFile(materialId: string): Promise<Uint8Array>;
+  /**
+   * 打开只读的惰性托管材料来源。来源只暴露 File/Blob 兼容能力，格式层不接触
+   * Tauri 命令、数据库或托管文件路径；现有 readManagedFile 全量读取继续保留。
+   */
+  openManagedFileSource(materialId: string): Promise<ManagedFileSource>;
   /** 恢复中断的导入:清理暂存区与孤儿托管文件。 */
   recoverImports(): Promise<void>;
   /** 覆盖/清除标题与作者。title/author 为 null 表示清除对应覆盖并回落到来源。返回更新后的有效材料。 */

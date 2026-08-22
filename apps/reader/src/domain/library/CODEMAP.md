@@ -8,7 +8,8 @@
 - `materialFormat.ts`：`formatFromSourceFileName` 从源文件扩展名推断材料格式（epub/pdf/markdown/unknown），`formatLabel` 输出简体中文标签；不依赖跨 TS/Rust 契约新增字段。
 - `libraryFilter.ts`：`filterMaterialsByQuery` 基于有效元数据（title/author）即时筛选书库的纯函数。
 - `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。
-- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、同指纹 `relink_material`、元数据、`save_markdown`、Markdown 恢复命令和版本迁移命令，并校验跨端 DTO 形状。
+- `managedFileSource.ts`：只读、File/Blob 兼容的托管材料范围来源；维护 128 KiB 分块、128 块 LRU 和同分块并发 Promise，不知道 Tauri 或文件路径。
+- `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、同指纹 `relink_material`、元数据、`save_markdown`、Markdown 恢复、版本迁移和托管材料范围命令，并校验跨端 DTO 形状。
 - `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。
 - `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并按「完整指纹 + 格式」模拟 pending/ready 查重、来源快照/覆盖值合并、托管副本缺失后的重新关联与回收站（普通删除移除正文副本、恢复/永久删除同步清理迁移快照）。
 - `importRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的导入、正式 Markdown 保存与恢复快照契约测试。
@@ -38,6 +39,7 @@ domain/library/
     └── libraryCommands.ts 经 ImportRepository 执行 `library.import` / `library.refresh` / 元数据覆盖与回收站命令
 
 backupRepository ──► workbench/backupCommands.ts 经 typed 命令编排备份
+managedFileSource ──► tauriImportRepository.ts / inMemoryImportRepository.ts 提供惰性正文来源
 ```
 
 ## 依赖方向

@@ -4,7 +4,7 @@
 
 | 目录 | 职责 | 详情 |
 | --- | --- | --- |
-| `src/` | React + Vite + TypeScript 前端（工作台、命令、状态） | `src/AGENTS.md` |
+| `src/` | React + Vite + TypeScript 前端（工作台、命令、状态、ManagedFileSource） | `src/AGENTS.md` |
 | `src-tauri/` | Tauri + Rust 平台核心（SQLite、typed 命令、Capability） | `src-tauri/AGENTS.md` |
 
 ## 应用级文件

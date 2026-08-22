@@ -132,6 +132,38 @@ function createFakeTauriBackend(): {
         }
         return btoaBinary(bytes);
       }
+      case IMPORT_COMMAND_NAMES.managedInfo: {
+        const materialId = (args as { materialId?: unknown }).materialId as string;
+        const material = materials.get(materialId);
+        const bytes = managedBytes.get(materialId);
+        if (!material || !bytes || trashed.has(materialId)) {
+          throw new Error('managed file missing');
+        }
+        return { name: material.sourceFileName, size: bytes.byteLength };
+      }
+      case IMPORT_COMMAND_NAMES.readManagedRange: {
+        const { materialId, offset, length } = args as {
+          materialId: string;
+          offset: number;
+          length: number;
+        };
+        const bytes = managedBytes.get(materialId);
+        if (!bytes || trashed.has(materialId)) {
+          throw new Error('managed file missing');
+        }
+        if (
+          !Number.isSafeInteger(offset) ||
+          !Number.isSafeInteger(length) ||
+          offset < 0 ||
+          length < 0 ||
+          length > 8 * 1024 * 1024 ||
+          offset > bytes.byteLength ||
+          length > bytes.byteLength - offset
+        ) {
+          throw new Error('managed file range invalid');
+        }
+        return btoaBinary(bytes.slice(offset, offset + length));
+      }
       case IMPORT_COMMAND_NAMES.list:
         return [...materials.values()].filter((material) => !trashed.has(material.id));
       case IMPORT_COMMAND_NAMES.listTrashed:
@@ -427,6 +459,8 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.relink).toBe('relink_material');
     expect(IMPORT_COMMAND_NAMES.purge).toBe('purge_material');
     expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');
+    expect(IMPORT_COMMAND_NAMES.managedInfo).toBe('get_managed_file_info');
+    expect(IMPORT_COMMAND_NAMES.readManagedRange).toBe('read_managed_file_range');
     expect(IMPORT_COMMAND_NAMES.recover).toBe('recover_imports');
     expect(IMPORT_COMMAND_NAMES.applyMetadata).toBe('apply_material_metadata');
     expect(IMPORT_COMMAND_NAMES.setCover).toBe('set_material_cover');
@@ -479,6 +513,35 @@ describe('TauriImportRepository 边界映射', () => {
 
     expect(received?.materialId).toBe('mat-1');
     expect(new TextDecoder().decode(bytes)).toBe('managed');
+  });
+
+  it('打开范围来源只把 materialId 传给元数据命令,范围命令不携带文件路径', async () => {
+    const received: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: TauriInvoke = async (command, args) => {
+      if (args === undefined) {
+        received.push({ command });
+      } else {
+        received.push({ command, args });
+      }
+      if (command === IMPORT_COMMAND_NAMES.managedInfo) {
+        return { name: 'book.epub', size: 10 };
+      }
+      return btoaBinary(new TextEncoder().encode('2345678901'));
+    };
+
+    const repository = createTauriImportRepository(invoke);
+    const source = await repository.openManagedFileSource('mat-1');
+    await source.slice(2, 6).arrayBuffer();
+
+    expect(received[0]).toEqual({
+      command: IMPORT_COMMAND_NAMES.managedInfo,
+      args: { materialId: 'mat-1' },
+    });
+    expect(received[1]).toEqual({
+      command: IMPORT_COMMAND_NAMES.readManagedRange,
+      args: { materialId: 'mat-1', offset: 0, length: 10 },
+    });
+    expect(received[1]?.args).not.toHaveProperty('path');
   });
 
   it('后端返回异常结构时拒绝加载', async () => {

@@ -95,8 +95,8 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 
 ## 架构边界
 
-- TypeScript 拥有交互与阅读语义：React 工作台、Command Registry、Workspace Store、Reader Runtime、`BookDocument`、格式适配、选区与批注锚点、Markdown 编辑会话及 typed Repository Interface。
-- Rust 拥有持久化、文件和平台完整性：SQLite、迁移与事务、托管文件、原子替换、完整内容指纹、备份恢复、平台路径与精细 Tauri Command/Capability。
+- TypeScript 拥有交互与阅读语义：React 工作台、Command Registry、Workspace Store、Reader Runtime、`BookDocument`、格式适配、选区与批注锚点、Markdown 编辑会话、只读 File/Blob 兼容的 `ManagedFileSource` 及 typed Repository Interface。
+- Rust 拥有持久化、文件和平台完整性：SQLite、迁移与事务、托管文件、原子替换、完整内容指纹、备份恢复、按稳定 MaterialId 校验的范围读取、平台路径与精细 Tauri Command/Capability。
 - Rust 不理解 React 焦点、标签布局或选区；TypeScript 不接触数据库表、任意 SQL、数据库路径或文件提交细节。
 - EPUB、PDF 与 Markdown 统一通过 `BookDocument` 能力面向上层；外部模块不得直接操纵具体阅读器运行时对象。
 - 同一 Editor Group 内每个阅读材料最多对应一个 ReadingView；第一版最多两个 Editor Group，允许同一材料跨组同时打开。再次从书库打开时优先在当前组激活已有标签，不创建同组重复标签。

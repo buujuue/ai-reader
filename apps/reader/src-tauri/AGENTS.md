@@ -9,8 +9,8 @@ Cargo workspace 成员（见根 `Cargo.toml`）。Rust 拥有持久化、文件�
 | `src/lib.rs` | 应用入口 `run()`：在 app data 目录下创建 `ai-reader.db`，打开 SQLite、注入 `DatabaseHandle` 与 `LibraryPaths`，注册 typed 命令，启动时恢复中断导入 |
 | `src/main.rs` | 二进制入口 |
 | `src/error.rs` | 统一错误类型 `AppError` |
-| `src/fs.rs` | 托管文件布局 `LibraryPaths`（暂存/书库/封面/恢复快照/版本迁移快照/EPUB 推导目录缓存目录）、恢复路径越界校验、派生缓存键哈希隔离、原子写入、用户选择目标的 UTF-8 原子导出写入、流式复制 + SHA-256 指纹 |
-| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供工作区命令；`import.rs` 提供导入、书库、回收站、元数据、`save_markdown` 与显式版本迁移命令；`epub.rs` 提供受 parity gate 保护的 EPUB 机械预取命令，以及推导目录缓存的读写命令；`annotations.rs` 提供批注列表、批量保存、软删除/恢复命令与 `write_annotation_markdown` 导出写入命令；`markdown_recovery.rs` 提供恢复快照命令；`backup.rs` 提供 `export_library_backup` 与 `restore_library_backup` 完整备份命令 |
+| `src/fs.rs` | 托管文件布局 `LibraryPaths`（暂存/书库/封面/恢复快照/版本迁移快照/EPUB 推导目录缓存目录）、恢复路径越界校验、派生缓存键哈希隔离、半开范围读取、原子写入、用户选择目标的 UTF-8 原子导出写入、流式复制 + SHA-256 指纹 |
+| `src/commands/` | typed Tauri 命令；`workspace.rs` 提供工作区命令；`import.rs` 提供导入、书库、回收站、元数据、`save_markdown`、显式版本迁移以及只按 MaterialId 的托管材料信息/范围读取命令；`epub.rs` 提供受 parity gate 保护的 EPUB 机械预取命令，以及推导目录缓存的读写命令；`annotations.rs` 提供批注列表、批量保存、软删除/恢复命令与 `write_annotation_markdown` 导出写入命令；`markdown_recovery.rs` 提供恢复快照命令；`backup.rs` 提供 `export_library_backup` 与 `restore_library_backup` 完整备份命令 |
 | `src/db/` | `open_database`（WAL + foreign_keys pragma、顺序应用迁移）、`DatabaseHandle` 窄接口；`workspace.rs` 实现工作区；`import.rs` 实现导入、书库、回收站、正式 Markdown 保存与显式 EPUB 版本迁移快照/提交/恢复；`annotations.rs` 实现材料级批注、tombstone、显式恢复与批量 SQLite 事务；`markdown_recovery.rs` 管理恢复快照；`backup.rs` 创建一致 SQLite 快照并按流式归档写出 manifest、材料与封面，同时负责隔离校验、空间预检、快照切换与启动回滚 |
 | `src/db/migrations/` | 编号递增的 SQL 迁移文件，当前 `0001_workspace.sql` 至 `0009_annotation_recovery_state.sql` |
 | `capabilities/default.json` | 最小权限 Capability（含关闭前等待 flush 所需的 `core:window:allow-destroy`、导入/备份所需的 `dialog:allow-open`/`dialog:allow-save` 与外部链接 `opener:allow-open-url`） |

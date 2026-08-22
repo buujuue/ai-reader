@@ -66,6 +66,8 @@ pub fn run() {
             commands::import::relink_material,
             commands::import::purge_material,
             commands::import::read_managed_file,
+            commands::import::get_managed_file_info,
+            commands::import::read_managed_file_range,
             commands::import::save_markdown,
             commands::import::recover_imports,
             commands::import::apply_material_metadata,

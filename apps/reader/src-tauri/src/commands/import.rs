@@ -2,7 +2,7 @@ use base64::Engine;
 use tauri::State;
 
 use crate::db::import::{
-    ImportRepository, MaterialMetadata, ReadingMaterial, StagedImport,
+    ImportRepository, ManagedFileInfo, MaterialMetadata, ReadingMaterial, StagedImport,
     VersionMigrationCommitRequest, VersionMigrationCommitResult, VersionMigrationSnapshot,
 };
 use crate::db::DatabaseHandle;
@@ -159,6 +159,34 @@ pub fn read_managed_file(
 ) -> Result<String, AppError> {
     let bytes = database.with_connection(|connection| {
         ImportRepository::new(connection).read_managed(&material_id, &paths)
+    })?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// 返回活跃托管材料的只读来源描述。前端只获得名称和长度，不获得文件路径。
+#[tauri::command]
+pub fn get_managed_file_info(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+) -> Result<ManagedFileInfo, AppError> {
+    database.with_connection(|connection| {
+        ImportRepository::new(connection).managed_file_info(&material_id, &paths)
+    })
+}
+
+/// 按半开区间 `[offset, offset + length)` 读取活跃托管材料的范围(base64)。
+/// 命令只接受稳定 materialId 与范围参数，托管路径由 Rust 从数据库解析。
+#[tauri::command]
+pub fn read_managed_file_range(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+    offset: u64,
+    length: u64,
+) -> Result<String, AppError> {
+    let bytes = database.with_connection(|connection| {
+        ImportRepository::new(connection).read_managed_range(&material_id, offset, length, &paths)
     })?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }

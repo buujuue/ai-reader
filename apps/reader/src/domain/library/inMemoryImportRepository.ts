@@ -13,6 +13,7 @@ import type {
 } from './material';
 import { emptyMaterialOverride } from './material';
 import { formatFromSourceFileName } from './materialFormat';
+import { ManagedFileSource, managedFileTypeFromName } from './managedFileSource';
 
 /** 内部存储:材料身份与来源快照(不可编辑)分开保存,覆盖值独立保存。 */
 interface InternalMaterial {
@@ -230,6 +231,27 @@ export function createInMemoryImportRepository(
         throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
       }
       return new Uint8Array(bytes);
+    },
+
+    async openManagedFileSource(materialId): Promise<ManagedFileSource> {
+      const internal = requireInternal(materials, materialId);
+      if (!managedBytes.has(materialId)) {
+        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+      }
+      return new ManagedFileSource(
+        {
+          name: internal.sourceFileName,
+          size: managedBytes.get(materialId)!.byteLength,
+          type: managedFileTypeFromName(internal.sourceFileName),
+        },
+        async (offset, length) => {
+          const bytes = managedBytes.get(materialId);
+          if (!bytes) {
+            throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+          }
+          return new Uint8Array(bytes.slice(offset, offset + length));
+        },
+      );
     },
 
     async recoverImports(): Promise<void> {
