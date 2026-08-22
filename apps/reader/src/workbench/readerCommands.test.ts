@@ -458,6 +458,37 @@ describe('Reader 命令', () => {
     const book = useReaderRuntime.getState().getDocument(group.views[0]!.id)!;
     expect(book.format).toBe('markdown');
   });
+
+  it('Markdown 打开只通过 ManagedFileSource 获取正文', async () => {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(
+      sources,
+      '演示书/来源边界.md',
+      new TextEncoder().encode('# 来源边界\n\n正文'),
+    );
+    importRepository = createInMemoryImportRepository(sources);
+    const staged = await importRepository.stageImport('演示书/来源边界.md');
+    const bytes = await importRepository.readStagedFile(staged);
+    const { inspectMarkdown } = await import('../domain/reader/markdown/markdownInspector');
+    const { metadata } = await inspectMarkdown(bytes, '来源边界.md');
+    const material = await importRepository.commitImport(staged, metadata);
+    const readManagedFile = vi
+      .spyOn(importRepository, 'readManagedFile')
+      .mockRejectedValue(new Error('Markdown 不应使用全量文件接口'));
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+
+    expect(openManagedFileSource).toHaveBeenCalledWith(material.id);
+    expect(readManagedFile).not.toHaveBeenCalled();
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    expect(useReaderRuntime.getState().getDocument(viewId)?.format).toBe('markdown');
+  });
 });
 
 describe('Reader 导航命令', () => {

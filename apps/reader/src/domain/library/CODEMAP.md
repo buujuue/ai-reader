@@ -7,7 +7,7 @@
 - `material.ts`：`ReadingMaterial`（稳定 BookId，含 `source` 来源快照、`override` 覆盖值、有效元数据和托管副本可用状态）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
 - `materialFormat.ts`：`formatFromSourceFileName` 从源文件扩展名推断材料格式（epub/pdf/markdown/unknown），`formatLabel` 输出简体中文标签；不依赖跨 TS/Rust 契约新增字段。
 - `libraryFilter.ts`：`filterMaterialsByQuery` 基于有效元数据（title/author）即时筛选书库的纯函数。
-- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。
+- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。Markdown 打开/编辑使用 `openManagedFileSource`，`readManagedFile` 仅保留给 EPUB/PDF 等字节缓冲路径。
 - `managedFileSource.ts`：只读、File/Blob 兼容的托管材料范围来源；维护 128 KiB 分块、128 块 LRU 和同分块并发 Promise，不知道 Tauri 或文件路径。
 - `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、同指纹 `relink_material`、元数据、`save_markdown`、Markdown 恢复、版本迁移和托管材料范围命令，并校验跨端 DTO 形状。
 - `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。

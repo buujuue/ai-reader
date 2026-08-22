@@ -48,6 +48,7 @@ import { useLibraryStore } from './libraryStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
+import { readManagedMarkdownText } from './markdownSource';
 import { serializeWorkspaceState } from './workbenchCommands';
 import {
   findView,
@@ -268,13 +269,12 @@ async function createMarkdownDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
 ): Promise<BookDocument | null> {
-  let bytes: Uint8Array;
+  let text: string;
   try {
-    bytes = await dependencies.importRepository.readManagedFile(material.id);
+    text = await readManagedMarkdownText(dependencies.importRepository, material.id);
   } catch (error) {
     throw new Error(`读取 Markdown 失败：${describeDocumentOpenError(error)}`);
   }
-  const text = new TextDecoder('utf-8').decode(bytes);
   // 打开 Markdown 视图时建立或复用该材料的共享会话(缓冲区、脏标记、已保存版本)。
   useMarkdownSessionStore
     .getState()

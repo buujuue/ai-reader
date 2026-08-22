@@ -13,6 +13,7 @@ import type { ReadingMaterial, StagedImport } from './material';
 import type { MarkdownRecoverySnapshot } from './importRepository';
 import type { FilePicker } from '../../app/filePicker';
 import { formatFromSourceFileName } from './materialFormat';
+import { readMarkdownSourceText } from '../reader/markdown/markdownSource';
 
 interface FakeStaged {
   bytes: Uint8Array;
@@ -542,6 +543,36 @@ describe('TauriImportRepository 边界映射', () => {
       args: { materialId: 'mat-1', offset: 0, length: 10 },
     });
     expect(received[1]?.args).not.toHaveProperty('path');
+  });
+
+  it('Tauri Markdown Source 可通过多个受控范围读取超过 8 MiB 的完整文本', async () => {
+    const size = 8 * 1024 * 1024 + 37;
+    const bytes = new Uint8Array(size);
+    bytes.fill('a'.charCodeAt(0));
+    const ranges: Array<{ offset: number; length: number }> = [];
+    const invoke: TauriInvoke = async (command, args) => {
+      if (command === IMPORT_COMMAND_NAMES.managedInfo) {
+        return { name: 'large.md', size };
+      }
+      if (command !== IMPORT_COMMAND_NAMES.readManagedRange) {
+        throw new Error(`unexpected command: ${command}`);
+      }
+      const { offset, length } = args as { offset: number; length: number };
+      ranges.push({ offset, length });
+      if (length > 8 * 1024 * 1024) {
+        throw new Error('range exceeds protocol limit');
+      }
+      return btoaBinary(bytes.slice(offset, offset + length));
+    };
+
+    const repository = createTauriImportRepository(invoke);
+    const source = await repository.openManagedFileSource('mat-large');
+    const text = await readMarkdownSourceText(source);
+
+    expect(text).toBe('a'.repeat(size));
+    expect(ranges).toHaveLength(Math.ceil(size / 128 / 1024));
+    expect(Math.max(...ranges.map((range) => range.length))).toBe(128 * 1024);
+    expect(ranges.every((range) => range.length <= 8 * 1024 * 1024)).toBe(true);
   });
 
   it('后端返回异常结构时拒绝加载', async () => {

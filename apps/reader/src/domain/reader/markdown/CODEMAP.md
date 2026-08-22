@@ -8,7 +8,10 @@ Markdown 作为一等阅读材料的阅读内核，落实工单 #17（安全导�
 - `markdownInspector.ts`：`inspectMarkdown` 导入检查（空/不可读分类、标题提取与文件名兜底）、`readableNameFromFileName`。`MarkdownInspectError` 领域化错误。
 - `markdownEpub.ts`：`buildMarkdownEpub` 把已清洗的章节组装成最小 stored 内存 EPUB（含 mimetype/container/OPF/nav/章节）；自带最小 stored-zip 写入器，保持本域不依赖 `domain/library`。
 - `markdownBookDocument.ts`：`MarkdownBookDocument` 在打开前把 Markdown 转成内存 EPUB，再复用 `EpubBookDocument` 的 Foliate 宿主封装；`format` 为 `'markdown'`，`ReadingLocation` kind 为 `'markdown'`。
+- `markdownSource.ts`：在 Markdown 领域内通过 Blob 兼容来源的 `stream()` 按受控分块物化 UTF-8 完整文本；EPUB/PDF 不复用该入口。
 - 对应 `*.test.ts`：解析、检查、BookDocument 与内存 EPUB 校验（用伪宿主，不依赖真实浏览器渲染）；恶意 Markdown fixture 安全测试在 `sanitizer.test.ts` 与 `markdownParser.test.ts`。
+
+工单 #34 只迁移托管文件来源边界；Markdown 仍在打开时物化完整文本，增量 Markdown 解析不在本工单范围内。
 
 安全边界（ADR-0010）：Markdown 渲染结果一律视为不可信输入，`sanitizeHtmlFragment` 移除脚本、iframe、对象嵌入、事件处理器与危险 URL；清洗发生在进入任何渲染器之前。
 
@@ -18,6 +21,7 @@ Markdown 作为一等阅读材料的阅读内核，落实工单 #17（安全导�
 - `../sanitizer.ts`：`sanitizeHtmlFragment` 内容清洗。
 - `../bookDocument.ts`：`BookDocument` 元数据类型。
 - `../../library/material.ts`：`SourceMetadata` 类型（导入检查输出）。
+- `../../library/managedFileSource.ts`：Markdown 打开与编辑回退时使用的托管范围来源。
 
 ## 被谁依赖
 
@@ -29,4 +33,4 @@ domain/reader/markdown/
 
 ## 依赖方向
 
-`markdown/` 是 Markdown 阅读语义的深模块：把所有对 Markdown 解析、清洗、EPUB 组装与 Foliate 渲染的直接调用隔离在内部，通过 `BookDocument`（`MarkdownBookDocument`）向上层提供窄接口。上层不得直接操作 `marked`、内存 EPUB 或 Foliate View。
+`markdown/` 是 Markdown 阅读语义的深模块：把所有对 Markdown 解析、清洗、EPUB 组装、托管来源完整文本物化与 Foliate 渲染的直接调用隔离在内部，通过 `BookDocument`（`MarkdownBookDocument`）向上层提供窄接口。上层不得直接操作 `marked`、内存 EPUB、Foliate View 或把 EPUB/PDF 的全量字节回退成 Markdown 文本。

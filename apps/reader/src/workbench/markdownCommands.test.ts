@@ -161,6 +161,28 @@ describe('Markdown 命令', () => {
     expect(new TextDecoder().decode(bytes)).toBe('# 新内容');
   });
 
+  it('编辑、保存、关闭后重新打开仍从 ManagedFileSource 读取正式文本', async () => {
+    const readManagedFile = vi
+      .spyOn(importRepository, 'readManagedFile')
+      .mockRejectedValue(new Error('Markdown 不应使用全量文件接口'));
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    useMarkdownSessionStore.getState().openSession(materialId, MARKDOWN_SOURCE, 0);
+    useMarkdownSessionStore.getState().updateText(materialId, '# 重新打开的新内容');
+
+    await registry.execute(COMMAND_IDS.markdownSave, activeViewId());
+    await registry.execute(COMMAND_IDS.readerCloseView, activeViewId());
+    openManagedFileSource.mockClear();
+
+    const savedMaterial = useLibraryStore.getState().materials.find((item) => item.id === materialId)!;
+    await registry.execute(COMMAND_IDS.libraryOpenBook, savedMaterial);
+
+    expect(useMarkdownSessionStore.getState().getSession(materialId)?.text).toBe(
+      '# 重新打开的新内容',
+    );
+    expect(openManagedFileSource).toHaveBeenCalledWith(materialId);
+    expect(readManagedFile).not.toHaveBeenCalled();
+  });
+
   it('放弃修改把缓冲区回退到已保存文本', async () => {
     useMarkdownSessionStore.getState().openSession(materialId, MARKDOWN_SOURCE, 0);
     useMarkdownSessionStore.getState().updateText(materialId, '# 修改');

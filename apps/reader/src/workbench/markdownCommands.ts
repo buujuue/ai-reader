@@ -14,6 +14,7 @@ import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
 import { findView, getActiveViewId, isViewActive } from './viewUtils';
+import { readManagedMarkdownText } from './markdownSource';
 
 export interface MarkdownCommandDependencies {
   importRepository: ImportRepository;
@@ -48,8 +49,7 @@ async function rebuildMarkdownDocuments(
   material: ReadingMaterial,
   dependencies: MarkdownCommandDependencies,
 ): Promise<void> {
-  const bytes = await dependencies.importRepository.readManagedFile(material.id);
-  const text = new TextDecoder('utf-8').decode(bytes);
+  const text = await readManagedMarkdownText(dependencies.importRepository, material.id);
   const runtime = useReaderRuntime.getState();
   const state = useWorkspaceStore.getState();
   const viewIds = state.editorGroups
@@ -72,6 +72,7 @@ async function rebuildMarkdownDocuments(
           language: material.language,
         },
         viewHostFactory: factory,
+        sourceFingerprint: material.fingerprint,
       }),
     );
   }
@@ -304,8 +305,10 @@ export function registerMarkdownCommands(
     if (!session) return;
 
     await settleRecoveryWrite(view.materialId);
-    const bytes = await dependencies.importRepository.readManagedFile(view.materialId);
-    const savedText = new TextDecoder('utf-8').decode(bytes);
+    const savedText = await readManagedMarkdownText(
+      dependencies.importRepository,
+      view.materialId,
+    );
     useMarkdownSessionStore.getState().discard(view.materialId, savedText);
     const recoveryCleared = await clearRecoverySnapshot(view.materialId);
     await rebuildMarkdownDocuments(
@@ -355,8 +358,10 @@ export function registerMarkdownCommands(
       }
     } else {
       await settleRecoveryWrite(view.materialId);
-      const bytes = await dependencies.importRepository.readManagedFile(view.materialId);
-      const savedText = new TextDecoder('utf-8').decode(bytes);
+      const savedText = await readManagedMarkdownText(
+        dependencies.importRepository,
+        view.materialId,
+      );
       useMarkdownSessionStore.getState().discard(view.materialId, savedText);
       await clearRecoverySnapshot(view.materialId);
     }
