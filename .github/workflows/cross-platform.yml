@@ -63,6 +63,18 @@ jobs:
       - name: 前端测试
         run: pnpm test
 
+      - name: 大型阅读范围性能回归
+        if: matrix.native-build == 'windows'
+        run: pnpm --dir apps/reader test:reading-performance
+
+      - name: 上传大型阅读范围性能记录
+        if: always() && matrix.native-build == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-reader-reading-performance-${{ github.sha }}
+          if-no-files-found: warn
+          path: apps/reader/scripts/artifacts/reading-performance.json
+
       - name: Rust 测试
         run: cargo test
 

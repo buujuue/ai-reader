@@ -25,7 +25,7 @@ import { back as historyBack, forward as historyForward } from '../domain/reader
 import type { PdfFitMode } from '../domain/reader/readingLocation';
 import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import { inspectPdf } from '../domain/reader/pdf/pdfInspector';
-import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
+import type { PdfFileSource, PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import { loadPdfLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
@@ -89,6 +89,7 @@ interface ActiveViewMount {
   document: BookDocument;
   container: HTMLElement;
   persister: ThrottledPositionPersister;
+  removeReadErrorListener: (() => void) | undefined;
 }
 
 const activeMounts = new Map<string, ActiveViewMount>();
@@ -109,6 +110,27 @@ function describeDocumentOpenError(error: unknown): string {
     return error;
   }
   return '阅读器初始化失败，请重新打开该材料。';
+}
+
+function reportReaderNavigationFailure(viewId: string, error: unknown): void {
+  const view = findView(viewId);
+  const message = describeDocumentOpenError(error);
+  useShellUiStore.getState().setStatusMessage(`阅读翻页失败：${message}`);
+  console.error('阅读翻页失败', {
+    viewId,
+    materialId: view?.materialId ?? null,
+    error,
+  });
+}
+
+function reportReaderReadFailure(viewId: string, error: unknown): void {
+  const view = findView(viewId);
+  useShellUiStore.getState().setStatusMessage(`阅读内容读取失败：${describeDocumentOpenError(error)}`);
+  console.error('阅读内容读取失败', {
+    viewId,
+    materialId: view?.materialId ?? null,
+    error,
+  });
 }
 
 interface ViewMountReadiness {
@@ -238,21 +260,21 @@ async function createPdfDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
 ): Promise<BookDocument | null> {
-  let bytes: Uint8Array;
+  let source: PdfFileSource;
   try {
-    bytes = await dependencies.importRepository.readManagedFile(material.id);
+    source = await dependencies.importRepository.openManagedFileSource(material.id);
   } catch (error) {
     throw new Error(`读取 PDF 失败：${describeDocumentOpenError(error)}`);
   }
   let metadata;
   try {
-    const result = await inspectPdf(bytes, dependencies.pdfLib);
+    const result = await inspectPdf(source, dependencies.pdfLib);
     metadata = result.metadata;
   } catch (error) {
     throw new Error(`解析 PDF 失败：${describeDocumentOpenError(error)}`);
   }
   return new PdfBookDocument({
-    bytes,
+    source,
     metadata,
     pdfLib: dependencies.pdfLib,
     rasterize: dependencies.pdfRasterize,
@@ -337,6 +359,8 @@ function getOrCreatePendingDocument(
 
 /** 释放失活标签的活对象，但保留 Workspace Store 中的标签、位置和历史。 */
 async function disposeViewRuntime(viewId: string): Promise<void> {
+  const activeMount = activeMounts.get(viewId);
+  activeMount?.removeReadErrorListener?.();
   activeMounts.delete(viewId);
   const persister = persisters.get(viewId);
   if (persister) {
@@ -421,6 +445,12 @@ async function ensureActiveViewDocument(
       status: 'error',
       message: describeDocumentOpenError(error),
     });
+    console.error('打开阅读文档失败', {
+      viewId,
+      materialId: targetMaterial.id,
+      format: formatFromSourceFileName(targetMaterial.sourceFileName),
+      error,
+    });
     return null;
   }
   if (!document) {
@@ -486,6 +516,7 @@ export function mountViewDocument(
   if (existingMount?.document === document) {
     return existingMount.persister;
   }
+  existingMount?.removeReadErrorListener?.();
 
   const readiness = prepareViewMountReadiness(viewId);
   useReaderRuntime.getState().setDocumentState(viewId, { status: 'loading' });
@@ -501,7 +532,10 @@ export function mountViewDocument(
     },
   });
   persisters.set(viewId, persister);
-  activeMounts.set(viewId, { document, container, persister });
+  const removeReadErrorListener = document.onReadError?.((error) => {
+    reportReaderReadFailure(viewId, error);
+  });
+  activeMounts.set(viewId, { document, container, persister, removeReadErrorListener });
 
   // 挂载时应用该材料实际生效的排版(材料级覆盖优先,否则回退全局默认)。
   const materialId = findView(viewId)?.materialId;
@@ -528,7 +562,7 @@ export function mountViewDocument(
   document.onInternalLink((href) => {
     navigationIntents.set(viewId, 'push');
     void document.goToHref(href).catch((error: unknown) => {
-      console.error('书内链接导航失败', error);
+      reportReaderNavigationFailure(viewId, error);
     });
   });
 
@@ -567,7 +601,13 @@ export function mountViewDocument(
         status: 'error',
         message: describeDocumentOpenError(error),
       });
-      console.error('打开阅读文档失败', error);
+      const failedView = findView(viewId);
+      console.error('打开阅读文档失败', {
+        viewId,
+        materialId: failedView?.materialId ?? null,
+        format: document.format,
+        error,
+      });
     });
 
   return persister;
@@ -678,14 +718,22 @@ export function registerReaderCommands(
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     if (!viewId) return;
     navigationIntents.set(viewId, 'replace');
-    await useReaderRuntime.getState().getDocument(viewId)?.next();
+    try {
+      await useReaderRuntime.getState().getDocument(viewId)?.next();
+    } catch (error) {
+      reportReaderNavigationFailure(viewId, error);
+    }
   });
 
   registry.register(COMMAND_IDS.readerPrevPage, async (...args: unknown[]) => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     if (!viewId) return;
     navigationIntents.set(viewId, 'replace');
-    await useReaderRuntime.getState().getDocument(viewId)?.prev();
+    try {
+      await useReaderRuntime.getState().getDocument(viewId)?.prev();
+    } catch (error) {
+      reportReaderNavigationFailure(viewId, error);
+    }
   });
 
   registry.register(COMMAND_IDS.readerGoToHref, async (...args: unknown[]) => {
@@ -695,8 +743,12 @@ export function registerReaderCommands(
     const document = useReaderRuntime.getState().getDocument(viewId);
     if (!document) return;
     navigationIntents.set(viewId, 'push');
-    await document.goToHref(href);
-    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    try {
+      await document.goToHref(href);
+      await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    } catch (error) {
+      reportReaderNavigationFailure(viewId, error);
+    }
   });
 
   registry.register(COMMAND_IDS.readerBack, async (...args: unknown[]) => {

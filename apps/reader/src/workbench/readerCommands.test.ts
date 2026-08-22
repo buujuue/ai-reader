@@ -9,6 +9,7 @@ import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
+import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from '../domain/reader/pdf/pdfTestFakes';
 import { mountViewDocument, registerReaderCommands } from './readerCommands';
 import { useWorkspaceStore } from './workspaceStore';
 import { useReaderRuntime } from './readerRuntime';
@@ -249,9 +250,6 @@ describe('Reader 命令', () => {
 
   it('重复打开同一本书会跳转到原标签,不重复创建文档', async () => {
     const material = await setupWithEpub();
-    const readManagedFile = vi
-      .spyOn(importRepository, 'readManagedFile')
-      .mockRejectedValue(new Error('EPUB 打开不应调用全量文件接口'));
     const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
     registerReaderCommands(registry, {
       importRepository,
@@ -273,7 +271,6 @@ describe('Reader 命令', () => {
     expect(group.activeViewId).toBe(firstViewId);
     expect(useReaderRuntime.getState().getDocument(firstViewId)).toBe(firstDocument);
     expect(openManagedFileSource).toHaveBeenCalledTimes(1);
-    expect(readManagedFile).not.toHaveBeenCalled();
   });
 
   it('switches tabs with one active runtime and restores the saved location', async () => {
@@ -482,9 +479,6 @@ describe('Reader 命令', () => {
     const { inspectMarkdown } = await import('../domain/reader/markdown/markdownInspector');
     const { metadata } = await inspectMarkdown(bytes, '来源边界.md');
     const material = await importRepository.commitImport(staged, metadata);
-    const readManagedFile = vi
-      .spyOn(importRepository, 'readManagedFile')
-      .mockRejectedValue(new Error('Markdown 不应使用全量文件接口'));
     const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
     registerReaderCommands(registry, {
       importRepository,
@@ -495,9 +489,35 @@ describe('Reader 命令', () => {
     await registry.execute(COMMAND_IDS.libraryOpenBook, material);
 
     expect(openManagedFileSource).toHaveBeenCalledWith(material.id);
-    expect(readManagedFile).not.toHaveBeenCalled();
     const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
     expect(useReaderRuntime.getState().getDocument(viewId)?.format).toBe('markdown');
+  });
+
+  it('PDF 打开让检查器与阅读文档共享 ManagedFileSource,不调用全量文件接口', async () => {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, '演示书/范围.pdf', new TextEncoder().encode('%PDF-1.7\n'));
+    importRepository = createInMemoryImportRepository(sources);
+    const staged = await importRepository.stageImport('演示书/范围.pdf');
+    const bytes = await importRepository.readStagedFile(staged);
+    const { inspectPdf } = await import('../domain/reader/pdf/pdfInspector');
+    const { metadata } = await inspectPdf(bytes, makeFakeLib(makeFakeDocument(3)));
+    const material = await importRepository.commitImport(staged, metadata);
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    const pdfLib = makeFakeLib(makeFakeDocument(3));
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      pdfLib,
+      pdfRasterize: makeFakeRasterizer(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+
+    expect(openManagedFileSource).toHaveBeenCalledWith(material.id);
+    expect(openManagedFileSource).toHaveBeenCalledTimes(1);
+    const options = (pdfLib.getDocument as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(options).not.toHaveProperty('data');
+    expect(options).toEqual(expect.objectContaining({ range: expect.anything() }));
   });
 });
 

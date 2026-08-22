@@ -1,3 +1,5 @@
+import type { PdfFileSource } from './pdfLibrary';
+
 /**
  * PDF.js 范围读取的并发上限传输。
  *
@@ -12,18 +14,53 @@
 /** 范围读取的默认并发上限。 */
 export const MAX_CONCURRENT_RANGES = 6;
 
-/** 可范围读取的文件窄接口(与 File/Blob 的 slice 语义一致)。 */
-export interface RangeFileLike {
-  readonly size: number;
-  slice(begin: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> };
-}
-
 /** 并发限制传输的运行时观测(供测试断言)。 */
 export interface ConcurrentRangeRuntime {
   /** 当前在途读取数。 */
   readonly active: number;
   /** 排队未派发的范围数。 */
   readonly queued: number;
+  /** 是否已经取消后续读取。 */
+  readonly cancelled: boolean;
+}
+
+/** PDF.js 范围读取失败,保留失败区间供打开错误展示与日志诊断。 */
+export class PdfRangeReadError extends Error {
+  override name = 'PdfRangeReadError';
+
+  constructor(
+    readonly begin: number,
+    readonly end: number,
+    cause: unknown,
+  ) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`PDF 范围读取失败:[${begin},${end}) ${detail}`);
+  }
+}
+
+export interface ConcurrentRangeTransport {
+  transport: PdfDataRangeTransportLike;
+  runtime: ConcurrentRangeRuntime;
+  /** 取消排队范围并忽略已在途读取的结果。 */
+  cancel(): void;
+  /** 订阅底层范围读取失败;失败后传输会停止提交后续数据。 */
+  onFailure(listener: (error: PdfRangeReadError) => void): () => void;
+}
+
+/** 让 PDF.js 无失败回调的异步操作仍能把 Source 读取错误交给上层。 */
+export async function withRangeFailure<T>(
+  operation: Promise<T>,
+  range: ConcurrentRangeTransport,
+): Promise<T> {
+  let unsubscribe: () => void = () => undefined;
+  const failure = new Promise<never>((_resolve, reject) => {
+    unsubscribe = range.onFailure(reject);
+  });
+  try {
+    return await Promise.race([operation, failure]);
+  } finally {
+    unsubscribe();
+  }
 }
 
 /**
@@ -31,26 +68,59 @@ export interface ConcurrentRangeRuntime {
  * `getDocument({ range })` 的 `range` 使用;`runtime` 暴露在途/排队观测。
  */
 export function createConcurrentRangeTransport(
-  file: RangeFileLike,
+  file: PdfFileSource,
   makeTransport: (size: number, initialData: unknown) => PdfDataRangeTransportLike,
   maxConcurrent: number = MAX_CONCURRENT_RANGES,
-): { transport: PdfDataRangeTransportLike; runtime: ConcurrentRangeRuntime } {
-  const transport = makeTransport(file.size, []);
+): ConcurrentRangeTransport {
+  if (!Number.isSafeInteger(file.size) || file.size < 0) {
+    throw new RangeError(`PDF 文件大小无效:${file.size}`);
+  }
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) {
+    throw new RangeError(`PDF 范围读取并发上限无效:${maxConcurrent}`);
+  }
+
+  const transport = makeTransport(file.size, new Uint8Array());
   let active = 0;
   const queue: Array<[number, number]> = [];
+  let cancelled = false;
+  let failure: PdfRangeReadError | null = null;
+  const failureListeners = new Set<(error: PdfRangeReadError) => void>();
+
+  const baseAbort = transport.abort;
+  const cancel = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    queue.length = 0;
+    baseAbort?.();
+  };
+
+  const reportFailure = (begin: number, end: number, error: unknown): void => {
+    if (failure || cancelled) return;
+    failure = error instanceof PdfRangeReadError
+      ? error
+      : new PdfRangeReadError(begin, end, error);
+    cancel();
+    for (const listener of failureListeners) {
+      listener(failure);
+    }
+  };
 
   const pump = (): void => {
-    while (active < maxConcurrent && queue.length > 0) {
+    while (!cancelled && active < maxConcurrent && queue.length > 0) {
       const [begin, end] = queue.shift() as [number, number];
       active += 1;
       file
         .slice(begin, end)
         .arrayBuffer()
         .then((chunk) => {
-          transport.onDataRange(begin, chunk);
+          if (!cancelled) {
+            transport.onDataRange(begin, chunk);
+          }
         })
-        .catch(() => {
-          // 某段读取失败:交给 PDF.js 的文档解析流程自行报错,这里只释放并发槽。
+        .catch((error: unknown) => {
+          // PDFDataRangeTransport 没有公开的失败回调,因此由外层打开流程订阅
+          // 自有失败事件;绝不提交伪数据,也不让失败请求静默变成永久等待。
+          reportFailure(begin, end, error);
         })
         .finally(() => {
           active -= 1;
@@ -60,9 +130,20 @@ export function createConcurrentRangeTransport(
   };
 
   transport.requestDataRange = (begin: number, end: number): void => {
+    if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) || begin < 0 || end < begin || end > file.size) {
+      throw new RangeError(`PDF 范围读取越界:[${begin},${end})/${file.size}`);
+    }
+    if (cancelled || begin === end) {
+      if (!cancelled && begin === end) {
+        transport.onDataRange(begin, new ArrayBuffer(0));
+      }
+      return;
+    }
     queue.push([begin, end]);
     pump();
   };
+
+  transport.abort = cancel;
 
   return {
     transport,
@@ -73,6 +154,18 @@ export function createConcurrentRangeTransport(
       get queued() {
         return queue.length;
       },
+      get cancelled() {
+        return cancelled;
+      },
+    },
+    cancel,
+    onFailure(listener) {
+      if (failure) {
+        listener(failure);
+        return () => undefined;
+      }
+      failureListeners.add(listener);
+      return () => failureListeners.delete(listener);
     },
   };
 }
@@ -81,4 +174,5 @@ export function createConcurrentRangeTransport(
 export interface PdfDataRangeTransportLike {
   onDataRange(begin: number, chunk: ArrayBuffer): void;
   requestDataRange?(begin: number, end: number): void;
+  abort?(): void;
 }

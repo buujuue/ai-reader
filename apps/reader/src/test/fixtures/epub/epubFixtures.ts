@@ -30,6 +30,47 @@ export async function buildEpubFixture(id: string): Promise<Uint8Array> {
     : bytes;
 }
 
+/**
+ * 构造用于范围读取回归的确定性大型 EPUB。
+ * 正文章节保持很小,把 10 MiB 惰性资源放在包尾,这样打开和章节切换若
+ * 退化为整包读取会被 Source 读取统计立即捕获。
+ */
+export async function buildLargeEpubFixture(): Promise<Uint8Array> {
+  const padding = new Uint8Array(10 * 1024 * 1024);
+  padding.fill(0x61);
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="large-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>大型范围读取 EPUB</dc:title><dc:language>zh</dc:language></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="padding" href="assets/padding.bin" media-type="application/octet-stream"/>
+    <item id="image" href="images/pixel.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="chapter1"/><itemref idref="chapter2"/></spine>
+</package>`;
+  return buildZip([
+    { name: 'mimetype', data: encode('application/epub+zip') },
+    { name: 'META-INF/container.xml', data: encode(containerXml()) },
+    { name: 'OEBPS/content.opf', data: encode(opf) },
+    {
+      name: 'OEBPS/nav.xhtml',
+      data: encode('<html xmlns="http://www.w3.org/1999/xhtml"><body><nav><ol><li><a href="chapter1.xhtml">第一章</a></li><li><a href="chapter2.xhtml">第二章</a></li></ol></nav></body></html>'),
+    },
+    {
+      name: 'OEBPS/chapter1.xhtml',
+      data: encode('<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>第一章</h1><img src="images/pixel.png" alt="性能夹具图片"/><p>首屏内容。</p></body></html>'),
+    },
+    {
+      name: 'OEBPS/chapter2.xhtml',
+      data: encode('<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>第二章</h1><p>章节切换内容。</p></body></html>'),
+    },
+    { name: 'OEBPS/images/pixel.png', data: ONE_PIXEL_PNG },
+    { name: 'OEBPS/assets/padding.bin', data: padding },
+  ]);
+}
+
 export async function buildAllEpubFixtures(): Promise<
   ReadonlyMap<string, Uint8Array>
 > {

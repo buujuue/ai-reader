@@ -2,7 +2,7 @@
 
 ## 功能
 
-- `bookDocument.ts`：`BookDocument` 统一文档接口（元数据、打开、位置读写、目录、书内链接跳转、书内/外部链接事件、下一页/上一页、搜索、批注 CFI 无位置解析、可选的内容文档到 spine section 映射、位置订阅、可选的可序列化阅读位置反馈订阅、关闭；以及 `getContentDocs`/`onContentCreate` 暴露内容文档用于附加阅读输入监听器，并为 PDF 提供可选的区域锚点与区域选区订阅）。EPUB、PDF、Markdown 都实现该接口；Reader 外部不直接依赖 Foliate View。
+- `bookDocument.ts`：`BookDocument` 统一文档接口（元数据、打开、位置读写、目录、书内链接跳转、书内/外部链接事件、下一页/上一页、搜索、批注 CFI 无位置解析、可选的内容文档到 spine section 映射、位置订阅、可序列化阅读位置反馈订阅、打开后读取/渲染错误订阅、关闭；以及 `getContentDocs`/`onContentCreate` 暴露内容文档用于附加阅读输入监听器，并为 PDF 提供可选的区域锚点与区域选区订阅）。EPUB、PDF、Markdown 都实现该接口；Reader 外部不直接依赖 Foliate View。
 - `toc.ts`：`TocItem`/`Toc` 类型，与 foliate-js `book.toc` 结构一致的分层目录。
 - `derivedToc.ts`：原生 NAV/NCX 缺失或不可导航时，从受预算限制的章节 `h1`–`h6` 标题生成带层级和稳定章节目标的本地临时目录；按完整内容指纹与算法版本读写小型本地缓存，缓存损坏只触发重建。缓存只经 `EpubDerivedTocCache` 窄接口访问。
 - `derivedTocCacheContract.ts`：内存与 Tauri 推导目录缓存 Adapter 共用的行为契约测试辅助，验证未命中、写入、覆盖和 key 隔离。
@@ -24,7 +24,7 @@
 - 对应 `*.test.ts`：清洗器、`EpubBookDocument`、阅读进度、MathML 降级、搜索归一化与排版合并/建 CSS 行为测试；EPUB P0 语义矩阵另在 `src/test/fixtures/epub/` 使用 Foliate loader 验证目录、固定版式与方向语义。
 - `search.ts`：当前材料搜索的领域类型（`SearchExcerpt`、`SearchMatch`、`SearchEvent`、`SearchOptions`、`SearchMode`）。搜索只针对当前激活 ReadingView，不跨书建索引。
 - 对应 `*.test.ts`：清洗器、`EpubBookDocument` 与搜索归一化行为测试（伪宿主）；EPUB 2/3 P0 语义矩阵位于 `src/test/fixtures/epub/`。
-- `pdf/`：PDF 阅读子模块。`pdfLibrary.ts` 定义 PDF.js 窄接口类型与懒加载引导（`isEvalSupported:false` 安全边界）；`pdfRangeTransport.ts` 实现范围读取并发上限（`MAX_CONCURRENT_RANGES`）；`pdfInspector.ts` 的 `inspectPdf` 做格式校验与元数据提取；`pdfPageRenderer.ts` 单页渲染器（DPI 夹紧、过期渲染取消、替换/卸载释放画布位图与文本层、扫描页区域拖选）；`pdfRenderer.ts` 布局管理器（分页/滚动、缩放与页面适配、滚动窗口化 + 画布内存预算，仅渲染视口附近的解码页）；`pdfBookDocument.ts` 的 `PdfBookDocument` 实现 `BookDocument`（元数据/目录/导航/位置/缩放/适配/封面 + PDF 专属 `setViewport`、文本/区域锚点）。所有对 PDF.js 的直接调用都集中在本模块，上层只经 `BookDocument` 窄接口交互。详见 `pdf/CODEMAP.md`。
+- `pdf/`：PDF 阅读子模块。`pdfLibrary.ts` 定义 PDF.js 窄接口类型、共享 `PdfFileSource` 与可销毁加载任务，并提供懒加载引导（`isEvalSupported:false` 安全边界）；`pdfRangeTransport.ts` 实现范围读取并发上限（`MAX_CONCURRENT_RANGES`）、取消、越界保护与失败收敛；`pdfInspector.ts` 的 `inspectPdf` 做范围检查、格式校验与元数据提取；`pdfPageRenderer.ts` 单页渲染器（DPI 夹紧、过期渲染取消、替换/卸载释放画布位图与文本层、扫描页区域拖选）；`pdfRenderer.ts` 布局管理器（分页/滚动、缩放与页面适配、滚动窗口化 + 画布内存预算，仅渲染视口附近的解码页）；`pdfBookDocument.ts` 的 `PdfBookDocument` 实现 `BookDocument`（元数据/目录/导航/位置/缩放/适配/封面 + PDF 专属 `setViewport`、文本/区域锚点、读取错误订阅），检查与阅读共享同一个托管范围来源。所有对 PDF.js 的直接调用都集中在本模块，上层只经 `BookDocument` 窄接口交互。详见 `pdf/CODEMAP.md`。
 - `markdown/`：Markdown 阅读子模块。`markdownParser.ts` 用 `marked` 渲染并经 `sanitizeHtmlFragment` 清洗、按一级标题分段并提取来源元数据；`markdownInspector.ts` 的 `inspectMarkdown` 做导入检查与标题/文件名兜底；`markdownEpub.ts` 把已清洗章节组装成最小 stored 内存 EPUB；`markdownBookDocument.ts` 的 `MarkdownBookDocument` 复用 `EpubBookDocument` 的 Foliate 宿主完成渲染。所有对 `marked`、内存 EPUB 与 Foliate 渲染的直接调用都集中在本模块。详见 `markdown/CODEMAP.md`。
 
 ## 依赖其它文件夹（树）

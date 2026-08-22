@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest';
 
-import type { ImportContractHarness } from './importRepository.contract';
+import {
+  readManagedSourceBytes,
+  type ImportContractHarness,
+} from './importRepository.contract';
 
 const COVER_PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -36,7 +39,7 @@ export function recycleBinRepositoryContract(harness: ImportContractHarness): vo
     expect(trash[0]?.id).toBe(material.id);
     expect(trash[0]?.title).toBe('整理标题');
     // 正文副本按普通删除策略移除,用户数据与封面仍保留。
-    await expect(repository.readManagedFile(material.id)).rejects.toThrow();
+    await expect(repository.openManagedFileSource(material.id)).rejects.toThrow();
     expect(await repository.readCover(material.id)).not.toBeNull();
   });
 
@@ -52,7 +55,7 @@ export function recycleBinRepositoryContract(harness: ImportContractHarness): vo
     expect(restored.author).toBe('整理作者');
     expect(restored.source.title).toBe('来源标题');
     expect(restored.managedFileAvailable).toBe(true);
-    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
+    expect(new TextDecoder().decode(await readManagedSourceBytes(repository, material.id))).toBe(
       'recycle-content',
     );
     expect(await repository.listMaterials()).toHaveLength(1);
@@ -68,10 +71,10 @@ export function recycleBinRepositoryContract(harness: ImportContractHarness): vo
     expect(relinked.id).toBe(material.id);
     expect(relinked.fingerprint).toBe(material.fingerprint);
     expect(relinked.managedFileAvailable).toBe(true);
-    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
+    expect(new TextDecoder().decode(await readManagedSourceBytes(repository, material.id))).toBe(
       'recycle-content',
     );
-    await expect(repository.readManagedFile(replacement.id)).rejects.toThrow();
+    await expect(repository.openManagedFileSource(replacement.id)).rejects.toThrow();
   });
 
   it('重新导入回收站中相同内容指纹时恢复原 BookId,而不是新建', async () => {
@@ -105,7 +108,7 @@ export function recycleBinRepositoryContract(harness: ImportContractHarness): vo
 
     expect(await repository.listTrashed()).toHaveLength(0);
     expect(await repository.listMaterials()).toHaveLength(0);
-    await expect(repository.readManagedFile(material.id)).rejects.toThrow();
+    await expect(repository.openManagedFileSource(material.id)).rejects.toThrow();
     expect(await repository.readCover(material.id)).toBeNull();
   });
 

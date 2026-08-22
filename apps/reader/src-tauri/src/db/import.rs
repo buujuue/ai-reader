@@ -199,16 +199,6 @@ impl<'a> ImportRepository<'a> {
         Ok(())
     }
 
-    /// 读取已提交托管文件中某一本的原始字节,交给前端打开阅读。
-    pub fn read_managed(
-        &self,
-        material_id: &str,
-        paths: &LibraryPaths,
-    ) -> Result<Vec<u8>, AppError> {
-        let managed_path = self.managed_file_path(material_id, paths)?;
-        read_file_bytes(&managed_path)
-    }
-
     /// 返回活跃托管材料的名称与字节长度，不暴露内部路径。
     pub fn managed_file_info(
         &self,
@@ -1923,33 +1913,6 @@ mod tests {
     }
 
     #[test]
-    fn read_managed_missing_file_returns_typed_error() {
-        let connection = migrated_connection();
-        let repository = ImportRepository::new(&connection);
-        let paths = temp_paths();
-
-        let error = repository.read_managed("no-such", &paths).unwrap_err();
-
-        assert!(matches!(error, AppError::ManagedFileMissing(_)));
-    }
-
-    #[test]
-    fn read_managed_returns_committed_bytes() {
-        let connection = migrated_connection();
-        let repository = ImportRepository::new(&connection);
-        let paths = temp_paths();
-        let source = write_source(&paths, "book.epub", b"managed-epub-bytes");
-        let staged = repository.stage(&source, &paths).unwrap();
-        let material = repository
-            .commit(&staged, &MaterialMetadata::default(), &paths)
-            .unwrap();
-
-        let bytes = repository.read_managed(&material.id, &paths).unwrap();
-
-        assert_eq!(bytes, b"managed-epub-bytes");
-    }
-
-    #[test]
     fn managed_file_info_returns_name_and_size_without_a_path() {
         let connection = migrated_connection();
         let repository = ImportRepository::new(&connection);
@@ -2178,7 +2141,7 @@ mod tests {
 
         assert_eq!(repository.list_materials().unwrap().len(), 1);
         assert!(matches!(
-            repository.read_managed(&material.id, &paths),
+            repository.read_managed_range(&material.id, 0, 1, &paths),
             Err(AppError::ManagedFileMissing(_))
         ));
     }
@@ -2652,7 +2615,9 @@ mod tests {
         assert_eq!(imported.id, material.id);
         assert_eq!(repository.list_materials().unwrap().len(), 1);
         assert_eq!(
-            repository.read_managed(&material.id, &paths).unwrap(),
+            repository
+                .read_managed_range(&material.id, 0, b"metadata-content".len() as u64, &paths)
+                .unwrap(),
             b"metadata-content"
         );
     }

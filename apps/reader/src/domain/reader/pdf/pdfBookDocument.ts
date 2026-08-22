@@ -6,12 +6,19 @@ import type { ReadingTypography } from '../typography';
 import { THEME_PALETTES } from '../typography';
 import type {
   PdfDocumentProxy,
+  PdfFileSource,
   PdfJsLib,
+  PdfLoadingTask,
   PdfOutlineItem,
 } from './pdfLibrary';
 import { loadPdfLib } from './pdfLibrary';
 import type { PdfPageRasterizer } from './pdfPageRenderer';
 import { PdfRenderer } from './pdfRenderer';
+import {
+  createConcurrentRangeTransport,
+  type ConcurrentRangeTransport,
+  withRangeFailure,
+} from './pdfRangeTransport';
 import { searchPdf } from './pdfSearch';
 import {
   decodePdfTextAnchor,
@@ -22,8 +29,8 @@ import {
 } from './pdfTextAnchor';
 
 export interface PdfBookDocumentOptions {
-  /** PDF 字节内容。 */
-  bytes: Uint8Array;
+  /** PDF 只读范围来源;通常是与检查阶段共享的 ManagedFileSource。 */
+  source: PdfFileSource;
   /** 来源元数据(经 PdfInspector 提取)。 */
   metadata: BookDocumentMetadata;
   /** 可注入的 PDF.js 库(测试用);缺省懒加载真实引擎。 */
@@ -59,16 +66,20 @@ export class PdfBookDocument implements BookDocument {
   readonly format = 'pdf' as const;
   readonly metadata: BookDocumentMetadata;
 
-  private readonly bytes: Uint8Array;
+  private readonly source: PdfFileSource;
   private readonly pdfLib: PdfJsLib | undefined;
   private readonly rasterize: PdfPageRasterizer | undefined;
 
   private pdf: PdfDocumentProxy | null = null;
+  private loadingTask: PdfLoadingTask | null = null;
+  private rangeTransport: ConcurrentRangeTransport | null = null;
+  private openGeneration = 0;
   private renderer: PdfRenderer | null = null;
   private container: HTMLElement | null = null;
   private typography: ReadingTypography;
   private currentLocation: PdfReadingLocationLike | null = null;
   private locationListeners = new Set<(location: ReadingLocation) => void>();
+  private readErrorListeners = new Set<(error: unknown) => void>();
   private toc: Toc | null = null;
   /** 已绘制的高亮批注(按锚点值 → 页码 + 归一化矩形)。 */
   private annotationHighlights = new Map<string, { page: number; rect: PdfHighlight['rect']; color: string }>();
@@ -80,7 +91,7 @@ export class PdfBookDocument implements BookDocument {
   private areaSelectionListeners = new Set<(selection: AreaSelection) => void>();
 
   constructor(options: PdfBookDocumentOptions) {
-    this.bytes = options.bytes;
+    this.source = options.source;
     this.metadata = options.metadata;
     this.pdfLib = options.pdfLib;
     this.rasterize = options.rasterize;
@@ -99,48 +110,103 @@ export class PdfBookDocument implements BookDocument {
     if (this.pdf) {
       throw new Error('该 BookDocument 已打开');
     }
+    const generation = ++this.openGeneration;
     this.container = container;
 
     const lib = this.pdfLib ?? (await loadPdfLib());
-    // 用 `data` 直接交给 PDF.js(与 inspectPdf 一致)。这里已持有完整字节,无需范围读取;
-    // 且 `getDocument({ data })` 会把 ArrayBuffer 转移给 worker,若紧跟在前一次
-    // `getDocument({ data })` 之后用 `getDocument({ range })`,pdfjs 模块级 worker 状态
-    // 会让范围传输读到空文件。复制一份字节再给 `data`,避免脱离本实例持有的 buffer。
-    const document = await lib
-      .getDocument({ data: this.bytes.slice(), isEvalSupported: false })
-      .promise;
-    this.pdf = document;
-
-    await this.readMetadata(document);
-
-    const renderer = new PdfRenderer(
-      {
-        document,
-        container,
-        lib,
-        rasterize: this.rasterize,
-        devicePixelRatio: () => window.devicePixelRatio || 1,
-      },
-      {
-        onPageChange: (page) => this.handlePageChange(page),
-        onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
-        onPageRendered: (page) => this.redrawPage(page),
-        onAreaSelection: (selection) => this.notifyAreaSelection(selection),
-      },
+    if (generation !== this.openGeneration) {
+      return;
+    }
+    const range = createConcurrentRangeTransport(
+      this.source,
+      (size, initialData) => new lib.PDFDataRangeTransport(size, initialData),
     );
-    this.renderer = renderer;
-    renderer.setFlow(this.typography.flow);
-    renderer.setViewport(
-      this.currentLocation?.zoom ?? 100,
-      this.currentLocation?.fit ?? 'width',
-    );
-    this.applyTheme(this.typography.theme);
-    await renderer.mount();
-    this.wireHighlightClick();
+    this.rangeTransport = range;
+    let loadingTask: PdfLoadingTask | null = null;
+    try {
+      loadingTask = lib.getDocument({
+        range: range.transport,
+        isEvalSupported: false,
+        disableStream: true,
+        disableAutoFetch: true,
+      });
+      this.loadingTask = loadingTask;
+      const document = await withRangeFailure(loadingTask.promise, range);
+      if (generation !== this.openGeneration) {
+        await document.destroy().catch(() => undefined);
+        return;
+      }
+      this.pdf = document;
+
+      await withRangeFailure(this.readMetadata(document), range);
+      if (generation !== this.openGeneration) {
+        return;
+      }
+
+      const renderer = new PdfRenderer(
+        {
+          document,
+          container,
+          lib,
+          rasterize: this.rasterize,
+          devicePixelRatio: () => window.devicePixelRatio || 1,
+        },
+        {
+          onPageChange: (page) => this.handlePageChange(page),
+          onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
+          onPageRendered: (page) => this.redrawPage(page),
+          onAreaSelection: (selection) => this.notifyAreaSelection(selection),
+          onError: (error) => this.notifyReadError(error),
+        },
+      );
+      this.renderer = renderer;
+      renderer.setFlow(this.typography.flow);
+      renderer.setViewport(
+        this.currentLocation?.zoom ?? 100,
+        this.currentLocation?.fit ?? 'width',
+      );
+      this.applyTheme(this.typography.theme);
+      await withRangeFailure(renderer.mount(), range);
+      if (generation !== this.openGeneration) {
+        renderer.dispose();
+        this.renderer = null;
+        return;
+      }
+      this.wireHighlightClick();
+    } catch (error) {
+      range.cancel();
+      if (this.rangeTransport === range) {
+        this.rangeTransport = null;
+      }
+      let documentDestroyed = false;
+      if (generation === this.openGeneration && this.pdf) {
+        const document = this.pdf;
+        this.pdf = null;
+        await document.destroy().catch(() => undefined);
+        documentDestroyed = true;
+      }
+      if (!documentDestroyed && this.loadingTask === loadingTask) {
+        await Promise.resolve(loadingTask?.destroy?.()).catch(() => undefined);
+      }
+      if (generation === this.openGeneration) {
+        this.renderer?.dispose();
+        this.renderer = null;
+      }
+      throw error;
+    } finally {
+      if (this.loadingTask === loadingTask) {
+        this.loadingTask = null;
+      }
+    }
   }
 
   getLocation(): ReadingLocation | null {
     return this.currentLocation;
+  }
+
+  onReadError(listener: (error: unknown) => void): () => void {
+    this.readErrorListeners.add(listener);
+    return () => this.readErrorListeners.delete(listener);
   }
 
   getTOC(): Toc {
@@ -310,6 +376,11 @@ export class PdfBookDocument implements BookDocument {
     return this.renderer?.getCurrentPage() ?? null;
   }
 
+  /** 返回已打开 PDF 的页数,用于文档信息和性能验收,不暴露 PDF.js 文档对象。 */
+  getPageCount(): number | null {
+    return this.pdf?.numPages ?? null;
+  }
+
   addAnnotation(annotation: { value: string; color: string }): void {
     const loc = decodePdfTextAnchor(annotation.value);
     if (!loc) {
@@ -394,6 +465,12 @@ export class PdfBookDocument implements BookDocument {
   }
 
   close(): void {
+    this.openGeneration += 1;
+    this.rangeTransport?.cancel();
+    this.rangeTransport = null;
+    const loadingTask = this.loadingTask;
+    this.loadingTask = null;
+    void Promise.resolve(loadingTask?.destroy?.()).catch(() => undefined);
     this.renderer?.dispose();
     this.renderer = null;
     if (this.pdf) {
@@ -404,6 +481,7 @@ export class PdfBookDocument implements BookDocument {
     this.container = null;
     this.currentLocation = null;
     this.locationListeners.clear();
+    this.readErrorListeners.clear();
     this.showAnnotationListeners.clear();
     this.areaSelectionListeners.clear();
     this.annotationHighlights.clear();
@@ -580,6 +658,12 @@ export class PdfBookDocument implements BookDocument {
     }
   }
 
+  private notifyReadError(error: unknown): void {
+    for (const listener of this.readErrorListeners) {
+      listener(error);
+    }
+  }
+
   private async resolveHrefToPage(href: string): Promise<number | null> {
     if (!this.pdf) {
       return null;
@@ -598,8 +682,9 @@ export class PdfBookDocument implements BookDocument {
         return this.pdf.getPageIndex(dest[0]);
       }
       return null;
-    } catch {
-      return null;
+    } catch (error) {
+      this.notifyReadError(error);
+      throw error;
     }
   }
 

@@ -29,7 +29,6 @@ export const IMPORT_COMMAND_NAMES = {
   restoreMaterial: 'restore_material',
   relink: 'relink_material',
   purge: 'purge_material',
-  readManaged: 'read_managed_file',
   managedInfo: 'get_managed_file_info',
   readManagedRange: 'read_managed_file_range',
   recover: 'recover_imports',
@@ -242,13 +241,6 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
     },
     async purgeMaterial(materialId: string): Promise<void> {
       await invokeFn(IMPORT_COMMAND_NAMES.purge, { materialId });
-    },
-    async readManagedFile(materialId: string): Promise<Uint8Array> {
-      const raw = await invokeFn(IMPORT_COMMAND_NAMES.readManaged, { materialId });
-      if (typeof raw !== 'string') {
-        throw new Error('managed file bytes payload is not a string');
-      }
-      return base64ToBytes(raw);
     },
     async openManagedFileSource(materialId: string): Promise<ManagedFileSource> {
       const info = assertManagedFileInfo(

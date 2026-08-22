@@ -89,6 +89,21 @@ export interface PdfOutlineItem {
 /** PDF.js 范围读取传输:由调用方填充 `requestDataRange`。 */
 export interface PdfDataRangeTransport {
   onDataRange(begin: number, chunk: ArrayBuffer): void;
+  requestDataRange?(begin: number, end: number): void;
+  /** PDF.js 在销毁加载任务时调用;自定义传输用它取消排队读取。 */
+  abort?(): void;
+}
+
+/** PDF.js 加载任务,保留可选销毁句柄以支持打开阶段的取消。 */
+export interface PdfLoadingTask {
+  promise: Promise<PdfDocumentProxy>;
+  destroy?: () => Promise<void> | void;
+}
+
+/** PDF.js 只读范围来源的最小 File/Blob 兼容形状。 */
+export interface PdfFileSource {
+  readonly size: number;
+  slice(begin?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
 }
 
 /** PDF.js 库的窄接口(用于注入与测试)。 */
@@ -96,10 +111,30 @@ export interface PdfJsLib {
   GlobalWorkerOptions: { workerSrc: string };
   PDFDataRangeTransport: new (length: number, initialData: unknown) => PdfDataRangeTransport;
   getDocument(options: {
-    data?: Uint8Array;
-    range?: PdfDataRangeTransport;
+    range: PdfDataRangeTransport;
     isEvalSupported: boolean;
-  }): { promise: Promise<PdfDocumentProxy> };
+    /** 禁止 PDF.js 自己建立整文件流,保持所有内容通过范围队列取得。 */
+    disableStream?: boolean;
+    /** 禁止解析阶段预取后续内容,由页面/文档按需触发范围请求。 */
+    disableAutoFetch?: boolean;
+  }): PdfLoadingTask;
+}
+
+/** 测试与导入兼容路径:把已有字节包装成范围来源,不再作为 PDF.js `data` 传入。 */
+export function createPdfSourceFromBytes(bytes: Uint8Array): PdfFileSource {
+  // 该兼容路径只在导入暂存阶段使用;PDF.js 仍只拿到按请求切出的范围,
+  // 不在这里额外复制整份文件。
+  const ownedBytes = bytes;
+  return {
+    size: ownedBytes.byteLength,
+    slice(begin = 0, end = ownedBytes.byteLength) {
+      const start = Math.max(0, Math.min(ownedBytes.byteLength, begin));
+      const stop = Math.max(start, Math.min(ownedBytes.byteLength, end));
+      return {
+        arrayBuffer: async () => ownedBytes.slice(start, stop).buffer as ArrayBuffer,
+      };
+    },
+  };
 }
 
 /** 懒加载并引导 PDF.js 引擎的缓存的 Promise。 */

@@ -1,6 +1,7 @@
 import type { SourceMetadata } from '../../library/material';
-import type { PdfJsLib } from './pdfLibrary';
-import { loadPdfLib } from './pdfLibrary';
+import type { PdfDocumentProxy, PdfFileSource, PdfJsLib, PdfLoadingTask } from './pdfLibrary';
+import { createPdfSourceFromBytes, loadPdfLib } from './pdfLibrary';
+import { createConcurrentRangeTransport, withRangeFailure } from './pdfRangeTransport';
 
 /** 检查失败的领域化分类,前端据此展示可行动的简体中文文案。 */
 export type PdfInspectErrorKind = 'empty' | 'unsupported' | 'corrupt';
@@ -45,24 +46,53 @@ function toStringOrNull(value: unknown): string | null {
 }
 
 /**
- * 检查一份 PDF 字节内容,提取来源元数据与页数。
+ * 检查一份 PDF 范围来源,提取来源元数据与页数。
  * 这是 BookDocument 的雏形:只解析文档代理与元数据,不进入页面渲染。
  * `lib` 可注入伪引擎用于测试;生产默认懒加载真实 PDF.js。
+ *
+ * 兼容旧导入调用方接受 Uint8Array,但也会先包装成范围来源;PDF.js 永远只
+ * 接收 PDFDataRangeTransport,不会收到完整 `data` 副本。
  */
-export async function inspectPdf(bytes: Uint8Array, lib?: PdfJsLib): Promise<PdfInspectResult> {
-  if (bytes.length === 0) {
+export async function inspectPdf(
+  sourceOrBytes: PdfFileSource | Uint8Array,
+  lib?: PdfJsLib,
+): Promise<PdfInspectResult> {
+  // 不使用 `instanceof Uint8Array`:调用方可能来自不同 WebView realm,跨 realm
+  // 的 TypedArray 会让 instanceof 失效。File/Blob 兼容来源稳定拥有 size。
+  const source = typeof (sourceOrBytes as Partial<PdfFileSource>).size === 'number'
+    ? (sourceOrBytes as PdfFileSource)
+    : createPdfSourceFromBytes(sourceOrBytes as Uint8Array);
+  if (source.size === 0) {
     throw new PdfInspectError('文件内容为空,无法导入', 'empty');
   }
-  const hasHeader = findPdfHeader(bytes);
-  const pdfLib = lib ?? (await loadPdfLib());
+  let hasHeader = false;
   try {
-    // `getDocument({ data })` 会把 ArrayBuffer 转移给 worker 并脱离(已经是该 package 的
-    // 既定行为),若直接传调用方的 `bytes`,返回后其 buffer 会被清零,导致后续用同一份
-    // 字节打开阅读文档时读到空文件。这里先复制一份,保证调用方数据不被破坏(工单 #16)。
-    const document = await pdfLib
-      .getDocument({ data: bytes.slice(), isEvalSupported: false })
-      .promise;
-    const { info, metadata } = await document.getMetadata();
+    const headerBytes = new Uint8Array(
+      await source.slice(0, Math.min(source.size, 1024)).arrayBuffer(),
+    );
+    hasHeader = findPdfHeader(headerBytes);
+  } catch (error) {
+    throw new PdfInspectError(
+      `读取 PDF 失败:${error instanceof Error ? error.message : String(error)}`,
+      'corrupt',
+    );
+  }
+  const pdfLib = lib ?? (await loadPdfLib());
+  const range = createConcurrentRangeTransport(
+    source,
+    (size, initialData) => new pdfLib.PDFDataRangeTransport(size, initialData),
+  );
+  let loadingTask: PdfLoadingTask | null = null;
+  let document: PdfDocumentProxy | null = null;
+  try {
+    loadingTask = pdfLib.getDocument({
+      range: range.transport,
+      isEvalSupported: false,
+      disableStream: true,
+      disableAutoFetch: true,
+    });
+    document = await withRangeFailure(loadingTask.promise, range);
+    const { info, metadata } = await withRangeFailure(document.getMetadata(), range);
     // XMP 元数据(dc:title / dc:creator / dc:language)可能返回数组(如多作者),而
     // SourceMetadata 只接受 string | null。统一归一化为字符串:数组以「、」连接,
     // 否则回退到 info 字典里的字符串值。否则多作者 PDF 的 author 会以数组形式传给
@@ -71,7 +101,6 @@ export async function inspectPdf(bytes: Uint8Array, lib?: PdfJsLib): Promise<Pdf
     const author = toStringOrNull(metadata?.get('dc:creator')) ?? (typeof info?.Author === 'string' ? info.Author : null);
     const language = toStringOrNull(metadata?.get('dc:language'));
     const pageCount = document.numPages;
-    await document.destroy().catch(() => undefined);
     return {
       metadata: {
         // 极少数 PDF 无任何标题元数据,回退为空串(界面展示占位),成品书库仍可收录。
@@ -82,9 +111,22 @@ export async function inspectPdf(bytes: Uint8Array, lib?: PdfJsLib): Promise<Pdf
       pageCount,
     };
   } catch (error) {
-    if (hasHeader) {
-      throw new PdfInspectError('文件已损坏:无法解析 PDF 结构', 'corrupt');
+    if (error instanceof PdfInspectError) {
+      throw error;
     }
-    throw new PdfInspectError('不支持的文件格式:无法解析 PDF 结构', 'unsupported');
+    const detail = error instanceof Error && error.message.trim().length > 0
+      ? `:${error.message}`
+      : '';
+    if (hasHeader) {
+      throw new PdfInspectError(`文件已损坏:无法解析 PDF 结构${detail}`, 'corrupt');
+    }
+    throw new PdfInspectError(`不支持的文件格式:无法解析 PDF 结构${detail}`, 'unsupported');
+  } finally {
+    range.cancel();
+    if (document) {
+      await document.destroy().catch(() => undefined);
+    } else {
+      await Promise.resolve(loadingTask?.destroy?.()).catch(() => undefined);
+    }
   }
 }

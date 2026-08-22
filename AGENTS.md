@@ -86,6 +86,7 @@ pnpm verify:macos           # 校验 macOS 核心阅读冒烟的 Tauri 打包、
 pnpm verify:ipados          # 校验 iPadOS 核心阅读冒烟的原生配置与工作流步骤
 pnpm verify:android         # 校验 Android 平板核心阅读冒烟的原生配置与工作流步骤
 pnpm --dir apps/reader test:real-epub-p0 # 真实 Chrome 验证 EPUB 2/3 P0 阅读矩阵
+pnpm --dir apps/reader test:reading-performance # 真实 Chrome 验证大型 EPUB/PDF 范围读取性能
 pnpm verify:v1              # 第一版跨端交付静态总验收
 cargo test                  # Rust 迁移与 workspace 持久化契约
 cargo clippy --workspace --all-targets -- -D warnings

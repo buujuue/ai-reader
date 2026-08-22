@@ -15,6 +15,14 @@ import { useReaderRuntime } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
 
+async function readManagedText(
+  repository: ReturnType<typeof createInMemoryImportRepository>,
+  materialId: string,
+): Promise<string> {
+  const source = await repository.openManagedFileSource(materialId);
+  return source.text();
+}
+
 function createFakeViewHost(): FoliateViewHost {
   return {
     async open() {},
@@ -157,14 +165,10 @@ describe('Markdown 命令', () => {
     expect(material.documentVersion).toBe(1);
     expect(material.fingerprint).not.toBe(originalFingerprint);
     // 托管文件已写入新内容。
-    const bytes = await importRepository.readManagedFile(materialId);
-    expect(new TextDecoder().decode(bytes)).toBe('# 新内容');
+    expect(await readManagedText(importRepository, materialId)).toBe('# 新内容');
   });
 
   it('编辑、保存、关闭后重新打开仍从 ManagedFileSource 读取正式文本', async () => {
-    const readManagedFile = vi
-      .spyOn(importRepository, 'readManagedFile')
-      .mockRejectedValue(new Error('Markdown 不应使用全量文件接口'));
     const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
     useMarkdownSessionStore.getState().openSession(materialId, MARKDOWN_SOURCE, 0);
     useMarkdownSessionStore.getState().updateText(materialId, '# 重新打开的新内容');
@@ -180,7 +184,6 @@ describe('Markdown 命令', () => {
       '# 重新打开的新内容',
     );
     expect(openManagedFileSource).toHaveBeenCalledWith(materialId);
-    expect(readManagedFile).not.toHaveBeenCalled();
   });
 
   it('放弃修改把缓冲区回退到已保存文本', async () => {
@@ -363,9 +366,7 @@ describe('Markdown 命令', () => {
     await registry.execute(COMMAND_IDS.markdownResolveRecovery, materialId, 'discard');
 
     expect(await importRepository.listMarkdownRecoveries()).toEqual([]);
-    expect(new TextDecoder().decode(await importRepository.readManagedFile(materialId))).toBe(
-      MARKDOWN_SOURCE,
-    );
+    expect(await readManagedText(importRepository, materialId)).toBe(MARKDOWN_SOURCE);
   });
 
   it('损坏快照收到恢复意图时不会被误当作丢弃', async () => {
@@ -394,9 +395,7 @@ describe('Markdown 命令', () => {
 
     expect(useShellUiStore.getState().markdownRecoverySnapshots[0]?.status).toBe('conflict');
     expect(useMarkdownSessionStore.getState().getSession(materialId)?.text).not.toBe('# 未保存 v0');
-    expect(new TextDecoder().decode(await importRepository.readManagedFile(materialId))).toBe(
-      '# 正式 v1',
-    );
+    expect(await readManagedText(importRepository, materialId)).toBe('# 正式 v1');
   });
 
   it('正式保存成功后清理恢复快照', async () => {
@@ -428,9 +427,7 @@ describe('Markdown 命令', () => {
     releaseSave?.();
     await saving;
 
-    expect(new TextDecoder().decode(await importRepository.readManagedFile(materialId))).toBe(
-      '# 本次保存内容',
-    );
+    expect(await readManagedText(importRepository, materialId)).toBe('# 本次保存内容');
     expect(useMarkdownSessionStore.getState().getSession(materialId)).toMatchObject({
       text: '# 保存期间的新内容',
       dirty: true,
@@ -477,9 +474,7 @@ describe('Markdown 命令', () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(useShellUiStore.getState().statusMessage).toContain('恢复快照写入失败');
-    expect(new TextDecoder().decode(await importRepository.readManagedFile(materialId))).toBe(
-      MARKDOWN_SOURCE,
-    );
+    expect(await readManagedText(importRepository, materialId)).toBe(MARKDOWN_SOURCE);
   });
 
   it('移动端强制终止前可立即 flush 最新脏缓冲区', async () => {

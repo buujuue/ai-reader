@@ -4,6 +4,7 @@
 
 - `maliciousContent.ts`：包含脚本、嵌入对象、事件属性和危险 URL 的 EPUB XHTML 与 Markdown 夹具。
 - `epub/`：EPUB 核心阅读循环的确定性样书、资源预算契约和可序列化基准记录。
+- `pdf/`：确定性大型 PDF 与范围读取回归夹具。
 
 ## 依赖其它文件夹（树）
 

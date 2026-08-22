@@ -20,6 +20,8 @@ export interface PdfRendererCallbacks {
   onPageRendered?: (page: number) => void;
   /** 扫描页区域拖选完成,供 PdfBookDocument 转发到工具栏。 */
   onAreaSelection?: (selection: AreaSelection) => void;
+  /** 页面范围读取或渲染失败时的诊断回调。 */
+  onError?: (error: unknown) => void;
 }
 
 export interface PdfRendererOptions {
@@ -312,6 +314,7 @@ export class PdfRenderer {
     }
     const renderer = new PdfPageRenderer(pageNumber, this.rasterize, {
       onAreaSelection: this.callbacks.onAreaSelection,
+      onError: this.callbacks.onError,
     });
     this.pageRenderers.set(pageNumber, renderer);
     return renderer;

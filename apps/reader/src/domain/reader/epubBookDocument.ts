@@ -69,6 +69,8 @@ export class EpubBookDocument implements BookDocument {
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
   private contentCreateListeners = new Set<(doc: Document) => void>();
+  private readErrorListeners = new Set<(error: unknown) => void>();
+  private removeHostReadErrorListener: (() => void) | null = null;
 
   constructor(options: EpubBookDocumentOptions) {
     // BookDocument 只持有只读来源;清洗器与 renderer 后续只能处理派生字符串,
@@ -122,6 +124,11 @@ export class EpubBookDocument implements BookDocument {
         ...(this.searchIndexCache ? { cache: this.searchIndexCache } : {}),
       },
     });
+    this.removeHostReadErrorListener = view.onReadError?.((error) => {
+      for (const listener of this.readErrorListeners) {
+        listener(error);
+      }
+    }) ?? null;
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);
@@ -151,6 +158,11 @@ export class EpubBookDocument implements BookDocument {
     this.progressListeners.add(listener);
     if (this.currentProgress) listener(this.currentProgress);
     return () => this.progressListeners.delete(listener);
+  }
+
+  onReadError(listener: (error: unknown) => void): () => void {
+    this.readErrorListeners.add(listener);
+    return () => this.readErrorListeners.delete(listener);
   }
 
   async goToLocation(location: ReadingLocation): Promise<void> {
@@ -266,6 +278,8 @@ export class EpubBookDocument implements BookDocument {
   }
 
   close(): void {
+    this.removeHostReadErrorListener?.();
+    this.removeHostReadErrorListener = null;
     this.host?.close();
     this.host = null;
     this.container = null;
@@ -276,6 +290,7 @@ export class EpubBookDocument implements BookDocument {
     this.externalLinkListeners.clear();
     this.contentCreateListeners.clear();
     this.progressListeners.clear();
+    this.readErrorListeners.clear();
   }
 
   private wireSecurity(): void {

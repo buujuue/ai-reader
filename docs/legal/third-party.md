@@ -71,6 +71,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 已于第 6 个切片(PDF 固定版式阅读, 工单 #14)经 npm 引入上游 `pdfjs-dist@5.7.284`(Apache-2.0), 来源 [mozilla/pdf.js](https://github.com/mozilla/pdf.js)。
 - 使用范围:范围读取、解码、渲染、文本层与封面提取;所有直接调用集中在 `apps/reader/src/domain/reader/pdf/` 子模块, 上层只经 `PdfBookDocument`(实现 `BookDocument`)窄接口交互。
 - 安全边界:加载时关闭 `isEvalSupported`, 不执行 PDF 内脚本;渲染内容不触发远程资源加载。
+- 工单 #35 的范围传输采用 Readest `packages/foliate-js/pdf.js` 的并发队列思路作为行为参考，未直接复制其代码；AI Reader 保持自己的 `ManagedFileSource` 缓存、PDF.js 窄接口与生命周期实现。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/pdfjs-dist@5.7.284/node_modules/pdfjs-dist/LICENSE`。
 
 ## marked 引入记录

@@ -59,6 +59,8 @@ export interface FoliateViewHost {
   clearSearch(): void;
   /** 订阅阅读位置变化(CFI)。返回取消订阅函数。 */
   onRelocate(listener: (cfi: string) => void): () => void;
+  /** 订阅打开后发生的内容读取错误;宿主不得静默改用整本文件。 */
+  onReadError?(listener: (error: unknown) => void): () => void;
   /** 订阅书内链接点击,收到待跳转的 href。返回取消订阅函数。 */
   onInternalLink(listener: (href: string) => void): () => void;
   /** 订阅书内点击的外部链接,收到目标 URL。返回取消订阅函数。 */

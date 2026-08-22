@@ -225,14 +225,6 @@ export function createInMemoryImportRepository(
       trashed.delete(materialId);
     },
 
-    async readManagedFile(materialId): Promise<Uint8Array> {
-      const bytes = managedBytes.get(materialId);
-      if (!bytes) {
-        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
-      }
-      return new Uint8Array(bytes);
-    },
-
     async openManagedFileSource(materialId): Promise<ManagedFileSource> {
       const internal = requireInternal(materials, materialId);
       if (!managedBytes.has(materialId)) {

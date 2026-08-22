@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { ManagedFileSource } from '../../library/managedFileSource';
 import { inspectPdf, PdfInspectError } from './pdfInspector';
 import { makeFakeDocument, makeFakeLib } from './pdfTestFakes';
 
@@ -72,5 +73,30 @@ describe('inspectPdf 错误 PDF 分类', () => {
       author: '作者甲、作者乙',
       language: 'zh-CN',
     });
+  });
+
+  it('检查阶段复用同一个 ManagedFileSource 的范围缓存,不复制整份 PDF', async () => {
+    const bytes = new Uint8Array(256 * 1024);
+    bytes.set(new TextEncoder().encode('%PDF-1.7\n'));
+    const readRange = vi.fn(async (offset: number, length: number) =>
+      bytes.slice(offset, offset + length),
+    );
+    const source = new ManagedFileSource(
+      { name: 'large.pdf', size: bytes.byteLength },
+      readRange,
+    );
+    const document = makeFakeDocument(2);
+    const lib = makeFakeLib(document);
+    (lib.getDocument as ReturnType<typeof vi.fn>).mockImplementation((options) => {
+      options.range.requestDataRange?.(0, 64);
+      return { promise: Promise.resolve(document) };
+    });
+
+    await inspectPdf(source, lib);
+    await inspectPdf(source, lib);
+
+    expect((lib.getDocument as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toHaveProperty('data');
+    expect(readRange).toHaveBeenCalledTimes(1);
+    expect(readRange.mock.calls[0]).toEqual([0, 128 * 1024]);
   });
 });

@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:real-render": "node scripts/verify-real-render.mjs",
     "test:real-epub-p0": "node scripts/verify-epub-p0.mjs",
+    "test:reading-performance": "node scripts/verify-reading-performance.mjs",
     "test:real-search": "node scripts/verify-search.mjs",
     "test:real-annotations": "node scripts/verify-annotations.mjs",
     "verify:android": "node ../../scripts/verify-android-core-config.mjs",

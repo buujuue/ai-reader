@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest';
 
-import type { ImportContractHarness } from './importRepository.contract';
+import {
+  readManagedSourceBytes,
+  type ImportContractHarness,
+} from './importRepository.contract';
 
 const COVER_PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -107,13 +110,13 @@ export function metadataRepositoryContract(harness: ImportContractHarness): void
 
   it('覆盖不改变托管文件字节(内容身份与锚点稳定)', async () => {
     const { repository, material } = await stageOne();
-    const before = await repository.readManagedFile(material.id);
+    const before = await readManagedSourceBytes(repository, material.id);
 
     const updated = await repository.applyMaterialMetadata(material.id, '整理标题', null);
 
     expect(updated.fingerprint).toBe(material.fingerprint);
     expect(updated.sourceFileName).toBe('book.epub');
-    const after = await repository.readManagedFile(material.id);
+    const after = await readManagedSourceBytes(repository, material.id);
     expect(new TextDecoder().decode(after)).toBe(new TextDecoder().decode(before));
   });
 }

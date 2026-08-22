@@ -14,6 +14,7 @@ interface FakeHost extends FoliateViewHost {
   emitContentData: (type: string, data: string) => void;
   emitInternalLink: (href: string) => void;
   emitExternalLink: (href: string) => void;
+  emitReadError: (error: unknown) => void;
   closed: boolean;
   emitContentDuringOpen: boolean;
 }
@@ -24,6 +25,7 @@ function createFakeHost(): FakeHost {
   const contentListeners: Array<(type: string, data: string) => string> = [];
   const internalLinkListeners: Array<(href: string) => void> = [];
   const externalLinkListeners: Array<(href: string) => void> = [];
+  const readErrorListeners: Array<(error: unknown) => void> = [];
   const host: FakeHost = {
     openedBytes: undefined,
     initLocation: undefined,
@@ -102,6 +104,13 @@ function createFakeHost(): FakeHost {
         if (index >= 0) externalLinkListeners.splice(index, 1);
       };
     },
+    onReadError(listener: (error: unknown) => void) {
+      readErrorListeners.push(listener);
+      return () => {
+        const index = readErrorListeners.indexOf(listener);
+        if (index >= 0) readErrorListeners.splice(index, 1);
+      };
+    },
     onContentData(listener: (type: string, data: string) => string) {
       contentListeners.push(listener);
       return () => {
@@ -140,6 +149,9 @@ function createFakeHost(): FakeHost {
     },
     emitExternalLink(href: string) {
       for (const listener of externalLinkListeners) listener(href);
+    },
+    emitReadError(error: unknown) {
+      for (const listener of readErrorListeners) listener(error);
     },
   };
   return host;
@@ -282,6 +294,19 @@ describe('EpubBookDocument', () => {
 
     expect(internalListener).toHaveBeenCalledWith('chapter2.xhtml');
     expect(externalListener).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('打开后的宿主读取错误会转发给工作台诊断订阅者', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    const listener = vi.fn();
+    book.onReadError?.(listener);
+
+    await book.open(document.createElement('div'));
+    const error = new Error('章节范围读取失败');
+    host.emitReadError(error);
+
+    expect(listener).toHaveBeenCalledWith(error);
   });
 
   it('search 委托宿主并返回渐进事件', async () => {

@@ -62,6 +62,9 @@ export interface BookDocument {
   /** 订阅当前可展示的位置反馈。 */
   onProgressChange?(listener: (progress: ReadingProgress) => void): () => void;
 
+  /** 订阅打开后发生的内容读取/渲染错误,供工作台展示可诊断反馈。 */
+  onReadError?(listener: (error: unknown) => void): () => void;
+
   /** 恢复到指定阅读位置。 */
   goToLocation(location: ReadingLocation): Promise<void>;
 

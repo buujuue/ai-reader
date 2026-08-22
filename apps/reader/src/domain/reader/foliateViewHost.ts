@@ -179,6 +179,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private internalLinkListeners = new Set<(href: string) => void>();
   private externalLinkListeners = new Set<(href: string) => void>();
   private showAnnotationListeners = new Set<(value: string) => void>();
+  private readErrorListeners = new Set<(error: unknown) => void>();
   private canonicalSearchConfig: FoliateViewOpenOptions['canonicalSearch'] | null = null;
   private canonicalSearchIndex: CanonicalSearchIndexSnapshot | null = null;
   private canonicalSearchIndexKey: string | null = null;
@@ -229,7 +230,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     const prepareBook = (candidate: unknown): void => {
       const foliateBook = asFoliateBook(candidate);
       if (foliateBook) {
-        installSectionFallbacks(foliateBook, this.fallbackUrls);
+        installSectionFallbacks(foliateBook, this.fallbackUrls, (error) => {
+          this.notifyReadError(error);
+        });
         installCanonicalDocumentFactories(foliateBook, this.canonicalSearchConfig);
       }
       // 先接入 Loader 的 data 事件,再让 foliate-view 创建 renderer,确保首章
@@ -403,6 +406,11 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     return () => this.element.removeEventListener('relocate', handler);
   }
 
+  onReadError(listener: (error: unknown) => void): () => void {
+    this.readErrorListeners.add(listener);
+    return () => this.readErrorListeners.delete(listener);
+  }
+
   onInternalLink(listener: (href: string) => void): () => void {
     this.internalLinkListeners.add(listener);
     return () => this.internalLinkListeners.delete(listener);
@@ -510,6 +518,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       this.internalLinkListeners.clear();
       this.externalLinkListeners.clear();
       this.showAnnotationListeners.clear();
+      this.readErrorListeners.clear();
       this.drawAnnotationCleanup?.();
       this.showAnnotationCleanup?.();
       this.contentCleanup = null;
@@ -539,6 +548,12 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private clearContentSanitization(): void {
     this.contentCleanup?.();
     this.contentCleanup = null;
+  }
+
+  private notifyReadError(error: unknown): void {
+    for (const listener of this.readErrorListeners) {
+      listener(error);
+    }
   }
 
   private canSearchCanonicalSections(): boolean {
@@ -859,7 +874,11 @@ function installCanonicalDocumentFactories(
  * 非核心资源失败时回退到只含已清洗静态内容的章节 URL,保住正文阅读；
  * 若章节文本本身也不可读,继续抛出原错误,由上层按整章失败展示。
  */
-function installSectionFallbacks(book: FoliateBook, fallbackUrls: Set<string>): void {
+function installSectionFallbacks(
+  book: FoliateBook,
+  fallbackUrls: Set<string>,
+  onReadError?: (error: unknown) => void,
+): void {
   for (const section of book.sections ?? []) {
     const sectionId = section.id;
     const loadText = section.loadText
@@ -876,6 +895,7 @@ function installSectionFallbacks(book: FoliateBook, fallbackUrls: Set<string>): 
       try {
         return await originalLoad.call(section);
       } catch (error) {
+        onReadError?.(error);
         if (fallbackUrl) {
           return fallbackUrl;
         }

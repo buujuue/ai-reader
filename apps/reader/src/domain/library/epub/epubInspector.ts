@@ -147,10 +147,23 @@ export async function inspectEpub(input: ZipSource | Uint8Array): Promise<EpubIn
       throw new EpubInspectError('EPUB 资源预算超限,无法安全导入', 'budget', 'budget');
     }
     if (error instanceof ZipError) {
-      throw new EpubInspectError('EPUB 包损坏,无法完成预检', 'corrupt', 'zip');
+      throw new EpubInspectError(
+        `EPUB 包损坏,无法完成预检${errorDetail(error)}`,
+        'corrupt',
+        'zip',
+      );
     }
-    throw new EpubInspectError('EPUB 包损坏,无法完成结构预检', 'corrupt');
+    throw new EpubInspectError(
+      `EPUB 包损坏,无法完成结构预检${errorDetail(error)}`,
+      'corrupt',
+    );
   }
+}
+
+function errorDetail(error: unknown): string {
+  return error instanceof Error && error.message.trim().length > 0
+    ? `:${error.message}`
+    : '';
 }
 
 async function inspectEpubInner(

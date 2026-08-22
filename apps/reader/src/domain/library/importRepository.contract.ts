@@ -11,6 +11,15 @@ export interface ImportContractHarness {
   registerCoverSource?(name: string, bytes: Uint8Array): void;
 }
 
+/** 仅供契约测试读取公开 Source 的完整内容，不代表生产 Repository 暴露全量读取命令。 */
+export async function readManagedSourceBytes(
+  repository: Pick<ImportRepository, 'openManagedFileSource'>,
+  materialId: string,
+): Promise<Uint8Array> {
+  const source = await repository.openManagedFileSource(materialId);
+  return new Uint8Array(await source.arrayBuffer());
+}
+
 /** TypeScript 导入契约:内存 Adapter 与 Tauri Adapter 必须通过同一组断言。 */
 export function importRepositoryContract(harness: ImportContractHarness): void {
   it('提交后生成稳定 BookId 并可在书库中列出', async () => {
@@ -100,7 +109,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     await expect(repository.readStagedFile(staged)).rejects.toThrow();
   });
 
-  it('读取已提交托管文件返回提交时的原始字节', async () => {
+  it('通过托管 Source 读取已提交材料仍返回提交时的原始字节', async () => {
     const repository = harness.createRepository();
     const staged = await harness.stage('book.epub', encodeUtf8('managed-bytes'));
     const material = await repository.commitImport(staged, {
@@ -109,7 +118,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
       language: null,
     });
 
-    const bytes = await repository.readManagedFile(material.id);
+    const bytes = await readManagedSourceBytes(repository, material.id);
 
     expect(new TextDecoder().decode(bytes)).toBe('managed-bytes');
   });
@@ -136,7 +145,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     await expect(repository.openManagedFileSource('no-such-id')).rejects.toThrow();
   });
 
-  it('读取托管文件返回独立副本,运行时修改不会改写原书', async () => {
+  it('托管 Source 返回独立副本,运行时修改不会改写原书', async () => {
     const repository = harness.createRepository();
     const original = encodeUtf8('immutable-source');
     const staged = await harness.stage('book.epub', original);
@@ -146,18 +155,18 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
       language: null,
     });
 
-    const returned = await repository.readManagedFile(material.id);
+    const returned = await readManagedSourceBytes(repository, material.id);
     returned[0] = 'X'.charCodeAt(0);
 
-    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe(
+    expect(new TextDecoder().decode(await readManagedSourceBytes(repository, material.id))).toBe(
       'immutable-source',
     );
   });
 
-  it('读取不存在的托管文件抛出错误', async () => {
+  it('打开不存在的托管 Source 抛出错误', async () => {
     const repository = harness.createRepository();
 
-    await expect(repository.readManagedFile('no-such-id')).rejects.toThrow();
+    await expect(repository.openManagedFileSource('no-such-id')).rejects.toThrow();
   });
 
   it('暂存一个不存在的源文件抛出错误(磁盘错误边界)', async () => {
@@ -188,7 +197,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     await repository.recoverImports();
 
     expect(await repository.listMaterials()).toHaveLength(1);
-    const bytes = await repository.readManagedFile(material.id);
+    const bytes = await readManagedSourceBytes(repository, material.id);
     expect(new TextDecoder().decode(bytes)).toBe('keep-me');
   });
 
@@ -208,7 +217,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     expect(updated.id).toBe(material.id);
     expect(updated.documentVersion).toBe(1);
     expect(updated.fingerprint).not.toBe(originalFingerprint);
-    const bytes = await repository.readManagedFile(material.id);
+    const bytes = await readManagedSourceBytes(repository, material.id);
     expect(new TextDecoder().decode(bytes)).toBe('第二版内容');
   });
 
@@ -252,7 +261,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
       baseDocumentVersion: 0,
       status: 'available',
     });
-    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe('正式内容');
+    expect(new TextDecoder().decode(await readManagedSourceBytes(repository, material.id))).toBe('正式内容');
     expect((await repository.listMaterials())[0]).toMatchObject({
       documentVersion: 0,
       fingerprint: material.fingerprint,
@@ -273,7 +282,7 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
 
     const [snapshot] = await repository.listMarkdownRecoveries();
     expect(snapshot?.status).toBe('conflict');
-    expect(new TextDecoder().decode(await repository.readManagedFile(material.id))).toBe('正式 v1');
+    expect(new TextDecoder().decode(await readManagedSourceBytes(repository, material.id))).toBe('正式 v1');
   });
 
   it('显式丢弃恢复快照是幂等的', async () => {

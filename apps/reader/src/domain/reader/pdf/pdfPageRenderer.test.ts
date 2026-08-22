@@ -97,6 +97,20 @@ describe('PdfPageRenderer 画布内存预算', () => {
     expect(renderer.getBitmapArea()).toBeGreaterThan(0);
   });
 
+  it('当前页面图像读取失败时向上层传播并保留诊断回调', async () => {
+    const page = makeFakePage({ width: 200, height: 300 });
+    const error = new Error('range denied');
+    const onError = vi.fn();
+    const renderer = new PdfPageRenderer(
+      1,
+      () => ({ promise: Promise.reject(error), cancel: vi.fn() }),
+      { onError },
+    );
+
+    await expect(renderer.render(page, page.getViewport({ scale: 1 }), 1)).rejects.toBe(error);
+    expect(onError).toHaveBeenCalledWith(error);
+  });
+
   it('扫描页拖选区域时回调页码和归一化矩形', async () => {
     const page = makeFakePage({ width: 200, height: 300 });
     const onAreaSelection = vi.fn();

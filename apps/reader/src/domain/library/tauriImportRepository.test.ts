@@ -125,14 +125,6 @@ function createFakeTauriBackend(): {
         stashed.delete(staged.id);
         return material;
       }
-      case IMPORT_COMMAND_NAMES.readManaged: {
-        const materialId = (args as { materialId?: unknown }).materialId as string;
-        const bytes = managedBytes.get(materialId);
-        if (!bytes) {
-          throw new Error('managed file missing');
-        }
-        return btoaBinary(bytes);
-      }
       case IMPORT_COMMAND_NAMES.managedInfo: {
         const materialId = (args as { materialId?: unknown }).materialId as string;
         const material = materials.get(materialId);
@@ -459,7 +451,6 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.restoreMaterial).toBe('restore_material');
     expect(IMPORT_COMMAND_NAMES.relink).toBe('relink_material');
     expect(IMPORT_COMMAND_NAMES.purge).toBe('purge_material');
-    expect(IMPORT_COMMAND_NAMES.readManaged).toBe('read_managed_file');
     expect(IMPORT_COMMAND_NAMES.managedInfo).toBe('get_managed_file_info');
     expect(IMPORT_COMMAND_NAMES.readManagedRange).toBe('read_managed_file_range');
     expect(IMPORT_COMMAND_NAMES.recover).toBe('recover_imports');
@@ -500,20 +491,6 @@ describe('TauriImportRepository 边界映射', () => {
 
     expect(received?.staged).toEqual({ id: 'x', originalFileName: 'book.epub', fingerprint: 'f' });
     expect(new TextDecoder().decode(bytes)).toBe('hello');
-  });
-
-  it('读取托管文件把 materialId 放入参数并解码 base64', async () => {
-    let received: Record<string, unknown> | undefined;
-    const invoke: TauriInvoke = async (_command, args) => {
-      received = args;
-      return btoaBinary(new TextEncoder().encode('managed'));
-    };
-
-    const repository = createTauriImportRepository(invoke);
-    const bytes = await repository.readManagedFile('mat-1');
-
-    expect(received?.materialId).toBe('mat-1');
-    expect(new TextDecoder().decode(bytes)).toBe('managed');
   });
 
   it('打开范围来源只把 materialId 传给元数据命令,范围命令不携带文件路径', async () => {

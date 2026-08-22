@@ -150,19 +150,6 @@ pub fn purge_material(
     })
 }
 
-/// 读取已提交托管文件的原始字节(base64),交给前端 BookDocument 打开阅读。
-#[tauri::command]
-pub fn read_managed_file(
-    database: State<'_, DatabaseHandle>,
-    paths: State<'_, LibraryPaths>,
-    material_id: String,
-) -> Result<String, AppError> {
-    let bytes = database.with_connection(|connection| {
-        ImportRepository::new(connection).read_managed(&material_id, &paths)
-    })?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
-}
-
 /// 返回活跃托管材料的只读来源描述。前端只获得名称和长度，不获得文件路径。
 #[tauri::command]
 pub fn get_managed_file_info(

@@ -3,14 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createConcurrentRangeTransport,
   MAX_CONCURRENT_RANGES,
-  type RangeFileLike,
 } from './pdfRangeTransport';
+import type { PdfFileSource } from './pdfLibrary';
 
 const BATCH_MS = 5;
 
 /** 构造一个可追踪在途读取的文件:每次 slice 递增 active,读毕递减。 */
 function makeTrackingFile(batchMs = 5): {
-  file: RangeFileLike;
+  file: PdfFileSource;
   maxActive: { value: number };
   ranges: Array<[number, number]>;
 } {
@@ -93,13 +93,15 @@ describe('createConcurrentRangeTransport 范围读取并发上限', () => {
     expect(onDataRange).toHaveBeenCalledWith(100, expect.any(ArrayBuffer));
   });
 
-  it('某段读取失败时释放并发槽并继续派发后续范围', async () => {
+  it('某段读取失败时停止队列并向上层报告区间上下文', async () => {
     const batchMs = 1;
     let active = 0;
     let maxActive = 0;
-    const file: RangeFileLike = {
+    const ranges: Array<[number, number]> = [];
+    const file: PdfFileSource = {
       size: 10_000,
-      slice(begin: number) {
+      slice(begin: number, end: number) {
+        ranges.push([begin, end]);
         active += 1;
         maxActive = Math.max(maxActive, active);
         return {
@@ -115,21 +117,65 @@ describe('createConcurrentRangeTransport 范围读取并发上限', () => {
       },
     };
     const onDataRange = vi.fn();
-    const { transport, runtime } = createConcurrentRangeTransport(
+    const failures: Error[] = [];
+    const rangeTransport = createConcurrentRangeTransport(
       file,
       (size, _initial) => ({ length: size, onDataRange }),
       2,
     );
-
-    transport.requestDataRange?.(0, 10);
-    transport.requestDataRange?.(20, 30);
-    transport.requestDataRange?.(40, 50);
+    rangeTransport.onFailure((error) => failures.push(error));
+    rangeTransport.transport.requestDataRange?.(0, 10);
+    rangeTransport.transport.requestDataRange?.(20, 30);
+    rangeTransport.transport.requestDataRange?.(40, 50);
 
     await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(rangeTransport.runtime.active).toBe(0);
+    expect(rangeTransport.runtime.queued).toBe(0);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(failures[0]).toMatchObject({ begin: 0, end: 10 });
+    expect(ranges).not.toContainEqual([40, 50]);
+    expect(onDataRange).not.toHaveBeenCalled();
+  });
+
+  it('取消时清空排队范围,并忽略已在途读取的结果', async () => {
+    let releaseFirst!: (value: ArrayBuffer) => void;
+    const onDataRange = vi.fn();
+    const file: PdfFileSource = {
+      size: 100,
+      slice(begin: number) {
+        if (begin === 0) {
+          return { arrayBuffer: () => new Promise<ArrayBuffer>((resolve) => { releaseFirst = resolve; }) };
+        }
+        return { arrayBuffer: async () => new ArrayBuffer(10) };
+      },
+    };
+    const { transport, runtime, cancel } = createConcurrentRangeTransport(
+      file,
+      (size, _initial) => ({ length: size, onDataRange }),
+      1,
+    );
+
+    transport.requestDataRange?.(0, 10);
+    transport.requestDataRange?.(10, 20);
+    cancel();
+    releaseFirst(new ArrayBuffer(10));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runtime.cancelled).toBe(true);
     expect(runtime.active).toBe(0);
     expect(runtime.queued).toBe(0);
-    expect(maxActive).toBeLessThanOrEqual(2);
-    // 失败段不触发 onDataRange,成功段正常回调。
-    expect(onDataRange).toHaveBeenCalledTimes(2);
+    expect(onDataRange).not.toHaveBeenCalled();
+  });
+
+  it('越界范围在触发底层读取前被拒绝', () => {
+    const { file, ranges } = makeTrackingFile();
+    const { transport } = createConcurrentRangeTransport(
+      file,
+      (size, _initial) => ({ length: size, onDataRange: vi.fn() }),
+    );
+
+    expect(() => transport.requestDataRange?.(-1, 10)).toThrow('范围读取越界');
+    expect(() => transport.requestDataRange?.(10, 10_001)).toThrow('范围读取越界');
+    expect(ranges).toHaveLength(0);
   });
 });

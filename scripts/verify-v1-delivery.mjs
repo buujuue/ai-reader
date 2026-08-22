@@ -23,6 +23,10 @@ const dependencies = Object.keys({
 }).join('\n');
 const rustManifest = read('apps/reader/src-tauri/Cargo.toml');
 const androidSmoke = read('.github/scripts/android-emulator-smoke.sh');
+const tauriImportAdapter = read('apps/reader/src/domain/library/tauriImportRepository.ts');
+const tauriCommands = read('apps/reader/src-tauri/src/lib.rs');
+const readerCommands = read('apps/reader/src/workbench/readerCommands.ts');
+const performanceScript = read('apps/reader/scripts/verify-reading-performance.mjs');
 
 const checks = [
   {
@@ -94,6 +98,23 @@ const checks = [
         '画布内存预算',
       ) &&
       read('apps/reader/src/workbench/readerCommands.ts').includes('disposeViewRuntime'),
+  },
+  {
+    name: 'EPUB/PDF/Markdown 阅读边界统一使用 Source 且有性能回归验收',
+    pass:
+      exists('apps/reader/scripts/verify-reading-performance.mjs') &&
+      !tauriImportAdapter.includes("readManaged: 'read_managed_file'") &&
+      !tauriCommands.includes('commands::import::read_managed_file,') &&
+      readerCommands.includes('openManagedFileSource') &&
+      performanceScript.includes('MAX_RANGE_BYTES') &&
+      performanceScript.includes('cumulativeReadBytes >= bytes.byteLength') &&
+      performanceScript.includes('getPageCount'),
+  },
+  {
+    name: '大型阅读范围性能验收已接入持续集成并上传记录',
+    pass:
+      workflow.includes('pnpm --dir apps/reader test:reading-performance') &&
+      workflow.includes('ai-reader-reading-performance-${{ github.sha }}'),
   },
   {
     name: 'TypeScript Repository 与 Tauri Adapter 共用契约测试',

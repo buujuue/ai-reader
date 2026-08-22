@@ -1,16 +1,16 @@
 ---
-status: accepted
+status: accepted（全量托管阅读接口已由 ADR-0030、ADR-0031 与工单 #37 后续收口）
 ---
 
 # ADR-0028：以稳定材料标识提供托管文件范围来源
 
 ## 背景
 
-现有导入 Repository 的 `readManagedFile` 会把托管材料全部读入前端，适合当前已经落地的打开路径，但不适合大型 EPUB、PDF 或未来需要按需读取的格式层。把托管路径传给 WebView 或让格式层直接调用 Tauri 文件 API，会绕过稳定 `BookId`、材料生命周期和 Rust 私有文件边界。
+现有导入 Repository 的全量读取会把托管材料全部读入前端，适合暂存导入、封面和显式快照等边界明确的场景，但不适合大型 EPUB、PDF 或未来需要按需读取的格式层。把托管路径传给 WebView 或让格式层直接调用 Tauri 文件 API，会绕过稳定 `BookId`、材料生命周期和 Rust 私有文件边界。
 
 ## 决策
 
-- `ImportRepository` 增加 `openManagedFileSource(materialId)`，返回只读 `ManagedFileSource`。原有全量 `readManagedFile` 保留给仍明确需要完整字节的兼容/导出路径；EPUB 的打开路径由 ADR-0031 改为统一使用惰性 Source，PDF 与 Markdown 的使用方式分别见 ADR-0030、ADR-0029。
+- `ImportRepository` 增加 `openManagedFileSource(materialId)`，返回只读 `ManagedFileSource`。EPUB 的打开路径由 ADR-0031 改为统一使用惰性 Source，PDF 与 Markdown 的使用方式分别见 ADR-0030、ADR-0029；工单 #37 已移除生产阅读边界的通用全量 `readManagedFile`，仍需完整字节的暂存导入、封面和显式快照使用各自专用协议。
 - `ManagedFileSource` 继承 `File`，同步暴露 `name`、`size`、`type` 等元数据，`slice()`、`arrayBuffer()`、`text()` 和 `stream()` 延迟通过半开区间读取内容。格式层只依赖 File/Blob 兼容面，不依赖 Tauri 命令、SQLite 或文件系统路径。
 - Tauri 端先按稳定 `materialId` 获取托管文件名称和长度，再通过 `read_managed_file_range(materialId, offset, length)` 读取范围。范围语义为 `[offset, offset + length)`，单次最多 8 MiB；Rust 只接受活跃 `ready` 材料，越界、超限、未知材料和缺失托管副本都返回可诊断错误。
 - TypeScript 端按 128 KiB 分块缓存，最多保留 128 块，LRU 淘汰最久未使用分块；同一分块的并发读取共享 Promise。内存 Repository 使用相同 Source 契约，浏览器降级和测试不依赖 Tauri。

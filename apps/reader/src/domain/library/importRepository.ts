@@ -43,12 +43,10 @@ export interface ImportRepository {
   relinkMaterial(materialId: string, staged: StagedImport): Promise<ReadingMaterial>;
   /** 永久删除回收站中的材料:级联清理托管文件、封面与记录。不可恢复。 */
   purgeMaterial(materialId: string): Promise<void>;
-  /** 读取已提交托管文件的原始字节,仅供仓储契约和明确需要全量快照的非阅读流程使用。 */
-  readManagedFile(materialId: string): Promise<Uint8Array>;
   /**
    * 打开只读的惰性托管材料来源。来源只暴露 File/Blob 兼容能力，格式层不接触
    * Tauri 命令、数据库或托管文件路径；Markdown 打开/编辑路径必须使用该来源。
-   * 阅读格式路径必须使用该 Source；不得通过 `readManagedFile` 回退为全量字节缓冲。
+   * 所有阅读格式路径必须使用该 Source；范围读取失败时不得回退为全量字节缓冲。
    */
   openManagedFileSource(materialId: string): Promise<ManagedFileSource>;
   /** 恢复中断的导入:清理暂存区与孤儿托管文件。 */

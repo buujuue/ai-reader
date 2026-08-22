@@ -17,6 +17,8 @@ export type PdfPageRasterizer = (
 
 export interface PdfPageRendererCallbacks {
   onAreaSelection?: ((selection: AreaSelection) => void) | undefined;
+  /** 页面读取/渲染失败时保留错误上下文,由上层命令展示。 */
+  onError?: ((error: unknown) => void) | undefined;
 }
 
 /** 设备像素比上限:过度采样会按 DPR 平方放大内存,这里夹到 2 以控制画布预算
@@ -173,10 +175,14 @@ export class PdfPageRenderer {
     this.renderTask = task;
     try {
       await task.promise;
-    } catch {
-      // 渲染被取消或失败:释放位图,避免占用 GPU 内存。
+    } catch (error) {
+      // 过期/卸载渲染的取消不应打断阅读;当前页面的真实失败必须向上层传播。
       this.canvas.width = 0;
       this.canvas.height = 0;
+      if (!this.disposed && this.generation === generation) {
+        this.callbacks.onError?.(error);
+        throw error;
+      }
       return;
     } finally {
       if (this.renderTask === task) {
@@ -220,8 +226,11 @@ export class PdfPageRenderer {
         pageDims: this.pageBaseDims,
         scale: this.displayScale,
       });
-    } catch {
-      // 文本层失败不影响页面图像显示。
+    } catch (error) {
+      if (!this.disposed && this.generation === generation) {
+        this.callbacks.onError?.(error);
+      }
+      // 文本层是可选增强,图像仍可作为扫描页正文继续显示。
     }
 
     if (this.disposed || this.generation !== generation) {

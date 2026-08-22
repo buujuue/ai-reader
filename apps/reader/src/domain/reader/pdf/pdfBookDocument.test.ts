@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PdfBookDocument } from './pdfBookDocument';
+import { createPdfSourceFromBytes } from './pdfLibrary';
 import { makeFakeDocument, makeFakeLib, makeFakePage, makeFakeRasterizer } from './pdfTestFakes';
 import { decodePdfTextAnchor } from './pdfTextAnchor';
 
@@ -16,7 +17,7 @@ function createDocument(overrides: { pageCount?: number } = {}) {
   const lib = makeFakeLib(document);
   const rasterize = makeFakeRasterizer();
   const book = new PdfBookDocument({
-    bytes: new Uint8Array([1, 2, 3]),
+    source: createPdfSourceFromBytes(new Uint8Array([1, 2, 3])),
     metadata: { title: '示例 PDF', author: '示例作者', language: 'zh' },
     pdfLib: lib,
     rasterize,
@@ -52,8 +53,14 @@ describe('PdfBookDocument', () => {
     await book.open(container);
 
     expect(lib.getDocument).toHaveBeenCalledWith(
-      expect.objectContaining({ isEvalSupported: false }),
+      expect.objectContaining({
+        isEvalSupported: false,
+        disableStream: true,
+        disableAutoFetch: true,
+        range: expect.objectContaining({ requestDataRange: expect.any(Function) }),
+      }),
     );
+    expect((lib.getDocument as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toHaveProperty('data');
     expect(book.getLocation()).toBeNull();
   });
 
@@ -104,7 +111,7 @@ describe('PdfBookDocument', () => {
   });
 
   it('close 释放渲染器并清空位置与目录', async () => {
-    const { book } = createDocument();
+    const { book, document } = createDocument();
     await book.open(makeContainer());
     await book.goToLocation({ kind: 'pdf', page: 2, scrollTop: 0, zoom: 100, fit: 'width' });
 
@@ -112,6 +119,7 @@ describe('PdfBookDocument', () => {
 
     expect(book.getLocation()).toBeNull();
     expect(book.getTOC()).toEqual([]);
+    expect(document.destroy).toHaveBeenCalledTimes(1);
   });
 
   it('search 在带文字层页面产出命中,命中锚点可解码回页码', async () => {

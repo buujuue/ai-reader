@@ -11,7 +11,7 @@ import {
   findVersionMigrationCandidates,
   type VersionMigrationCandidate,
 } from '../domain/library/versionMigration';
-import type { PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
+import { createPdfSourceFromBytes, type PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import { PdfInspectError, inspectPdf } from '../domain/reader/pdf/pdfInspector';
 import { MarkdownInspectError, inspectMarkdown } from '../domain/reader/markdown/markdownInspector';
 
@@ -147,7 +147,7 @@ async function inspectFile(
 ): Promise<{ metadata: SourceMetadata; preflight?: EpubPreflightReport }> {
   const format = formatFromSourceFileName(originalFileName);
   if (format === 'pdf') {
-    const result = await inspectPdf(bytes, pdfLib);
+    const result = await inspectPdf(createPdfSourceFromBytes(bytes), pdfLib);
     return { metadata: result.metadata };
   }
   if (format === 'epub') {
