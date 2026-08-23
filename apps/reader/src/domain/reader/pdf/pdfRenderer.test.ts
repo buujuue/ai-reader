@@ -98,6 +98,45 @@ describe('PdfRenderer 滚动模式', () => {
     expect(mountedPageCount(renderer)).toBeLessThan(30);
     expect(mountedPageCount(renderer)).toBeGreaterThan(0);
   });
+
+  it('视口变化后按新的缩放与适配模式重建页面布局', async () => {
+    const document = makeFakeDocument(3);
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+    await renderer.relayout();
+
+    expect(renderer.getPageRenderer(2)?.element.style.height).not.toBe('1684px');
+    renderer.setViewport(200, 'actual');
+    await renderer.goToPage(2);
+
+    await vi.waitFor(() => {
+      expect(renderer.getPageRenderer(2)?.element.style.height).toBe('1684px');
+    });
+    renderer.dispose();
+  });
+
+  it('容器宽度变化后重建滚动页面的尺寸与偏移', async () => {
+    const document = makeFakeDocument(3);
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      { document, container, lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+    await renderer.relayout();
+    expect(parseFloat(renderer.getPageRenderer(2)?.element.style.width ?? '0')).toBeCloseTo(800);
+
+    Object.defineProperty(container, 'clientWidth', { value: 600, configurable: true });
+    await renderer.relayout();
+
+    expect(parseFloat(renderer.getPageRenderer(2)?.element.style.width ?? '0')).toBeCloseTo(600);
+    renderer.dispose();
+  });
 });
 
 describe('PdfRenderer 视口状态', () => {

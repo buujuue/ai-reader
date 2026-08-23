@@ -6,9 +6,12 @@ import { buildEpub } from '../domain/library/epub/zipWriter';
 import { ManagedFileSource } from '../domain/library/managedFileSource';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
 import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
+import type { BookDocument } from '../domain/reader/bookDocument';
+import type { PdfReadingLocation } from '../domain/reader/readingLocation';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
+import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from '../domain/reader/pdf/pdfTestFakes';
 import { mountViewDocument, registerReaderCommands } from './readerCommands';
 import { useWorkspaceStore } from './workspaceStore';
@@ -99,6 +102,27 @@ describe('Reader 命令', () => {
       materials.push(await importRepository.commitImport(staged, metadata));
     }
     return materials;
+  }
+
+  async function setupWithPdfAndEpub() {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, 'demo.pdf', new TextEncoder().encode('%PDF-1.7\n测试 PDF'));
+    addInMemorySource(sources, 'demo.epub', buildEpub({ title: '切换目标 EPUB' }));
+    importRepository = createInMemoryImportRepository(sources);
+
+    const pdfStage = await importRepository.stageImport('demo.pdf');
+    const pdf = await importRepository.commitImport(pdfStage, {
+      title: '演示 PDF',
+      author: '示例作者',
+      language: 'zh',
+    });
+    const epubStage = await importRepository.stageImport('demo.epub');
+    const epubBytes = await importRepository.readStagedFile(epubStage);
+    const { metadata } = await import('../domain/library/epub/epubInspector').then(({ inspectEpub }) =>
+      inspectEpub(epubBytes),
+    );
+    const epub = await importRepository.commitImport(epubStage, metadata);
+    return { pdf, epub };
   }
 
   beforeEach(() => {
@@ -193,6 +217,194 @@ describe('Reader 命令', () => {
     await vi.waitFor(() => expect(host.open).toHaveBeenCalledOnce());
   });
 
+  it('恢复 PDF 位置时不会让恢复完成后的过期位置事件覆盖目标位置', async () => {
+    const viewId = 'pdf-restore-view';
+    const savedLocation: PdfReadingLocation = {
+      kind: 'pdf',
+      page: 7,
+      scrollTop: 4_321.5,
+      zoom: 150,
+      fit: 'actual',
+    };
+    const staleLocation: PdfReadingLocation = {
+      kind: 'pdf',
+      page: 1,
+      scrollTop: 0,
+      zoom: 100,
+      fit: 'width',
+    };
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      activeEditorGroupId: 'group-1',
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: viewId,
+              materialId: 'pdf-material',
+              location: savedLocation,
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: viewId,
+        },
+      ],
+    });
+
+    const listeners = new Set<(location: PdfReadingLocation) => void>();
+    let currentLocation = savedLocation;
+    const emit = (location: PdfReadingLocation) => {
+      currentLocation = location;
+      for (const listener of listeners) listener(location);
+    };
+    const restore = vi.fn(async (location: PdfReadingLocation) => {
+      emit(location);
+      await Promise.resolve();
+      // 模拟 PDF 首屏重排在恢复完成后才到达的旧位置事件。
+      emit(staleLocation);
+    });
+    const book = {
+      format: 'pdf',
+      metadata: { title: '测试 PDF', author: null, language: 'zh' },
+      async open() {
+        emit(staleLocation);
+      },
+      getLocation: () => currentLocation,
+      goToLocation: restore,
+      onLocationChange(listener: (location: PdfReadingLocation) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      applyTypography() {},
+      onInternalLink() {
+        return () => undefined;
+      },
+      onExternalLink() {
+        return () => undefined;
+      },
+    } as unknown as BookDocument;
+    useReaderRuntime.getState().setDocument(viewId, book);
+
+    const persister = mountViewDocument(book, viewId, document.createElement('div'), savedLocation, {
+      importRepository,
+      workspaceRepository,
+    });
+
+    await vi.waitFor(() => expect(restore).toHaveBeenCalledWith(savedLocation));
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(savedLocation);
+    await persister.dispose();
+  });
+
+  it('PDF 与其他材料互切后恢复页码、滚动位置和视口状态', async () => {
+    const { pdf, epub } = await setupWithPdfAndEpub();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const pdfLib = makeFakeLib(makeFakeDocument(8));
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+      pdfLib,
+      pdfRasterize: makeFakeRasterizer(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, pdf);
+    const pdfViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const pdfDocument = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    const firstPersister = mountViewDocument(
+      pdfDocument,
+      pdfViewId,
+      document.createElement('div'),
+      null,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect(pdfDocument).toBeInstanceOf(PdfBookDocument));
+    await vi.waitFor(() => expect((pdfDocument as PdfBookDocument).getPageCount()).toBe(8));
+
+    const paginatedLocation: PdfReadingLocation = {
+      kind: 'pdf',
+      page: 4,
+      scrollTop: 0,
+      zoom: 125,
+      fit: 'page',
+    };
+    await pdfDocument.goToLocation(paginatedLocation);
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, epub);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(paginatedLocation);
+    const persistedAfterSwitch = await workspaceRepository.loadState();
+    expect(persistedAfterSwitch.editorGroups[0]!.views[0]!.location).toEqual(paginatedLocation);
+
+    await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
+    const reopenedPaginated = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    const secondPersister = mountViewDocument(
+      reopenedPaginated,
+      pdfViewId,
+      document.createElement('div'),
+      useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect((reopenedPaginated as PdfBookDocument).getPageCount()).toBe(8));
+    expect(reopenedPaginated.getLocation()).toEqual(paginatedLocation);
+
+    await registry.execute(COMMAND_IDS.readerSetPdfFlow, pdfViewId, 'scrolled');
+    const scrolledLocation: PdfReadingLocation = {
+      kind: 'pdf',
+      page: 4,
+      scrollTop: 5_321.25,
+      zoom: 175,
+      fit: 'actual',
+    };
+    await reopenedPaginated.goToLocation(scrolledLocation);
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, epub);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(scrolledLocation);
+    const persistedAfterScrolledSwitch = await workspaceRepository.loadState();
+    expect(persistedAfterScrolledSwitch.editorGroups[0]!.views[0]!.location).toEqual(scrolledLocation);
+
+    await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
+    const reopened = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    const thirdPersister = mountViewDocument(
+      reopened,
+      pdfViewId,
+      document.createElement('div'),
+      useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect((reopened as PdfBookDocument).getPageCount()).toBe(8));
+    expect(reopened.getLocation()).toEqual(scrolledLocation);
+
+    // 模拟应用重启:只保留序列化 Workspace,释放所有 PDF.js 活对象后重新恢复活动视图。
+    const restartWorkspace = structuredClone(persistedAfterScrolledSwitch);
+    restartWorkspace.activeEditorGroupId = 'group-1';
+    restartWorkspace.editorGroups[0]!.activeViewId = pdfViewId;
+    await thirdPersister.dispose();
+    useReaderRuntime.getState().closeAll();
+    useWorkspaceStore.getState().hydrate(restartWorkspace);
+    await registry.execute(COMMAND_IDS.readerRestoreView, pdfViewId, pdf, scrolledLocation);
+    const restoredAfterRestart = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    const restartPersister = mountViewDocument(
+      restoredAfterRestart,
+      pdfViewId,
+      document.createElement('div'),
+      scrolledLocation,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect((restoredAfterRestart as PdfBookDocument).getPageCount()).toBe(8));
+    expect(restoredAfterRestart.getLocation()).toEqual(scrolledLocation);
+
+    await firstPersister.dispose();
+    await secondPersister.dispose();
+    await restartPersister.dispose();
+  });
+
   it('材料解析失败时保留标签并把解析错误写入运行时状态', async () => {
     const material = await setupWithEpub();
     vi.spyOn(importRepository, 'openManagedFileSource').mockResolvedValue(
@@ -271,6 +483,30 @@ describe('Reader 命令', () => {
     expect(group.activeViewId).toBe(firstViewId);
     expect(useReaderRuntime.getState().getDocument(firstViewId)).toBe(firstDocument);
     expect(openManagedFileSource).toHaveBeenCalledTimes(1);
+  });
+
+  it('快速连续打开不同材料时最终活动视图不会被过期运行时覆盖', async () => {
+    const materials = await setupWithEpubMaterials();
+    const firstMaterial = materials[0]!;
+    const secondMaterial = materials[1]!;
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await Promise.all([
+      registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial),
+      registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial),
+    ]);
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    const firstViewId = group.views.find((view) => view.materialId === firstMaterial.id)!.id;
+    const secondViewId = group.views.find((view) => view.materialId === secondMaterial.id)!.id;
+    expect(group.activeViewId).toBe(secondViewId);
+    expect(useReaderRuntime.getState().documents.size).toBe(1);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(false);
+    expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(true);
   });
 
   it('switches tabs with one active runtime and restores the saved location', async () => {

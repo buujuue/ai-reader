@@ -89,13 +89,19 @@ interface ActiveViewMount {
   document: BookDocument;
   container: HTMLElement;
   persister: ThrottledPositionPersister;
-  removeReadErrorListener: (() => void) | undefined;
+  disposed: boolean;
+  dispose: () => void;
 }
 
 const activeMounts = new Map<string, ActiveViewMount>();
 const defaultEpubDerivedCache = createEpubDerivedCache<string>();
 const defaultCanonicalSearchIndexCache = createCanonicalSearchIndexCache();
 const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
+
+function isCurrentViewMount(viewId: string, document: BookDocument): boolean {
+  const mount = activeMounts.get(viewId);
+  return mount?.document === document && !mount.disposed;
+}
 
 function describeDocumentOpenError(error: unknown): string {
   const rawMessage =
@@ -360,7 +366,7 @@ function getOrCreatePendingDocument(
 /** 释放失活标签的活对象，但保留 Workspace Store 中的标签、位置和历史。 */
 async function disposeViewRuntime(viewId: string): Promise<void> {
   const activeMount = activeMounts.get(viewId);
-  activeMount?.removeReadErrorListener?.();
+  activeMount?.dispose();
   activeMounts.delete(viewId);
   const persister = persisters.get(viewId);
   if (persister) {
@@ -516,7 +522,7 @@ export function mountViewDocument(
   if (existingMount?.document === document) {
     return existingMount.persister;
   }
-  existingMount?.removeReadErrorListener?.();
+  existingMount?.dispose();
 
   const readiness = prepareViewMountReadiness(viewId);
   useReaderRuntime.getState().setDocumentState(viewId, { status: 'loading' });
@@ -535,7 +541,39 @@ export function mountViewDocument(
   const removeReadErrorListener = document.onReadError?.((error) => {
     reportReaderReadFailure(viewId, error);
   });
-  activeMounts.set(viewId, { document, container, persister, removeReadErrorListener });
+  const removeLocationListener = document.onLocationChange((next) => {
+    if (restoring) {
+      return;
+    }
+    commitLocation(next);
+  });
+  const removeInternalLinkListener = document.onInternalLink((href) => {
+    if (!isCurrentViewMount(viewId, document)) return;
+    navigationIntents.set(viewId, 'push');
+    void document.goToHref(href).catch((error: unknown) => {
+      reportReaderNavigationFailure(viewId, error);
+    });
+  });
+  const removeExternalLinkListener = document.onExternalLink((href) => {
+    if (!isCurrentViewMount(viewId, document)) return;
+    useShellUiStore.getState().openExternalLinkConfirm(href);
+  });
+  let restoring = location !== null;
+  const activeMount: ActiveViewMount = {
+    document,
+    container,
+    persister,
+    disposed: false,
+    dispose: () => {
+      if (activeMount.disposed) return;
+      activeMount.disposed = true;
+      removeReadErrorListener?.();
+      removeLocationListener();
+      removeInternalLinkListener();
+      removeExternalLinkListener();
+    },
+  };
+  activeMounts.set(viewId, activeMount);
 
   // 挂载时应用该材料实际生效的排版(材料级覆盖优先,否则回退全局默认)。
   const materialId = findView(viewId)?.materialId;
@@ -547,7 +585,8 @@ export function mountViewDocument(
   }
 
   // 位置变化:按本次导航意图更新当前阅读位置与导航历史。
-  document.onLocationChange((next) => {
+  function commitLocation(next: ReadingLocation): void {
+    if (!isCurrentViewMount(viewId, document)) return;
     const intent = navigationIntents.get(viewId) ?? 'replace';
     navigationIntents.delete(viewId);
     if (intent === 'push') {
@@ -556,27 +595,21 @@ export function mountViewDocument(
       useWorkspaceStore.getState().setViewLocation(viewId, next);
     }
     persister.update(next);
-  });
-
-  // 书内链接:显式跳转,压入历史节点。
-  document.onInternalLink((href) => {
-    navigationIntents.set(viewId, 'push');
-    void document.goToHref(href).catch((error: unknown) => {
-      reportReaderNavigationFailure(viewId, error);
-    });
-  });
-
-  // 外部链接:先展示目标,经用户确认后由统一 Command 交给系统浏览器。
-  // 阅读 WebView 自身不导航到外部站点(宿主已 preventDefault)。
-  document.onExternalLink((href) => {
-    useShellUiStore.getState().openExternalLinkConfirm(href);
-  });
+  }
 
   void document.open(container)
     .then(async () => {
+      if (!isCurrentViewMount(viewId, document)) return;
       if (location) {
         navigationIntents.set(viewId, 'replace');
         await document.goToLocation(location);
+        if (!isCurrentViewMount(viewId, document)) return;
+        // 恢复期间的首屏/重排事件只属于渲染器初始化,不能覆盖 Workspace
+        // 中已经存在的最后位置。恢复成功后以请求位置作为本次提交值。
+        restoring = false;
+        commitLocation(location);
+      } else {
+        restoring = false;
       }
       readiness.resolve();
       // 文档打开后加载该材料批注并绘制到覆盖层。
@@ -592,7 +625,9 @@ export function mountViewDocument(
     })
     .catch((error: unknown) => {
       readiness.resolve();
+      if (!isCurrentViewMount(viewId, document)) return;
       if (activeMounts.get(viewId)?.document === document) {
+        activeMounts.get(viewId)?.dispose();
         activeMounts.delete(viewId);
         persisters.delete(viewId);
         useReaderRuntime.getState().removeDocument(viewId);
@@ -714,7 +749,7 @@ export function registerReaderCommands(
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   }));
 
-  registry.register(COMMAND_IDS.readerNextPage, async (...args: unknown[]) => {
+  registry.register(COMMAND_IDS.readerNextPage, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     if (!viewId) return;
     navigationIntents.set(viewId, 'replace');
@@ -723,9 +758,9 @@ export function registerReaderCommands(
     } catch (error) {
       reportReaderNavigationFailure(viewId, error);
     }
-  });
+  }));
 
-  registry.register(COMMAND_IDS.readerPrevPage, async (...args: unknown[]) => {
+  registry.register(COMMAND_IDS.readerPrevPage, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     if (!viewId) return;
     navigationIntents.set(viewId, 'replace');
@@ -734,7 +769,7 @@ export function registerReaderCommands(
     } catch (error) {
       reportReaderNavigationFailure(viewId, error);
     }
-  });
+  }));
 
   registry.register(COMMAND_IDS.readerGoToHref, async (...args: unknown[]) => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
@@ -957,7 +992,7 @@ export function registerReaderCommands(
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
-  registry.register(COMMAND_IDS.readerSetPdfViewport, async (...args: unknown[]) => {
+  registry.register(COMMAND_IDS.readerSetPdfViewport, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     const zoom = args[1] as number | undefined;
     const fit = args[2] as PdfFitMode | undefined;
@@ -967,9 +1002,9 @@ export function registerReaderCommands(
     const clamped = Math.min(400, Math.max(25, Math.round(zoom)));
     document.setViewport(clamped, fit);
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-  });
+  }));
 
-  registry.register(COMMAND_IDS.readerSetPdfFlow, async (...args: unknown[]) => {
+  registry.register(COMMAND_IDS.readerSetPdfFlow, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     const flow = args[1] as 'paginated' | 'scrolled' | undefined;
     if (!viewId || !flow) return;
@@ -992,7 +1027,7 @@ export function registerReaderCommands(
       }
     }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-  });
+  }));
 
   registry.register(COMMAND_IDS.readerRestoreView, async (...args: unknown[]) => {
     const viewId = args[0] as string | undefined;

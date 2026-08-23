@@ -69,6 +69,8 @@ export class PdfRenderer {
   private pageCache = new Map<number, Promise<PdfPage>>();
   private resizeObserver: ResizeObserver | null = null;
   private lastScrollWindowKey = '';
+  /** 滚动布局对应的容器宽度;宽度变化时必须重新计算页面 top/height。 */
+  private layoutWidth = 0;
   private disposed = false;
 
   constructor(
@@ -129,7 +131,10 @@ export class PdfRenderer {
 
   /** 挂载并开始监听容器尺寸。 */
   async mount(): Promise<void> {
-    this.resizeObserver = new ResizeObserver(() => this.relayout());
+    this.resizeObserver = new ResizeObserver(() => {
+      this.invalidateLayout();
+      void this.relayout();
+    });
     this.resizeObserver.observe(this.container);
     await this.relayout();
   }
@@ -139,6 +144,7 @@ export class PdfRenderer {
       return;
     }
     this.flow = flow;
+    this.invalidateLayout();
     this.container.style.overflow = flow === 'scrolled' ? 'auto' : 'hidden';
     void this.relayout();
   }
@@ -146,6 +152,9 @@ export class PdfRenderer {
   setViewport(zoom: number, fit: PdfFitMode): void {
     this.zoom = zoom;
     this.fit = fit;
+    // 适配模式/缩放会改变滚动模式下每一页的尺寸和 top 偏移。旧布局
+    // 不能用于恢复页码,否则会把保存的 scrollTop 映射到旧页面几何上。
+    this.invalidateLayout();
     void this.relayout();
   }
 
@@ -156,6 +165,12 @@ export class PdfRenderer {
       await this.relayout();
       this.callbacks.onPageChange(this.currentPage);
     } else {
+      // setFlow/setViewport 会主动使滚动布局失效。恢复位置紧接着发生时,
+      // 必须先完成新视口下的布局,再按目标页设置滚动位置。
+      const clientWidth = this.container.clientWidth || 1;
+      if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
+        await this.relayout();
+      }
       const layout = this.layouts[target - 1];
       if (layout) {
         this.container.scrollTop = layout.top;
@@ -210,7 +225,7 @@ export class PdfRenderer {
 
   private async renderScrolled(clientWidth: number): Promise<void> {
     // 先构建全部页面的布局(仅需 getViewport,不实际光栅化),保证总高与偏移正确。
-    if (this.layouts.length !== this.pageCount) {
+    if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
       this.layouts = [];
       let top = 0;
       for (let i = 1; i <= this.pageCount; i += 1) {
@@ -225,6 +240,8 @@ export class PdfRenderer {
         });
         top += viewport.height + PAGE_GAP;
       }
+      this.layoutWidth = clientWidth;
+      this.lastScrollWindowKey = '';
     }
 
     this.pages.style.display = 'block';
@@ -280,6 +297,12 @@ export class PdfRenderer {
     for (const layout of visible) {
       this.callbacks.onPageRendered?.(layout.pageNumber);
     }
+  }
+
+  private invalidateLayout(): void {
+    this.layouts = [];
+    this.layoutWidth = 0;
+    this.lastScrollWindowKey = '';
   }
 
   /** 滚动模式下页面显示缩放:非 actual 一律按容器宽度适配。 */
@@ -367,6 +390,7 @@ export class PdfRenderer {
       renderer.release();
     }
     this.pageRenderers.clear();
+    this.layoutWidth = 0;
     for (const promise of this.pageCache.values()) {
       void promise.then((page) => page.cleanup()).catch(() => undefined);
     }
