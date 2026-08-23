@@ -234,10 +234,18 @@ export function registerLibraryCommands(
         useShellUiStore.getState().setVersionMigrationCandidates(migrationCandidates);
       }
       const failed = outcomes.filter((outcome) => outcome.kind === 'failure');
+      const coverWarnings = outcomes.flatMap((outcome) =>
+        outcome.kind !== 'failure' && outcome.coverWarning
+          ? [`${outcome.fileName}（${outcome.coverWarning}）`]
+          : [],
+      );
+      const coverStatus = coverWarnings.length > 0
+        ? `;封面降级 ${coverWarnings.length} 份:${coverWarnings.join('、')}`
+        : '';
       if (failed.length === 0 && migrationCandidates.length === 0) {
         useShellUiStore
           .getState()
-          .setStatusMessage(`已导入 ${succeeded} 份文件`);
+          .setStatusMessage(`已导入 ${succeeded} 份文件${coverStatus}`);
       } else {
         useShellUiStore
           .getState()
@@ -246,7 +254,7 @@ export function registerLibraryCommands(
               failed.length > 0
                 ? `(${failed.map((outcome) => outcome.fileName).join('、')})`
                 : ''
-            }`,
+            }${coverStatus}`,
           );
       }
     } catch (error) {

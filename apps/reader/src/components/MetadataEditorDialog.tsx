@@ -41,8 +41,9 @@ export function MetadataEditorDialog() {
       .then((bytes) => {
         if (cancelled) return;
         if (bytes) {
+          const coverBytes = bytes.bytes.slice();
           objectUrl = URL.createObjectURL(
-            new Blob([bytes.bytes.buffer as ArrayBuffer], { type: bytes.mimeType }),
+            new Blob([coverBytes.buffer as ArrayBuffer], { type: bytes.mimeType }),
           );
           setCoverUrl(objectUrl);
         } else {

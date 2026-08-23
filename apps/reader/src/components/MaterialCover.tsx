@@ -61,8 +61,9 @@ export function MaterialCover({
         if (cancelled) return;
         setLoading(false);
         if (bytes) {
+          const coverBytes = bytes.bytes.slice();
           const objectUrl = URL.createObjectURL(
-            new Blob([bytes.bytes.buffer as ArrayBuffer], { type: bytes.mimeType }),
+            new Blob([coverBytes.buffer as ArrayBuffer], { type: bytes.mimeType }),
           );
           objectUrlRef.current = objectUrl;
           setCoverUrl(objectUrl);

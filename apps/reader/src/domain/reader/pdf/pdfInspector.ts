@@ -1,6 +1,8 @@
-import type { SourceMetadata } from '../../library/material';
+import { normalizeCoverBlob } from '../../library/cover';
+import type { CoverAsset, SourceMetadata } from '../../library/material';
 import type { PdfDocumentProxy, PdfFileSource, PdfJsLib, PdfLoadingTask } from './pdfLibrary';
 import { createPdfSourceFromBytes, loadPdfLib } from './pdfLibrary';
+import { renderPdfPageCover, type PdfCoverRenderFailure } from './pdfCover';
 import { createConcurrentRangeTransport, withRangeFailure } from './pdfRangeTransport';
 
 /** 检查失败的领域化分类,前端据此展示可行动的简体中文文案。 */
@@ -22,6 +24,15 @@ export interface PdfInspectResult {
   metadata: SourceMetadata;
   /** 页数,用于书库展示与阅读视口预估。 */
   pageCount: number;
+  /** 首页渲染得到的标准来源封面;失败时为 null,不影响 PDF 正文导入。 */
+  sourceCover: CoverAsset | null;
+  /** 封面派生失败的可诊断提示;正文检查仍然成功。 */
+  coverWarning?: string;
+}
+
+export interface PdfInspectOptions {
+  /** 阅读器打开阶段只需要元数据时关闭一次性首页封面派生。 */
+  includeCover?: boolean;
 }
 
 const PDF_HEADER = '%PDF-';
@@ -56,6 +67,7 @@ function toStringOrNull(value: unknown): string | null {
 export async function inspectPdf(
   sourceOrBytes: PdfFileSource | Uint8Array,
   lib?: PdfJsLib,
+  options: PdfInspectOptions = {},
 ): Promise<PdfInspectResult> {
   // 不使用 `instanceof Uint8Array`:调用方可能来自不同 WebView realm,跨 realm
   // 的 TypedArray 会让 instanceof 失效。File/Blob 兼容来源稳定拥有 size。
@@ -101,6 +113,26 @@ export async function inspectPdf(
     const author = toStringOrNull(metadata?.get('dc:creator')) ?? (typeof info?.Author === 'string' ? info.Author : null);
     const language = toStringOrNull(metadata?.get('dc:language'));
     const pageCount = document.numPages;
+    let sourceCover: CoverAsset | null = null;
+    let coverWarning: string | undefined;
+    if (options.includeCover === false) {
+      // 打开已有材料时封面已经在导入阶段托管,避免重复渲染首页。
+    } else if (pageCount <= 0) {
+      coverWarning = 'PDF 没有可渲染的首页,已使用封面占位';
+    } else {
+      try {
+        const page = await withRangeFailure(document.getPage(1), range);
+        const rendered = await renderPdfPageCover(page);
+        if (rendered.blob) {
+          sourceCover = await normalizeCoverBlob(rendered.blob);
+        }
+        if (!sourceCover) {
+          coverWarning = coverWarningFor(rendered.failure);
+        }
+      } catch {
+        coverWarning = 'PDF 首页无法读取或渲染,已使用封面占位';
+      }
+    }
     return {
       metadata: {
         // 极少数 PDF 无任何标题元数据,回退为空串(界面展示占位),成品书库仍可收录。
@@ -109,6 +141,8 @@ export async function inspectPdf(
         language,
       },
       pageCount,
+      sourceCover,
+      ...(coverWarning ? { coverWarning } : {}),
     };
   } catch (error) {
     if (error instanceof PdfInspectError) {
@@ -128,5 +162,18 @@ export async function inspectPdf(
     } else {
       await Promise.resolve(loadingTask?.destroy?.()).catch(() => undefined);
     }
+  }
+}
+
+function coverWarningFor(failure: PdfCoverRenderFailure | undefined): string {
+  switch (failure) {
+    case 'blank':
+      return 'PDF 首页为空白页,已使用封面占位';
+    case 'cancelled':
+      return 'PDF 首页封面渲染已取消,已使用封面占位';
+    case 'encode-failed':
+      return 'PDF 首页无法编码为封面,已使用封面占位';
+    default:
+      return 'PDF 首页无法渲染为来源封面,已使用封面占位';
   }
 }

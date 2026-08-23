@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createInMemoryFilePicker, type FilePicker } from '../app/filePicker';
 import {
@@ -8,6 +8,7 @@ import {
 import type { ImportRepository } from '../domain/library/importRepository';
 import type { StagedImport } from '../domain/library/material';
 import { buildEpub, buildStoredZip, encode } from '../domain/library/epub/zipWriter';
+import { makeFakeDocument, makeFakeLib } from '../domain/reader/pdf/pdfTestFakes';
 import { importBooks, classifyImportError } from './importBook';
 
 function makeIo(overrides?: { sourcePaths?: string[]; bytes?: Record<string, Uint8Array> }) {
@@ -75,6 +76,84 @@ describe('importBooks 批量编排', () => {
     expect(outcomes).toHaveLength(2);
     expect(outcomes.every((outcome) => outcome.kind === 'success')).toBe(true);
     expect((await io.importRepository.listMaterials()).map((m) => m.title)).toEqual(['甲', '乙']);
+  });
+
+  it('PDF 导入检查阶段生成首页来源封面并提交到内存 Repository', async () => {
+    const sourcePath = 'scan.pdf';
+    const bytes = new TextEncoder().encode('%PDF-1.7\nscan');
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, sourcePath, bytes);
+    const repository = createInMemoryImportRepository(sources);
+    const document = makeFakeDocument(1);
+    const lib = makeFakeLib(document);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) =>
+      callback(new Blob(['scan-cover'], { type: 'image/png' })),
+    );
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
+      width: 300,
+      height: 400,
+      close: vi.fn(),
+    })));
+
+    try {
+      const outcomes = await importBooks({
+        importRepository: repository,
+        filePicker: createInMemoryFilePicker([sourcePath]),
+        pdfLib: lib,
+      });
+
+      expect(outcomes?.[0]?.kind).toBe('success');
+      if (outcomes?.[0]?.kind === 'success') {
+        const cover = await repository.readCover(outcomes[0].material.id);
+        expect(cover?.mimeType).toBe('image/png');
+        expect(cover?.bytes).toEqual(new Uint8Array(await new Blob(['scan-cover']).arrayBuffer()));
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('混合批量导入时封面失败只记录该文件降级,不阻断其它材料', async () => {
+    const sourcePaths = ['book.epub', 'scan.pdf', 'notes.md'];
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, 'book.epub', buildEpub({ title: '电子书', withCover: true }));
+    addInMemorySource(sources, 'scan.pdf', new TextEncoder().encode('%PDF-1.7\nscan'));
+    addInMemorySource(sources, 'notes.md', new TextEncoder().encode('# 笔记\n\n正文'));
+    const repository = createInMemoryImportRepository(sources);
+    const pdfLib = makeFakeLib(makeFakeDocument(1));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => callback(null));
+
+    try {
+      const outcomes = await importBooks({
+        importRepository: repository,
+        filePicker: createInMemoryFilePicker(sourcePaths),
+        pdfLib,
+      });
+
+      expect(outcomes?.map((outcome) => outcome.kind)).toEqual(['success', 'success', 'success']);
+      expect(outcomes?.[1]).toMatchObject({
+        kind: 'success',
+        fileName: 'scan.pdf',
+        coverWarning: expect.stringContaining('封面'),
+      });
+      expect(outcomes?.[0]).toMatchObject({
+        kind: 'success',
+        fileName: 'book.epub',
+        coverWarning: expect.stringContaining('封面'),
+      });
+      expect((await repository.listMaterials()).map((material) => material.title)).toEqual([
+        '电子书',
+        '示例 PDF',
+        '笔记',
+      ]);
+      await expect(repository.readCover((outcomes?.[1] as { material: { id: string } }).material.id))
+        .resolves.toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('发现元数据相同但内容不同的 EPUB 时只返回迁移候选并保留暂存文件', async () => {

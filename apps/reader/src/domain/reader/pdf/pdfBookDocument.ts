@@ -13,6 +13,7 @@ import type {
 } from './pdfLibrary';
 import { loadPdfLib } from './pdfLibrary';
 import type { PdfPageRasterizer } from './pdfPageRenderer';
+import { renderPdfPageCover } from './pdfCover';
 import { PdfRenderer } from './pdfRenderer';
 import {
   createConcurrentRangeTransport,
@@ -444,21 +445,7 @@ export class PdfBookDocument implements BookDocument {
     }
     try {
       const page = await this.pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 1 });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      const context = canvas.getContext('2d');
-      if (!context) {
-        return null;
-      }
-      await page.render({ canvasContext: context, viewport }).promise;
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob((result) => resolve(result), 'image/png'),
-      );
-      canvas.width = 0;
-      canvas.height = 0;
-      return blob;
+      return (await renderPdfPageCover(page)).blob;
     } catch {
       return null;
     }

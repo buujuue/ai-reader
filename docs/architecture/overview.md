@@ -92,7 +92,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Library
 
-通过 typed Repository 管理 Reading Material、来源元数据、覆盖值、回收站和封面。来源封面由 foliate-js 在导入检查阶段选择并由 TypeScript 生成受控缩略图；自定义封面与来源封面分目录、分字段托管，读取时遵循“自定义优先、来源兜底”。受管理正文缺失时仍保留领域对象与用户数据，并通过完整指纹重新关联；读取端只接触领域对象，不接触表结构。`ManagedFileSource` 通过稳定 MaterialId 提供只读、File/Blob 兼容的惰性范围来源，格式层不接触 Tauri 协议或托管路径；EPUB、PDF、Markdown 的生产打开边界不再暴露通用完整托管文件读取，PDF 检查器与 `PdfBookDocument` 在打开时共享同一个 Source。
+通过 typed Repository 管理 Reading Material、来源元数据、覆盖值、回收站和封面。EPUB 来源封面由 foliate-js 在导入检查阶段选择，PDF 来源封面由 PDF.js 渲染首页，再由 TypeScript 生成受控缩略图；自定义封面与来源封面分目录、分字段托管，读取时遵循“自定义优先、来源兜底”。受管理正文缺失时仍保留领域对象与用户数据，并通过完整指纹重新关联；读取端只接触领域对象，不接触表结构。`ManagedFileSource` 通过稳定 MaterialId 提供只读、File/Blob 兼容的惰性范围来源，格式层不接触 Tauri 协议或托管路径；EPUB、PDF、Markdown 的生产打开边界不再暴露通用完整托管文件读取，PDF 检查器与 `PdfBookDocument` 在打开时共享同一个 Source。
 
 ### Import
 

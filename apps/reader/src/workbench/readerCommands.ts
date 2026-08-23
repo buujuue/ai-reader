@@ -268,7 +268,7 @@ async function createPdfDocument(
   }
   let metadata;
   try {
-    const result = await inspectPdf(source, dependencies.pdfLib);
+    const result = await inspectPdf(source, dependencies.pdfLib, { includeCover: false });
     metadata = result.metadata;
   } catch (error) {
     throw new Error(`解析 PDF 失败：${describeDocumentOpenError(error)}`);

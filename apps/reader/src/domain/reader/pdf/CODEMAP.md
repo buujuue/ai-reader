@@ -2,11 +2,12 @@
 
 ## 功能
 
-PDF 阅读内核，把 PDF.js 的全部能力封装在 `BookDocument` 窄接口之后，并落实工单 #14（固定版式阅读、缩放/适配、视口恢复、扫描页无文字层显示、范围读取并发上限、过期渲染取消与画布内存预算）与工单 #15（Canvas 与文本层对齐、文本选择与复制、当前材料搜索、文本高亮与批注、PDF 文本锚点）的验收标准。
+PDF 阅读内核，把 PDF.js 的全部能力封装在 `BookDocument` 窄接口之后，并落实工单 #14（固定版式阅读、缩放/适配、视口恢复、扫描页无文字层显示、范围读取并发上限、过期渲染取消与画布内存预算）、工单 #15（Canvas 与文本层对齐、文本选择与复制、当前材料搜索、文本高亮与批注、PDF 文本锚点）和工单 #40（导入检查阶段渲染首页来源封面、封面失败非阻塞与资源释放）的验收标准。
 
 - `pdfLibrary.ts`：PDF.js 窄接口类型定义（`PdfJsLib`、`PdfDocumentProxy`、`PdfPage` 等）与懒加载引导 `loadPdfLib()`；加载时关闭 `isEvalSupported`，落实不可信内容安全边界（ADR-0010）。文本内容项携带 `transform`/`width`/`height` 几何数据，供文本层定位。
 - `pdfRangeTransport.ts`：范围读取传输层，限制 PDF.js 范围请求并发上限 `MAX_CONCURRENT_RANGES`，支持队列取消、越界拒绝、读取失败后的槽位释放与结果抑制，并通过 `PdfRangeReadError`/`withRangeFailure` 向打开和检查边界报告失败范围。
-- `pdfInspector.ts`：`inspectPdf` 接收 PDF 范围来源并通过同一范围传输做格式校验与元数据提取（标题/作者/页数），可注入伪引擎；错误分类覆盖空文件、无 PDF 头（unsupported）、损坏结构（corrupt）。XMP 元数据（`dc:creator` 等多作者）可能返回数组，统一归一化为 `string | null`（以「、」连接），避免传给 Rust `commit_import` 时序列化失败。
+- `pdfInspector.ts`：`inspectPdf` 接收 PDF 范围来源并通过同一范围传输做格式校验、元数据提取（标题/作者/页数）和首页来源封面派生，可注入伪引擎；封面失败只返回可诊断警告，不阻断正文检查。错误分类覆盖空文件、无 PDF 头（unsupported）、损坏结构（corrupt）。XMP 元数据（`dc:creator` 等多作者）可能返回数组，统一归一化为 `string | null`（以「、」连接），避免传给 Rust `commit_import` 时序列化失败。
+- `pdfCover.ts`：一次性渲染 PDF 页面为临时 PNG，限制首页 Canvas 长边、检测透明空白页，并在完成/失败/取消时统一取消渲染任务、释放 Canvas 位图和调用 `page.cleanup()`；导入检查与 `PdfBookDocument.getCover()` 共用该生命周期 helper。
 - `pdfTextLayer.ts`：文本层定位。把文本项 transform 换算成与 Canvas 对齐的绝对定位 span（参考 pdf.js `TextLayer`），使文本可选、可复制。
 - `pdfTextAnchor.ts`：PDF 文本锚点编解码。用「页码 + 归一化矩形」表达定位，支持与 `TextAnchor` 的引文/前后文/文档版本组合，并提供扫描页拖拽端点的归一化。
 - `pdfSearch.ts`：PDF 文本搜索。逐页读取文本内容、普通文本匹配、产出进度与命中（含页码 + 归一化矩形锚点），可取消；扫描页不误报命中。
@@ -14,11 +15,17 @@ PDF 阅读内核，把 PDF.js 的全部能力封装在 `BookDocument` 窄接口�
 - `pdfRenderer.ts`：布局管理器。分页/滚动两种流向、缩放与页面适配（宽度/高度/整页/实际大小）、滚动视口窗口化（只渲染视口附近的解码页）+ 画布内存预算、解码页 LRU 释放；暴露按页设置高亮的方法。
 - `pdfBookDocument.ts`：`PdfBookDocument` 实现 `BookDocument`。统一暴露元数据、目录、导航、位置（`PdfReadingLocation`）、滚动/缩放/适配、封面与 `close`；接入 `search`/`clearSearch`、`getCFI`/`getAreaAnchor`/`getCurrentIndex`/`getPageCount`、`addAnnotation`/`removeAnnotation`/`onShowAnnotation`/`onAreaSelection`、`getContentDocs`/`onContentCreate`，并管理批注与搜索高亮的重绘。文本选区从所属 PDF 页生成锚点，扫描页区域选择向上层回传页码与归一化矩形。`open` 与 `inspectPdf` 接收同一个范围来源，经 `PDFDataRangeTransport` 按需加载 PDF.js 文档；范围读取失败会保留请求区间并透出诊断错误，打开后页面/文本层错误经 `onReadError` 交给工作台状态栏，打开取消会销毁加载任务与范围队列。外部模块不直接操作 PDF.js 对象。
 
-- 对应 `*.test.ts`：`pdfTestFakes.ts` 提供伪页面/文档/库/光栅化器（含可注入文本项）；测试覆盖范围读取并发上限、翻页/滚动、缩放恢复、Canvas 内存预算、过期渲染取消、无文字层显示、文本层定位、搜索、锚点编解码、PDF 批注与错误 PDF。
+- 对应 `*.test.ts`：`pdfTestFakes.ts` 提供伪页面/文档/库/光栅化器（含可注入文本项）；测试覆盖范围读取并发上限、翻页/滚动、缩放恢复、Canvas 内存预算、过期渲染取消、首页封面渲染/空白页/资源释放、无文字层显示、文本层定位、搜索、锚点编解码、PDF 批注与错误 PDF。
 
 ## 依赖其它文件夹（树）
 
-无（`pdf/` 不依赖其它 `src/` 文件夹；运行时经 `pdfjs-dist` 依赖渲染）。
+```text
+domain/reader/pdf/
+└── domain/library/
+    └── cover.ts        复用来源封面安全解码、缩放与 MIME 标准化
+```
+
+运行时经 `pdfjs-dist` 依赖 PDF 解码与渲染；PDF 子模块不依赖书库 Repository 或持久化实现。
 
 ## 被谁依赖（树）
 
@@ -27,7 +34,7 @@ domain/reader/pdf/
 ├── domain/reader/        由 BookDocument 契约统一消费 PdfBookDocument
 └── workbench/
     ├── readerCommands.ts 按扩展名创建 PdfBookDocument 并接线 readerSetPdfViewport/readerSetPdfFlow 命令
-    └── importBook.ts     经 pdfInspector.inspectPdf 校验与提取 PDF 元数据
+    └── importBook.ts     经 pdfInspector.inspectPdf 校验、提取 PDF 元数据并提交首页来源封面
 ```
 
 ## 依赖方向

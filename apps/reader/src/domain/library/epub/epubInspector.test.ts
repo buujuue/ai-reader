@@ -95,6 +95,8 @@ describe('EpubInspector', () => {
     const result = await inspectEpub(epub);
 
     expect(result.hasCover).toBe(true);
+    expect(result.sourceCover).toBeNull();
+    expect(result.coverWarning).toMatch(/封面/);
   });
 
   it('无封面条目时返回 hasCover=false', async () => {

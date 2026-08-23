@@ -49,6 +49,55 @@ describe('inspectPdf 错误 PDF 分类', () => {
 
     expect(result.pageCount).toBe(3);
     expect(result.metadata).toMatchObject({ title: '示例 PDF', author: '示例作者' });
+    expect(result.sourceCover).toBeNull();
+  });
+
+  it('检查阶段渲染首页来源封面,不依赖文字层且在销毁文档前释放页面', async () => {
+    const document = makeFakeDocument(1);
+    const page = (document as unknown as { pages: Array<{ cleanup: ReturnType<typeof vi.fn> }> }).pages[0]!;
+    const lib = makeFakeLib(document);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) =>
+      callback(new Blob(['rendered-page'], { type: 'image/png' })),
+    );
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
+      width: 300,
+      height: 400,
+      close: vi.fn(),
+    })));
+
+    try {
+      const result = await inspectPdf(pdfBytes(), lib);
+
+      expect(result.sourceCover).toMatchObject({ mimeType: 'image/png' });
+      expect(result.sourceCover?.bytes).toEqual(
+        new Uint8Array(await new Blob(['rendered-page']).arrayBuffer()),
+      );
+      expect(document.getPage).toHaveBeenCalledWith(1);
+      expect(page.cleanup).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('首页渲染失败只产生封面降级,PDF 检查仍然成功', async () => {
+    const document = makeFakeDocument(1);
+    const page = (document as unknown as { pages: Array<{ render: ReturnType<typeof vi.fn>; cleanup: ReturnType<typeof vi.fn> }> }).pages[0]!;
+    (page.render as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      promise: Promise.resolve().then(() => {
+        throw new Error('render failed');
+      }),
+      cancel: vi.fn(),
+    }));
+    const lib = makeFakeLib(document);
+
+    const result = await inspectPdf(pdfBytes(), lib);
+
+    expect(result.metadata.title).toBe('示例 PDF');
+    expect(result.sourceCover).toBeNull();
+    expect(result.coverWarning).toMatch(/封面/);
+    expect(page.cleanup).toHaveBeenCalledTimes(1);
   });
 
   it('多作者 dc:creator 数组归一化为「、」连接的字符串,避免 commit 序列化失败', async () => {

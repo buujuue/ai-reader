@@ -31,6 +31,8 @@ export type ImportOutcome =
       material: ReadingMaterial;
       /** EPUB 局部降级报告；在 commit 前生成，供 UI 展示可行动提示。 */
       preflight?: EpubPreflightReport;
+      /** 来源封面派生失败时的非阻塞诊断提示。 */
+      coverWarning?: string;
     }
   | {
       kind: 'migrationCandidate';
@@ -38,6 +40,8 @@ export type ImportOutcome =
       fileName: string;
       candidates: VersionMigrationCandidate[];
       preflight?: EpubPreflightReport;
+      /** 来源封面派生失败时的非阻塞诊断提示。 */
+      coverWarning?: string;
     }
   | { kind: 'failure'; sourcePath: string; fileName: string; failure: ImportFailure };
 
@@ -113,6 +117,7 @@ async function importOneFile(
         fileName: stagedImport.originalFileName,
         candidates,
         ...(inspected.preflight ? { preflight: inspected.preflight } : {}),
+        ...(inspected.coverWarning ? { coverWarning: inspected.coverWarning } : {}),
       };
     }
     const material = await dependencies.importRepository.commitImport(
@@ -126,6 +131,7 @@ async function importOneFile(
       fileName: stagedImport.originalFileName,
       material,
       ...(inspected.preflight ? { preflight: inspected.preflight } : {}),
+      ...(inspected.coverWarning ? { coverWarning: inspected.coverWarning } : {}),
     };
   } catch (error) {
     if (staged && stagedSuccessfully) {
@@ -153,11 +159,16 @@ async function inspectFile(
   metadata: SourceMetadata;
   sourceCover: CoverAsset | null;
   preflight?: EpubPreflightReport;
+  coverWarning?: string;
 }> {
   const format = formatFromSourceFileName(originalFileName);
   if (format === 'pdf') {
     const result = await inspectPdf(createPdfSourceFromBytes(bytes), pdfLib);
-    return { metadata: result.metadata, sourceCover: null };
+    return {
+      metadata: result.metadata,
+      sourceCover: result.sourceCover,
+      ...(result.coverWarning ? { coverWarning: result.coverWarning } : {}),
+    };
   }
   if (format === 'epub') {
     const buffer = bytes.buffer.slice(
@@ -168,6 +179,7 @@ async function inspectFile(
     return {
       metadata: result.metadata,
       sourceCover: result.sourceCover,
+      ...(result.coverWarning ? { coverWarning: result.coverWarning } : {}),
       preflight: result.preflight,
     };
   }

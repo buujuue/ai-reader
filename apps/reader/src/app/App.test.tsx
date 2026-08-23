@@ -966,6 +966,9 @@ describe('导入并阅读固定版式 PDF', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
       {} as CanvasRenderingContext2D,
     );
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+      callback(new Blob(['app-test-cover'], { type: 'image/png' }));
+    });
   });
 
   it('导入固定版式 PDF 后可从书库打开并创建阅读标签', async () => {
@@ -985,6 +988,22 @@ describe('导入并阅读固定版式 PDF', () => {
       expect(screen.getByRole('toolbar', { name: /示例 PDF/ })).toBeInTheDocument();
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
     });
+  });
+
+  it('PDF 首页封面失败时仍进入书库并在状态栏报告封面降级', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+      callback(null);
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('示例 PDF').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/封面降级/);
+    expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent('示例PDF.pdf');
   });
 
   it('带文字层的 PDF 支持当前材料搜索并跳转到对应页', async () => {

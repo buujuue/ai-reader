@@ -145,6 +145,7 @@ interface FoliateBookSemanticShape {
     language?: unknown;
   };
   getCover?: () => Promise<Blob | null>;
+  destroy?: () => void | Promise<void>;
 }
 
 function flattenMetadata(value: unknown): string | null {
@@ -181,14 +182,20 @@ export async function readFoliateEpubSemantics(
   options: ReadFoliateEpubSemanticsOptions = {},
 ): Promise<FoliateEpubSemanticSnapshot> {
   const book = (await openFoliateEpub(file, prefetch)) as FoliateBookSemanticShape;
-  const cover: Blob | null = options.loadCover === false
-    ? null
-    : (await book.getCover?.().catch(() => null)) ?? null;
-  return {
-    title: flattenMetadata(book.metadata?.title),
-    author: flattenMetadata(book.metadata?.author),
-    language: flattenMetadata(book.metadata?.language),
-    hasCover: cover !== null && cover !== undefined,
-    cover,
-  };
+  try {
+    const cover: Blob | null = options.loadCover === false
+      ? null
+      : (await book.getCover?.().catch(() => null)) ?? null;
+    return {
+      title: flattenMetadata(book.metadata?.title),
+      author: flattenMetadata(book.metadata?.author),
+      language: flattenMetadata(book.metadata?.language),
+      hasCover: cover !== null && cover !== undefined,
+      cover,
+    };
+  } finally {
+    // 预检只需要复制出的元数据/封面 Blob;不能让临时 Foliate loader 继续持有
+    // ZIP reader、范围来源或资源缓存直到整批导入结束。
+    await Promise.resolve(book.destroy?.()).catch(() => undefined);
+  }
 }

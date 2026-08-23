@@ -7,6 +7,8 @@ import type { CoverAsset } from './material';
 export const COVER_MAX_BYTES = 64 * 1024 * 1024;
 export const COVER_MAX_LONG_EDGE = 512;
 export const COVER_JPEG_QUALITY = 0.85;
+/** 解码后的 RGBA 预算约为 64 MiB,避免小文件图片造成解码炸弹。 */
+export const COVER_MAX_DECODED_PIXELS = 16 * 1024 * 1024;
 
 
 /** 将 Foliate 返回的来源封面转换为可持久化的安全缩略图。失败返回 null。 */
@@ -33,9 +35,22 @@ export async function normalizeCoverBlob(blob: Blob | null | undefined): Promise
   }
 
   const { image, width, height, close } = decoded;
-  const needsRasterization = originalMimeType === 'image/svg+xml' ||
-    Math.max(width, height) > COVER_MAX_LONG_EDGE;
+  let canvas: HTMLCanvasElement | null = null;
   try {
+    const longEdge = Math.max(width, height);
+    const pixelCount = width * height;
+    if (
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      !Number.isSafeInteger(Math.ceil(pixelCount)) ||
+      pixelCount > COVER_MAX_DECODED_PIXELS
+    ) {
+      return null;
+    }
+    const needsRasterization = originalMimeType === 'image/svg+xml' ||
+      longEdge > COVER_MAX_LONG_EDGE;
     if (!needsRasterization) {
       return {
         bytes: await blobBytes(blob),
@@ -46,7 +61,7 @@ export async function normalizeCoverBlob(blob: Blob | null | undefined): Promise
     const scale = Math.min(1, COVER_MAX_LONG_EDGE / Math.max(width, height));
     const targetWidth = Math.max(1, Math.round(width * scale));
     const targetHeight = Math.max(1, Math.round(height * scale));
-    const canvas = document.createElement('canvas');
+    canvas = document.createElement('canvas');
     canvas.width = targetWidth;
     canvas.height = targetHeight;
     const context = canvas.getContext('2d');
@@ -62,6 +77,10 @@ export async function normalizeCoverBlob(blob: Blob | null | undefined): Promise
     }
     return { bytes: await blobBytes(rasterized), mimeType: 'image/jpeg' };
   } finally {
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
     close();
   }
 }
@@ -173,7 +192,11 @@ async function decodeCover(blob: Blob): Promise<DecodedCover | null> {
         image,
         width: image.naturalWidth,
         height: image.naturalHeight,
-        close: () => undefined,
+        close: () => {
+          image.onload = null;
+          image.onerror = null;
+          image.src = '';
+        },
       });
     };
     image.onerror = () => {

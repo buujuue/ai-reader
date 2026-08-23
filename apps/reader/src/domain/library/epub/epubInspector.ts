@@ -86,6 +86,8 @@ export interface EpubInspectResult {
   hasCover: boolean;
   /** 由 foliate-js 选择并在 TS 侧生成的来源缩略图;封面失败只局部降级。 */
   sourceCover: CoverAsset | null;
+  /** 封面存在但无法安全解码/转换时的非阻塞诊断提示。 */
+  coverWarning?: string;
   /** 结构、安全与资源预算预检报告；只有整本核心闭环可用时才会返回。 */
   preflight: EpubPreflightReport;
 }
@@ -228,6 +230,14 @@ async function inspectEpubInner(
   }
 
   await inspectEncryption(source, archive, byName, manifest);
+  const coverId = elementsByLocalName(opf, 'meta').find(
+    (element) => element.getAttribute('name') === 'cover',
+  )?.getAttribute('content');
+  const coverPath = manifest.find(
+    (item) =>
+      (coverId !== null && coverId !== undefined && item.id === coverId) ||
+      item.properties.includes('cover-image'),
+  )?.path;
   const foliateSemantics = await readFoliateSemantics(
     source,
     opfPath,
@@ -236,12 +246,16 @@ async function inspectEpubInner(
   );
   const metadata = foliateSemantics.metadata;
   let sourceCover: CoverAsset | null = null;
-  if (foliateSemantics.cover) {
+  let coverWarning: string | undefined;
+  if (foliateSemantics.cover || coverPath) {
     try {
       sourceCover = await normalizeCoverBlob(foliateSemantics.cover);
     } catch {
       // 封面是可降级派生资源,不能阻断可正常阅读的正文导入。
       sourceCover = null;
+    }
+    if (!sourceCover) {
+      coverWarning = 'EPUB 来源封面无法安全解码或超过资源预算,已使用封面占位';
     }
   }
   const report: EpubPreflightReport = {
@@ -274,14 +288,6 @@ async function inspectEpubInner(
       report.navigation.source === 'ncx' ? findNcxItem(manifest, spineElement)?.path : null]
       .filter(isNonNull),
   );
-  const coverId = elementsByLocalName(opf, 'meta').find(
-    (element) => element.getAttribute('name') === 'cover',
-  )?.getAttribute('content');
-  const coverPath = manifest.find(
-    (item) =>
-      (coverId !== null && coverId !== undefined && item.id === coverId) ||
-      item.properties.includes('cover-image'),
-  )?.path;
   const corePaths = new Set([...spinePaths, ...navigationPaths, opfPath, 'META-INF/container.xml']);
   const manifestPaths = new Set(manifest.map((item) => item.path).filter(isNonNull));
   for (const item of manifest) {
@@ -323,6 +329,7 @@ async function inspectEpubInner(
     metadata,
     hasCover: foliateSemantics.hasCover || coverPath !== null && coverPath !== undefined,
     sourceCover,
+    ...(coverWarning ? { coverWarning } : {}),
     preflight: report,
   };
 }
