@@ -24,9 +24,7 @@ import {
 import { back as historyBack, forward as historyForward } from '../domain/reader/navigationHistory';
 import type { PdfFitMode } from '../domain/reader/readingLocation';
 import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
-import { inspectPdf } from '../domain/reader/pdf/pdfInspector';
 import type { PdfFileSource, PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
-import { loadPdfLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { MarkdownBookDocument } from '../domain/reader/markdown/markdownBookDocument';
@@ -259,8 +257,11 @@ async function createEpubDocument(
 }
 
 /**
- * 读取并检查托管 PDF 字节,构造 BookDocument。
- * 返回 null 表示材料不是可读的 PDF。
+ * 从已导入材料构造 PDF BookDocument。
+ *
+ * PDF 的格式检查、来源元数据和首页来源封面在导入阶段完成。阅读阶段只
+ * 复用书库中的有效元数据并把同一份 ManagedFileSource 交给 BookDocument,
+ * 由挂载阶段创建唯一的 PDF.js 文档。
  */
 async function createPdfDocument(
   dependencies: ReaderCommandDependencies,
@@ -272,16 +273,13 @@ async function createPdfDocument(
   } catch (error) {
     throw new Error(`读取 PDF 失败：${describeDocumentOpenError(error)}`);
   }
-  let metadata;
-  try {
-    const result = await inspectPdf(source, dependencies.pdfLib, { includeCover: false });
-    metadata = result.metadata;
-  } catch (error) {
-    throw new Error(`解析 PDF 失败：${describeDocumentOpenError(error)}`);
-  }
   return new PdfBookDocument({
     source,
-    metadata,
+    metadata: {
+      title: material.title,
+      author: material.author,
+      language: material.language,
+    },
     pdfLib: dependencies.pdfLib,
     rasterize: dependencies.pdfRasterize,
   });

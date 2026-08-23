@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PdfBookDocument } from './pdfBookDocument';
 import { createPdfSourceFromBytes } from './pdfLibrary';
+import { ManagedFileSource } from '../../library/managedFileSource';
 import { makeFakeDocument, makeFakeLib, makeFakePage, makeFakeRasterizer } from './pdfTestFakes';
 import { decodePdfTextAnchor } from './pdfTextAnchor';
 
@@ -62,6 +63,40 @@ describe('PdfBookDocument', () => {
     );
     expect((lib.getDocument as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toHaveProperty('data');
     expect(book.getLocation()).toBeNull();
+  });
+
+  it('PDF.js 结构损坏时打开失败会提供简体中文诊断', async () => {
+    const { book, lib } = createDocument();
+    (lib.getDocument as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      promise: Promise.reject(new Error('Invalid PDF structure')),
+    }));
+
+    await expect(book.open(makeContainer())).rejects.toThrow('PDF 文件损坏或结构无效');
+  });
+
+  it('托管范围读取失败时打开失败会保留请求区间诊断', async () => {
+    const pdf = makeFakeDocument(1);
+    const lib = makeFakeLib(pdf);
+    const source = new ManagedFileSource(
+      { name: '失败.pdf', size: 256 * 1024 },
+      async () => {
+        throw new Error('磁盘读取失败');
+      },
+    );
+    (lib.getDocument as ReturnType<typeof vi.fn>).mockImplementation((options) => {
+      options.range.requestDataRange?.(0, 64);
+      return { promise: new Promise(() => undefined) };
+    });
+    const book = new PdfBookDocument({
+      source,
+      metadata: { title: '失败 PDF', author: null, language: null },
+      pdfLib: lib,
+      rasterize: makeFakeRasterizer(),
+    });
+
+    await expect(book.open(makeContainer())).rejects.toThrow(
+      'PDF 范围读取失败（请求区间 [0,64)',
+    );
   });
 
   it('goToLocation 恢复页码与视口状态(缩放/适配),并上报位置', async () => {

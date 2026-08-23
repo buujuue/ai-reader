@@ -399,6 +399,7 @@ describe('Reader 命令', () => {
     );
     await vi.waitFor(() => expect((restoredAfterRestart as PdfBookDocument).getPageCount()).toBe(8));
     expect(restoredAfterRestart.getLocation()).toEqual(scrolledLocation);
+    expect(pdfLib.getDocument).toHaveBeenCalledTimes(4);
 
     await firstPersister.dispose();
     await secondPersister.dispose();
@@ -458,6 +459,47 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.size).toBe(2);
     expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
     expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(true);
+  });
+
+  it('PDF 双 Editor Group 各自挂载时每个 Runtime 只创建一次 PDF.js 文档', async () => {
+    const { pdf } = await setupWithPdfAndEpub();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const pdfLib = makeFakeLib(makeFakeDocument(2));
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      pdfLib,
+      pdfRasterize: makeFakeRasterizer(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, pdf);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    const firstContainer = document.createElement('div');
+    mountViewDocument(firstDocument, firstViewId, firstContainer, null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstContainer.querySelector('[data-page="1"]')).not.toBeNull());
+
+    await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[1]!.views[0]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    const secondContainer = document.createElement('div');
+    mountViewDocument(secondDocument, secondViewId, secondContainer, null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondContainer.querySelector('[data-page="1"]')).not.toBeNull());
+
+    expect(useReaderRuntime.getState().documents.size).toBe(2);
+    expect(pdfLib.getDocument).toHaveBeenCalledTimes(2);
   });
 
   it('重复打开同一本书会跳转到原标签,不重复创建文档', async () => {
@@ -729,17 +771,32 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().getDocument(viewId)?.format).toBe('markdown');
   });
 
-  it('PDF 打开让检查器与阅读文档共享 ManagedFileSource,不调用全量文件接口', async () => {
+  it('PDF 打开命令、BookDocument 挂载和首屏只创建一次 PDF.js 文档,并复用书库有效元数据', async () => {
     const sources = new Map<string, Uint8Array>();
     addInMemorySource(sources, '演示书/范围.pdf', new TextEncoder().encode('%PDF-1.7\n'));
     importRepository = createInMemoryImportRepository(sources);
     const staged = await importRepository.stageImport('演示书/范围.pdf');
-    const bytes = await importRepository.readStagedFile(staged);
-    const { inspectPdf } = await import('../domain/reader/pdf/pdfInspector');
-    const { metadata } = await inspectPdf(bytes, makeFakeLib(makeFakeDocument(3)));
-    const material = await importRepository.commitImport(staged, metadata);
+    const material = await importRepository.commitImport(staged, {
+      title: '书库有效标题',
+      author: '书库有效作者',
+      language: 'zh-CN',
+    });
     const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
-    const pdfLib = makeFakeLib(makeFakeDocument(3));
+    const pdfDocument = makeFakeDocument(640);
+    const pdfLib = makeFakeLib(pdfDocument);
+    const largeSize = 640 * 128 * 1024;
+    const readRange = vi.fn(async (_offset: number, length: number) => new Uint8Array(length));
+    const source = new ManagedFileSource(
+      { name: '范围.pdf', size: largeSize },
+      readRange,
+    );
+    openManagedFileSource.mockResolvedValue(source);
+    (pdfLib.getDocument as ReturnType<typeof vi.fn>).mockImplementation((options) => {
+      // 模拟 600 页以上真实问题样本的文件头 + 文件尾范围访问。
+      options.range.requestDataRange?.(0, 64);
+      options.range.requestDataRange?.(largeSize - 64, largeSize);
+      return { promise: Promise.resolve(pdfDocument) };
+    });
     registerReaderCommands(registry, {
       importRepository,
       workspaceRepository,
@@ -751,9 +808,71 @@ describe('Reader 命令', () => {
 
     expect(openManagedFileSource).toHaveBeenCalledWith(material.id);
     expect(openManagedFileSource).toHaveBeenCalledTimes(1);
+    expect(pdfLib.getDocument).not.toHaveBeenCalled();
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(viewId)!;
+    expect(book.metadata).toEqual({
+      title: '书库有效标题',
+      author: '书库有效作者',
+      language: 'zh-CN',
+    });
+
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const container = document.createElement('div');
+    Object.defineProperty(container, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(container, 'clientHeight', { value: 600, configurable: true });
+    mountViewDocument(book, viewId, container, null, {
+      importRepository,
+      workspaceRepository,
+    });
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-page="1"]')).not.toBeNull();
+    });
+    expect(pdfLib.getDocument).toHaveBeenCalledTimes(1);
+    expect(readRange).toHaveBeenCalledTimes(2);
+    expect(new Set(readRange.mock.calls.map(([offset]) => offset)).size).toBe(2);
     const options = (pdfLib.getDocument as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(options).not.toHaveProperty('data');
     expect(options).toEqual(expect.objectContaining({ range: expect.anything() }));
+  });
+
+  it('PDF.js 损坏错误在阅读挂载阶段直接转换为简体中文诊断', async () => {
+    const { pdf } = await setupWithPdfAndEpub();
+    const pdfLib = makeFakeLib(makeFakeDocument(1));
+    (pdfLib.getDocument as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      promise: Promise.reject(new Error('Invalid PDF structure')),
+    }));
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      pdfLib,
+      pdfRasterize: makeFakeRasterizer(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, pdf);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    mountViewDocument(
+      useReaderRuntime.getState().getDocument(viewId)!,
+      viewId,
+      document.createElement('div'),
+      null,
+      { importRepository, workspaceRepository },
+    );
+
+    await vi.waitFor(() => {
+      expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({
+        status: 'error',
+        message: expect.stringContaining('PDF 文件损坏或结构无效'),
+      });
+    });
+    expect(pdfLib.getDocument).toHaveBeenCalledTimes(1);
   });
 });
 

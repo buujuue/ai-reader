@@ -20,6 +20,7 @@ import {
   type ConcurrentRangeTransport,
   withRangeFailure,
 } from './pdfRangeTransport';
+import { toPdfOpenError } from './pdfErrors';
 import { searchPdf } from './pdfSearch';
 import {
   decodePdfTextAnchor,
@@ -114,32 +115,35 @@ export class PdfBookDocument implements BookDocument {
     const generation = ++this.openGeneration;
     this.container = container;
 
-    const lib = this.pdfLib ?? (await loadPdfLib());
-    if (generation !== this.openGeneration) {
-      return;
-    }
-    const range = createConcurrentRangeTransport(
-      this.source,
-      (size, initialData) => new lib.PDFDataRangeTransport(size, initialData),
-    );
+    let range: ConcurrentRangeTransport | null = null;
     this.rangeTransport = range;
     let loadingTask: PdfLoadingTask | null = null;
     try {
+      const lib = this.pdfLib ?? (await loadPdfLib());
+      if (generation !== this.openGeneration) {
+        return;
+      }
+      range = createConcurrentRangeTransport(
+        this.source,
+        (size, initialData) => new lib.PDFDataRangeTransport(size, initialData),
+      );
+      const activeRange = range;
+      this.rangeTransport = activeRange;
       loadingTask = lib.getDocument({
-        range: range.transport,
+        range: activeRange.transport,
         isEvalSupported: false,
         disableStream: true,
         disableAutoFetch: true,
       });
       this.loadingTask = loadingTask;
-      const document = await withRangeFailure(loadingTask.promise, range);
+      const document = await withRangeFailure(loadingTask.promise, activeRange);
       if (generation !== this.openGeneration) {
         await document.destroy().catch(() => undefined);
         return;
       }
       this.pdf = document;
 
-      await withRangeFailure(this.readMetadata(document), range);
+      await withRangeFailure(this.readNavigation(document), activeRange);
       if (generation !== this.openGeneration) {
         return;
       }
@@ -157,7 +161,7 @@ export class PdfBookDocument implements BookDocument {
           onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
           onPageRendered: (page) => this.redrawPage(page),
           onAreaSelection: (selection) => this.notifyAreaSelection(selection),
-          onError: (error) => this.notifyReadError(error),
+          onError: (error) => this.notifyReadError(toPdfOpenError(error)),
         },
       );
       this.renderer = renderer;
@@ -167,7 +171,7 @@ export class PdfBookDocument implements BookDocument {
         this.currentLocation?.fit ?? 'width',
       );
       this.applyTheme(this.typography.theme);
-      await withRangeFailure(renderer.mount(), range);
+      await withRangeFailure(renderer.mount(), activeRange);
       if (generation !== this.openGeneration) {
         renderer.dispose();
         this.renderer = null;
@@ -175,7 +179,7 @@ export class PdfBookDocument implements BookDocument {
       }
       this.wireHighlightClick();
     } catch (error) {
-      range.cancel();
+      range?.cancel();
       if (this.rangeTransport === range) {
         this.rangeTransport = null;
       }
@@ -193,7 +197,7 @@ export class PdfBookDocument implements BookDocument {
         this.renderer?.dispose();
         this.renderer = null;
       }
-      throw error;
+      throw toPdfOpenError(error);
     } finally {
       if (this.loadingTask === loadingTask) {
         this.loadingTask = null;
@@ -597,14 +601,9 @@ export class PdfBookDocument implements BookDocument {
     }
   };
 
-  private async readMetadata(document: PdfDocumentProxy): Promise<void> {
-    const { info, metadata } = await document.getMetadata();
-    const title =
-      metadata?.get('dc:title') ?? (typeof info?.Title === 'string' ? info.Title : null);
+  private async readNavigation(document: PdfDocumentProxy): Promise<void> {
     const outline = await document.getOutline();
     this.toc = outlineToToc(outline);
-    // metadata 已由构造时提供;此处仅确保目录就绪。
-    void title;
   }
 
   private handlePageChange(page: number): void {
