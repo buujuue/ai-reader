@@ -464,7 +464,7 @@ export class PdfBookDocument implements BookDocument {
       void this.pdf.destroy().catch(() => undefined);
       this.pdf = null;
     }
-    this.container?.removeEventListener('click', this.handleContainerClick);
+    this.container?.removeEventListener('click', this.handleContainerClick, true);
     this.container = null;
     this.currentLocation = null;
     this.locationListeners.clear();
@@ -551,7 +551,9 @@ export class PdfBookDocument implements BookDocument {
 
   /** 接线容器点击:命中高亮矩形时按锚点值通知订阅者(打开笔记编辑器)。 */
   private wireHighlightClick(): void {
-    this.container?.addEventListener('click', this.handleContainerClick);
+    // 捕获阶段先于 ReadingInputController 的正文点击处理,保证点击 PDF
+    // 高亮只打开批注而不会同时触发左右区域翻页。
+    this.container?.addEventListener('click', this.handleContainerClick, true);
   }
 
   private notifyAreaSelection(selection: AreaSelection): void {
@@ -588,6 +590,8 @@ export class PdfBookDocument implements BookDocument {
         for (const listener of this.showAnnotationListeners) {
           listener(value);
         }
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
         return;
       }
     }

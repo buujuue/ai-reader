@@ -105,14 +105,21 @@ export function ReadingView({ viewId }: { viewId: string }) {
     );
 
     // 把输入监听器附加到每个内容文档(含后续随章节加载出现的新文档)。
-    // PDF 的内容文档就是应用主文档:由窗口级键盘与 PDF 渲染器自身处理滚轮/点击,
-    // 不再附加会抢占全局输入的 ReadingInputController,避免滚轮/点击劫持整个工作台。
+    // PDF 的内容文档就是应用主文档,但事件必须收窄到当前 ReadingView 的正文容器;
+    // 工具栏、搜索栏、对话框和其它 Editor Group 不属于翻页作用域。
     const detachList: Array<() => void> = [];
+    const attachedDocs = new Set<Document>();
     const isTopLevelDocument = (doc: Document) => doc.defaultView === window;
     const attachDoc = (doc: Document) => {
+      if (attachedDocs.has(doc)) return;
       if (isTopLevelDocument(doc)) {
+        if (book.format === 'pdf' && containerRef.current) {
+          detachList.push(controller.attach(doc, containerRef.current));
+          attachedDocs.add(doc);
+        }
         return;
       }
+      attachedDocs.add(doc);
       detachList.push(controller.attach(doc));
       const handleContentSearchShortcut = (event: KeyboardEvent) => {
         if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return;

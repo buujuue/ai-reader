@@ -54,6 +54,8 @@ export type ContentInteraction =
       /** 内容视口宽度,用于轻触按左右区域翻页。 */
       clientWidth: number;
       timeStamp: number;
+      /** 触摸命中的正文目标,用于识别扫描 PDF 区域拖选。 */
+      target?: unknown;
       preventDefault?: () => void;
     };
 
@@ -125,10 +127,24 @@ const INTERACTIVE_SELECTOR =
  * 判断点击目标是否落在交互控件或链接上。这类区域的点击/轻触不应触发翻页。
  */
 export function isInteractiveElement(target: unknown): boolean {
-  if (typeof Element === 'undefined' || !(target instanceof Element)) {
-    return false;
+  return closestTarget(target, INTERACTIVE_SELECTOR) !== null;
+}
+
+/** 阅读区域选择命中目标。具体渲染器通过语义 data 属性声明选择优先级。 */
+export function isAreaSelectionElement(target: unknown): boolean {
+  return closestTarget(target, '[data-text-selectable="false"]') !== null;
+}
+
+function closestTarget(target: unknown, selector: string): unknown | null {
+  if (
+    (typeof target !== 'object' && typeof target !== 'function') ||
+    target === null ||
+    !('closest' in target) ||
+    typeof target.closest !== 'function'
+  ) {
+    return null;
   }
-  return target.closest(INTERACTIVE_SELECTOR) !== null;
+  return target.closest(selector);
 }
 
 /**
@@ -179,6 +195,12 @@ export function interpretWheel(input: WheelInput): InterpretedReading {
 
 /** 点击翻页的左右区域边界(各占视口宽度的比例)。中间区域不翻页。 */
 const TAP_EDGE_RATIO = 1 / 3;
+/** 指针移动超过此距离后,后续兼容 click 视为拖拽而不是轻触。 */
+const POINTER_DRAG_THRESHOLD = 8;
+/** 浏览器为触摸手势补发 click 的时间窗口。 */
+const SYNTHETIC_CLICK_SUPPRESSION_MS = 500;
+/** 扫描页区域选择的最小位移,与 PdfPageRenderer 的最小区域尺寸同量级。 */
+const PDF_AREA_SELECTION_THRESHOLD = 4;
 
 /**
  * 解释点击/轻触。分页模式下点击正文左/右区域翻页,中间区域不翻页;
@@ -264,7 +286,20 @@ export class ReadingInputController {
   private readonly viewId: string;
   private readonly gate: WheelPageGate;
   private selecting = false;
-  private touchStart: { x: number; y: number; timeStamp: number } | null = null;
+  private touchStart: {
+    x: number;
+    y: number;
+    timeStamp: number;
+    isAreaSelection: boolean;
+    isInteractive: boolean;
+  } | null = null;
+  private suppressClickUntil = 0;
+  private pointerGesture: {
+    pointerId: number;
+    x: number;
+    y: number;
+    moved: boolean;
+  } | null = null;
 
   constructor(dispatch: ReadingInputDispatch, viewId: string) {
     this.dispatch = dispatch;
@@ -298,6 +333,9 @@ export class ReadingInputController {
         break;
       }
       case 'click': {
+        if (performance.now() < this.suppressClickUntil) {
+          break;
+        }
         if (isInteractiveElement(detail.target)) {
           break;
         }
@@ -325,7 +363,22 @@ export class ReadingInputController {
    * 滑动,避免同一水平滑动手势被翻两次页;滚动模式保留原生垂直滚动。
    * 返回取消订阅函数。
    */
-  attach(doc: Document): () => void {
+  attach(doc: Document, scope: Document | HTMLElement = doc): () => void {
+    const eventTarget = scope;
+    const isDocumentScope = eventTarget === doc;
+    const getClientX = (clientX: number) => {
+      if (isDocumentScope) return clientX;
+      return clientX - (eventTarget as HTMLElement).getBoundingClientRect().left;
+    };
+    const getClientWidth = () => {
+      if (!isDocumentScope) {
+        const element = eventTarget as HTMLElement;
+        const width = element.clientWidth || element.getBoundingClientRect().width;
+        return width || doc.defaultView?.innerWidth || 0;
+      }
+      return doc.defaultView?.innerWidth ?? 0;
+    };
+
     const onWheel = (event: Event) => {
       const wheel = event as WheelEvent;
       if (this.dispatch.getFlow() === 'paginated') {
@@ -342,8 +395,8 @@ export class ReadingInputController {
       const mouse = event as MouseEvent;
       this.handle({
         type: 'click',
-        clientX: mouse.clientX,
-        clientWidth: doc.defaultView?.innerWidth ?? 0,
+        clientX: getClientX(mouse.clientX),
+        clientWidth: getClientWidth(),
         target: event.target,
       });
     };
@@ -369,41 +422,89 @@ export class ReadingInputController {
     };
     const onTouchStart = (event: Event) => {
       const touch = (event as TouchEvent).changedTouches[0];
-      suppressNativeTouch(event, 'start', touch?.clientX ?? 0, touch?.clientY ?? 0);
+      const clientX = getClientX(touch?.clientX ?? 0);
+      suppressNativeTouch(event, 'start', clientX, touch?.clientY ?? 0);
       this.handle({
         type: 'touch',
         phase: 'start',
-        x: touch?.clientX ?? 0,
+        x: clientX,
         y: touch?.clientY ?? 0,
-        clientWidth: doc.defaultView?.innerWidth ?? 0,
+        clientWidth: getClientWidth(),
         timeStamp: event.timeStamp,
+        target: event.target,
         preventDefault: () => event.preventDefault(),
       });
     };
     const onTouchMove = (event: Event) => {
       const touch = (event as TouchEvent).changedTouches[0];
-      suppressNativeTouch(event, 'move', touch?.clientX ?? 0, touch?.clientY ?? 0);
+      const clientX = getClientX(touch?.clientX ?? 0);
+      suppressNativeTouch(event, 'move', clientX, touch?.clientY ?? 0);
       this.handle({
         type: 'touch',
         phase: 'move',
-        x: touch?.clientX ?? 0,
+        x: clientX,
         y: touch?.clientY ?? 0,
-        clientWidth: doc.defaultView?.innerWidth ?? 0,
+        clientWidth: getClientWidth(),
         timeStamp: event.timeStamp,
+        target: event.target,
       });
     };
     const onTouchEnd = (event: Event) => {
       const touch = (event as TouchEvent).changedTouches[0];
-      suppressNativeTouch(event, 'end', touch?.clientX ?? 0, touch?.clientY ?? 0);
+      this.suppressClickUntil = performance.now() + SYNTHETIC_CLICK_SUPPRESSION_MS;
+      const clientX = getClientX(touch?.clientX ?? 0);
+      suppressNativeTouch(event, 'end', clientX, touch?.clientY ?? 0);
       this.handle({
         type: 'touch',
         phase: 'end',
-        x: touch?.clientX ?? 0,
+        x: clientX,
         y: touch?.clientY ?? 0,
-        clientWidth: doc.defaultView?.innerWidth ?? 0,
+        clientWidth: getClientWidth(),
         timeStamp: event.timeStamp,
+        target: event.target,
         preventDefault: () => event.preventDefault(),
       });
+    };
+    const onPointerDown = (event: Event) => {
+      const pointer = event as PointerEvent;
+      if (pointer.isPrimary === false || (pointer.pointerType === 'mouse' && pointer.button !== 0)) {
+        return;
+      }
+      this.pointerGesture = {
+        pointerId: pointer.pointerId,
+        x: pointer.clientX,
+        y: pointer.clientY,
+        moved: false,
+      };
+    };
+    const onPointerMove = (event: Event) => {
+      const pointer = event as PointerEvent;
+      if (!this.pointerGesture || this.pointerGesture.pointerId !== pointer.pointerId) {
+        return;
+      }
+      if (
+        Math.abs(pointer.clientX - this.pointerGesture.x) > POINTER_DRAG_THRESHOLD ||
+        Math.abs(pointer.clientY - this.pointerGesture.y) > POINTER_DRAG_THRESHOLD
+      ) {
+        this.pointerGesture.moved = true;
+      }
+    };
+    const onPointerUp = (event: Event) => {
+      const pointer = event as PointerEvent;
+      if (!this.pointerGesture || this.pointerGesture.pointerId !== pointer.pointerId) {
+        return;
+      }
+      if (this.pointerGesture.moved) {
+        this.suppressClickUntil = performance.now() + SYNTHETIC_CLICK_SUPPRESSION_MS;
+      }
+      this.pointerGesture = null;
+    };
+    const onPointerCancel = (event: Event) => {
+      const pointer = event as PointerEvent;
+      if (this.pointerGesture?.pointerId === pointer.pointerId) {
+        this.pointerGesture = null;
+        this.suppressClickUntil = performance.now() + SYNTHETIC_CLICK_SUPPRESSION_MS;
+      }
     };
     const onSelectionChange = () => {
       const selection = doc.getSelection?.();
@@ -419,41 +520,68 @@ export class ReadingInputController {
     };
 
     const capture = { capture: true, passive: false } as AddEventListenerOptions;
-    doc.addEventListener('wheel', onWheel, { passive: false });
-    doc.addEventListener('click', onClick);
-    doc.addEventListener('touchstart', onTouchStart, capture);
-    doc.addEventListener('touchmove', onTouchMove, capture);
-    doc.addEventListener('touchend', onTouchEnd, capture);
+    eventTarget.addEventListener('wheel', onWheel, { passive: false });
+    eventTarget.addEventListener('click', onClick);
+    eventTarget.addEventListener('touchstart', onTouchStart, capture);
+    eventTarget.addEventListener('touchmove', onTouchMove, capture);
+    eventTarget.addEventListener('touchend', onTouchEnd, capture);
+    eventTarget.addEventListener('pointerdown', onPointerDown, capture);
+    eventTarget.addEventListener('pointermove', onPointerMove, capture);
+    eventTarget.addEventListener('pointerup', onPointerUp, capture);
+    eventTarget.addEventListener('pointercancel', onPointerCancel, capture);
     doc.addEventListener('selectionchange', onSelectionChange);
-    doc.addEventListener('keydown', onKeyDown);
+    if (isDocumentScope) {
+      doc.addEventListener('keydown', onKeyDown);
+    }
 
     return () => {
-      doc.removeEventListener('wheel', onWheel);
-      doc.removeEventListener('click', onClick);
-      doc.removeEventListener('touchstart', onTouchStart, capture);
-      doc.removeEventListener('touchmove', onTouchMove, capture);
-      doc.removeEventListener('touchend', onTouchEnd, capture);
+      eventTarget.removeEventListener('wheel', onWheel);
+      eventTarget.removeEventListener('click', onClick);
+      eventTarget.removeEventListener('touchstart', onTouchStart, capture);
+      eventTarget.removeEventListener('touchmove', onTouchMove, capture);
+      eventTarget.removeEventListener('touchend', onTouchEnd, capture);
+      eventTarget.removeEventListener('pointerdown', onPointerDown, capture);
+      eventTarget.removeEventListener('pointermove', onPointerMove, capture);
+      eventTarget.removeEventListener('pointerup', onPointerUp, capture);
+      eventTarget.removeEventListener('pointercancel', onPointerCancel, capture);
       doc.removeEventListener('selectionchange', onSelectionChange);
-      doc.removeEventListener('keydown', onKeyDown);
+      if (isDocumentScope) {
+        doc.removeEventListener('keydown', onKeyDown);
+      }
     };
   }
 
   private handleTouch(detail: Extract<ContentInteraction, { type: 'touch' }>, flow: ReadingFlowInput): void {
     if (detail.phase === 'start') {
-      this.touchStart = { x: detail.x, y: detail.y, timeStamp: detail.timeStamp };
+      this.touchStart = {
+        x: detail.x,
+        y: detail.y,
+        timeStamp: detail.timeStamp,
+        isAreaSelection: isAreaSelectionElement(detail.target),
+        isInteractive: isInteractiveElement(detail.target),
+      };
       return;
     }
     if (detail.phase === 'end') {
       if (this.touchStart) {
         const deltaX = detail.x - this.touchStart.x;
         const deltaY = detail.y - this.touchStart.y;
+        const isInteractive = this.touchStart.isInteractive || isInteractiveElement(detail.target);
+        const isAreaSelectionGesture =
+          this.touchStart.isAreaSelection &&
+          (Math.abs(deltaX) >= PDF_AREA_SELECTION_THRESHOLD ||
+            Math.abs(deltaY) >= PDF_AREA_SELECTION_THRESHOLD);
         const swipe = interpretSwipe({
           deltaX,
           deltaY,
           flow,
           hasSelection: this.selecting,
         });
-        if (swipe.kind === 'turn') {
+        if (isInteractive) {
+          detail.preventDefault?.();
+        } else if (isAreaSelectionGesture) {
+          detail.preventDefault?.();
+        } else if (swipe.kind === 'turn') {
           detail.preventDefault?.();
           this.exec(swipe.direction);
         } else if (

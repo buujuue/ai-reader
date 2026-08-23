@@ -990,6 +990,46 @@ describe('导入并阅读固定版式 PDF', () => {
     });
   });
 
+  it('PDF 分页正文左右点击经当前 ReadingView 作用域到前后页 Command', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getAllByText('示例 PDF').length).toBeGreaterThan(0));
+    await user.click(await screen.findByRole('button', { name: /打开 示例 PDF/ }));
+    await waitFor(() => expect(screen.getByRole('toolbar', { name: /示例 PDF/ })).toBeInTheDocument());
+
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(viewId)!;
+    const content = document.querySelector<HTMLElement>(`[data-view-id="${viewId}"]`)!;
+    await waitFor(() => expect(book.getCurrentIndex()).toBe(1));
+
+    fireEvent.click(content, { clientX: 900, clientY: 320 });
+    await waitFor(() => expect(book.getCurrentIndex()).toBe(2));
+
+    fireEvent.click(content, { clientX: 450, clientY: 320 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(book.getCurrentIndex()).toBe(2);
+
+    fireEvent.click(content, { clientX: 100, clientY: 320 });
+    await waitFor(() => expect(book.getCurrentIndex()).toBe(1));
+    fireEvent.click(content, { clientX: 100, clientY: 320 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(book.getCurrentIndex()).toBe(1);
+
+    fireEvent.click(content, { clientX: 900, clientY: 320 });
+    await waitFor(() => expect(book.getCurrentIndex()).toBe(2));
+    fireEvent.click(content, { clientX: 900, clientY: 320 });
+    await waitFor(() => expect(book.getCurrentIndex()).toBe(3));
+    fireEvent.click(content, { clientX: 900, clientY: 320 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(book.getCurrentIndex()).toBe(3);
+
+    fireEvent.click(screen.getByRole('button', { name: '阅读排版' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(book.getCurrentIndex()).toBe(3);
+  });
+
   it('PDF 首页封面失败时仍进入书库并在状态栏报告封面降级', async () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
       callback(null);

@@ -293,6 +293,34 @@ describe('ReadingInputController', () => {
     expect(execute).toHaveBeenCalledWith(COMMAND_IDS.readerNextPage, 'view-1');
   });
 
+  it('扫描 PDF 区域拖选优先于触摸滑动,不会误发翻页 Command', () => {
+    const { controller, execute } = createController();
+    const page = document.createElement('div');
+    page.className = 'pdf-page';
+    page.dataset.textSelectable = 'false';
+
+    controller.handle({
+      type: 'touch',
+      phase: 'start',
+      x: 300,
+      y: 200,
+      clientWidth: 900,
+      timeStamp: 0,
+      target: page,
+    });
+    controller.handle({
+      type: 'touch',
+      phase: 'end',
+      x: 180,
+      y: 205,
+      clientWidth: 900,
+      timeStamp: 100,
+      target: page,
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('交互控件上的点击不触发翻页', () => {
     const { controller, execute } = createController();
     const link = document.createElement('a');
@@ -314,6 +342,102 @@ describe('ReadingInputController', () => {
     const { controller, execute } = createController('scrolled');
     controller.handle({ type: 'wheel', deltaX: 0, deltaY: 100 });
     controller.handle({ type: 'click', clientX: 50, clientWidth: 900, target: null });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('attach 只接收指定正文根节点内的点击,不会劫持工作台其它区域', () => {
+    const { controller, execute } = createController();
+    const readerRoot = document.createElement('div');
+    const workbench = document.createElement('div');
+    document.body.append(readerRoot, workbench);
+    Object.defineProperty(readerRoot, 'clientWidth', { configurable: true, value: 900 });
+
+    const detach = controller.attach(document, readerRoot);
+    readerRoot.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 850 }));
+    workbench.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 850 }));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(COMMAND_IDS.readerNextPage, 'view-1');
+
+    detach();
+    readerRoot.remove();
+    workbench.remove();
+  });
+
+  it('attach 按正文容器本地坐标划分左右区域', () => {
+    const { controller, execute } = createController();
+    const readerRoot = document.createElement('div');
+    Object.defineProperty(readerRoot, 'clientWidth', { configurable: true, value: 600 });
+    vi.spyOn(readerRoot, 'getBoundingClientRect').mockReturnValue({
+      left: 300,
+      top: 0,
+      width: 600,
+      height: 500,
+      right: 900,
+      bottom: 500,
+      x: 300,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    document.body.append(readerRoot);
+    const detach = controller.attach(document, readerRoot);
+
+    readerRoot.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 350 }));
+    readerRoot.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 850 }));
+
+    expect(execute).toHaveBeenNthCalledWith(1, COMMAND_IDS.readerPrevPage, 'view-1');
+    expect(execute).toHaveBeenNthCalledWith(2, COMMAND_IDS.readerNextPage, 'view-1');
+    detach();
+    readerRoot.remove();
+  });
+
+  it('触摸轻触后的浏览器兼容 click 不会把一次手势翻成两页', () => {
+    const { controller, execute } = createController();
+    const readerRoot = document.createElement('div');
+    Object.defineProperty(readerRoot, 'clientWidth', { configurable: true, value: 900 });
+    document.body.append(readerRoot);
+    const detach = controller.attach(document, readerRoot);
+    const touchEvent = (type: string, x: number, y: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'changedTouches', {
+        configurable: true,
+        value: [{ clientX: x, clientY: y }],
+      });
+      return event;
+    };
+
+    readerRoot.dispatchEvent(touchEvent('touchstart', 850, 200));
+    readerRoot.dispatchEvent(touchEvent('touchend', 850, 200));
+    readerRoot.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 850 }));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    detach();
+    readerRoot.remove();
+  });
+
+  it('交互控件上的轻触不触发翻页', () => {
+    const { controller, execute } = createController();
+    const link = document.createElement('a');
+    link.href = '#section';
+    controller.handle({
+      type: 'touch',
+      phase: 'start',
+      x: 50,
+      y: 200,
+      clientWidth: 900,
+      timeStamp: 0,
+      target: link,
+    });
+    controller.handle({
+      type: 'touch',
+      phase: 'end',
+      x: 50,
+      y: 200,
+      clientWidth: 900,
+      timeStamp: 80,
+      target: link,
+    });
+
     expect(execute).not.toHaveBeenCalled();
   });
 
