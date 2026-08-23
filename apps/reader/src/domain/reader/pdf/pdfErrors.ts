@@ -45,7 +45,7 @@ export function toPdfOpenError(error: unknown): PdfOpenError {
   if (error instanceof PdfRangeReadError) {
     return new PdfOpenError(
       'range',
-      `PDF 范围读取失败（请求区间 [${error.begin},${error.end})），请检查托管文件是否完整。`,
+      formatPdfRangeError(error),
       error,
     );
   }
@@ -65,9 +65,13 @@ export function toPdfReadError(error: unknown): PdfReadError {
   if (error instanceof PdfRangeReadError) {
     return new PdfReadError(
       'range',
-      `PDF 范围读取失败（请求区间 [${error.begin},${error.end})），请检查托管文件是否完整。`,
+      formatPdfRangeError(error),
       error,
     );
   }
   return new PdfReadError('rendering', 'PDF 页面读取或渲染失败，请重新加载该页。', error);
+}
+
+function formatPdfRangeError(error: PdfRangeReadError): string {
+  return `PDF 范围读取失败（请求区间 [${error.begin},${error.end})），请检查托管文件是否完整。`;
 }

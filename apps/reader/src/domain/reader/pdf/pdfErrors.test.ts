@@ -25,4 +25,10 @@ describe('PDF 错误分类', () => {
     expect(error.kind).toBe('range');
     expect(error.message).toContain('[128,256)');
   });
+
+  it('打开阶段和运行时范围错误共享同一条中文文案', () => {
+    const cause = new PdfRangeReadError(128, 256, new Error('磁盘读取失败'));
+
+    expect(toPdfOpenError(cause).message).toBe(toPdfReadError(cause).message);
+  });
 });

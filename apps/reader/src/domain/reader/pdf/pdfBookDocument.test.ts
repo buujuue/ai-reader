@@ -74,6 +74,23 @@ describe('PdfBookDocument', () => {
     await expect(book.open(makeContainer())).rejects.toThrow('PDF 文件损坏或结构无效');
   });
 
+  it('首屏渲染失败只作为打开错误上报一次', async () => {
+    const document = makeFakeDocument(1);
+    const lib = makeFakeLib(document);
+    const renderError = new Error('canvas render failed');
+    const book = new PdfBookDocument({
+      source: createPdfSourceFromBytes(new Uint8Array([1, 2, 3])),
+      metadata: { title: '失败 PDF', author: null, language: null },
+      pdfLib: lib,
+      rasterize: () => ({ promise: Promise.reject(renderError), cancel: vi.fn() }),
+    });
+    const readError = vi.fn();
+    book.onReadError(readError);
+
+    await expect(book.open(makeContainer())).rejects.toThrow('PDF.js 初始化失败');
+    expect(readError).not.toHaveBeenCalled();
+  });
+
   it('托管范围读取失败时打开失败会保留请求区间诊断', async () => {
     const pdf = makeFakeDocument(1);
     const lib = makeFakeLib(pdf);

@@ -148,6 +148,7 @@ export class PdfBookDocument implements BookDocument {
         return;
       }
 
+      let opening = true;
       const renderer = new PdfRenderer(
         {
           document,
@@ -161,7 +162,13 @@ export class PdfBookDocument implements BookDocument {
           onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
           onPageRendered: (page) => this.redrawPage(page),
           onAreaSelection: (selection) => this.notifyAreaSelection(selection),
-          onError: (error) => this.notifyReadError(toPdfReadError(error)),
+          onError: (error) => {
+            // 首屏渲染仍属于 open() 的失败边界;只在文档成功挂载后
+            // 把后续页面错误发送到运行时错误通道,避免同一个错误双重上报。
+            if (!opening) {
+              this.notifyReadError(toPdfReadError(error));
+            }
+          },
         },
       );
       this.renderer = renderer;
@@ -177,6 +184,7 @@ export class PdfBookDocument implements BookDocument {
         this.renderer = null;
         return;
       }
+      opening = false;
       this.wireHighlightClick();
     } catch (error) {
       range?.cancel();
