@@ -48,7 +48,7 @@ export function computeRenderDpr(page: PdfPage, scale: number, devicePixelRatio 
  */
 export class PdfPageRenderer {
   readonly element: HTMLElement;
-  private readonly canvas: HTMLCanvasElement;
+  private canvas: HTMLCanvasElement;
   private readonly textLayer: HTMLElement;
   private readonly highlightLayer: HTMLElement;
   private readonly areaSelectionLayer: HTMLElement;
@@ -75,11 +75,7 @@ export class PdfPageRenderer {
     this.element.dataset.page = String(pageNumber);
     this.element.style.position = 'relative';
 
-    this.canvas = document.createElement('canvas');
-    this.canvas.setAttribute('aria-hidden', 'true');
-    this.canvas.style.position = 'absolute';
-    this.canvas.style.top = '0';
-    this.canvas.style.left = '0';
+    this.canvas = this.createCanvas();
     this.element.appendChild(this.canvas);
 
     this.textLayer = document.createElement('div');
@@ -139,46 +135,61 @@ export class PdfPageRenderer {
     this.displayScale = viewport.width / (base.width || 1);
 
     const generation = ++this.generation;
-    if (this.renderTask) {
-      this.renderTask.cancel();
+    const previousCanvas = this.canvas;
+    const previousTask = this.renderTask;
+    if (previousTask) {
+      previousTask.cancel();
       this.renderTask = null;
+      // PDF.js 的 cancel() 只发出取消请求,旧任务仍可能在下一个 microtask
+      // 访问自己的 Canvas。让它保留原尺寸直到 Promise 结束,避免 beginSMaskMode
+      // 在旧任务上看到 0×0;新一代渲染使用独立 Canvas。
+      this.clearCanvasWhenTaskSettles(previousCanvas, previousTask);
+    } else {
+      this.clearCanvas(previousCanvas);
     }
+    this.canvas = this.createCanvas();
+    previousCanvas.replaceWith(this.canvas);
 
-    // 释放旧位图后再分配新位图,避免缩放频繁时内存峰值。
-    this.canvas.width = 0;
-    this.canvas.height = 0;
     this.textLayer.replaceChildren();
 
     const renderDpr = computeRenderDpr(page, this.displayScale, devicePixelRatio);
     const renderScale = this.displayScale * renderDpr;
     const renderViewport = page.getViewport({ scale: renderScale });
+    const renderCanvas = this.canvas;
 
     // CSS 盒子固定在显示尺寸,位图按 DPR 过采样后由浏览器缩放到盒子内。
-    this.canvas.style.width = `${viewport.width}px`;
-    this.canvas.style.height = `${viewport.height}px`;
-    this.canvas.width = Math.floor(renderViewport.width);
-    this.canvas.height = Math.floor(renderViewport.height);
+    renderCanvas.style.width = `${viewport.width}px`;
+    renderCanvas.style.height = `${viewport.height}px`;
+    if (
+      !Number.isFinite(renderScale) ||
+      renderScale <= 0 ||
+      !Number.isFinite(renderViewport.width) ||
+      !Number.isFinite(renderViewport.height) ||
+      renderViewport.width <= 0 ||
+      renderViewport.height <= 0
+    ) {
+      this.clearCanvas(renderCanvas);
+      return;
+    }
+    // Canvas 的整数属性会截断小于 1 的值为 0,而 PDF.js 会拒绝 0×N 的
+    // 目标画布。极端宽高比或隐藏容器布局下仍保留最小的可绘制位图。
+    renderCanvas.width = Math.max(1, Math.floor(renderViewport.width));
+    renderCanvas.height = Math.max(1, Math.floor(renderViewport.height));
 
-    const canvasContext = this.canvas.getContext('2d');
+    const canvasContext = renderCanvas.getContext('2d');
     if (!canvasContext) {
       // 无 2d 上下文(极端环境):直接清空位图,不阻塞阅读流程。
-      this.canvas.width = 0;
-      this.canvas.height = 0;
+      this.clearCanvas(renderCanvas);
       return;
     }
 
-    if (renderScale === 0) {
-      return;
-    }
-
-    const task = this.rasterize(page, this.canvas, renderScale);
+    const task = this.rasterize(page, renderCanvas, renderScale);
     this.renderTask = task;
     try {
       await task.promise;
     } catch (error) {
       // 过期/卸载渲染的取消不应打断阅读;当前页面的真实失败必须向上层传播。
-      this.canvas.width = 0;
-      this.canvas.height = 0;
+      this.clearCanvas(renderCanvas);
       if (!this.disposed && this.generation === generation) {
         this.callbacks.onError?.(error);
         throw error;
@@ -192,12 +203,13 @@ export class PdfPageRenderer {
 
     // 渲染期间页面被卸载或新一代渲染已启动,丢弃过期结果并释放位图。
     if (this.disposed || this.generation !== generation) {
-      this.canvas.width = 0;
-      this.canvas.height = 0;
+      this.clearCanvas(renderCanvas);
       return;
     }
 
-    // 文本层:扫描页无文字层时 streamTextContent 返回空,仍正常显示页面图像。
+    // 文本层:streamTextContent() 在 pdfjs-dist 5.x 返回 ReadableStream;
+    // 当前自定义文本层需要完整 items,因此使用 getTextContent() 获取聚合结果。
+    // 扫描页无文字层时返回空 items,仍正常显示页面图像。
     this.textLayer.replaceChildren();
     this.textLayer.style.position = 'absolute';
     this.textLayer.style.top = '0';
@@ -206,7 +218,7 @@ export class PdfPageRenderer {
     this.textLayer.style.height = `${viewport.height}px`;
     let hasTextLayer = false;
     try {
-      const textContent = await page.streamTextContent();
+      const textContent = await page.getTextContent();
       const items = textContent.items
         .filter((item) => item.transform !== undefined)
         .map((item) => {
@@ -379,6 +391,27 @@ export class PdfPageRenderer {
     return this.canvas.width * this.canvas.height;
   }
 
+  private createCanvas(): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('aria-hidden', 'true');
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    return canvas;
+  }
+
+  private clearCanvas(canvas: HTMLCanvasElement): void {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
+  private clearCanvasWhenTaskSettles(canvas: HTMLCanvasElement, task: PdfRenderTask): void {
+    void task.promise.then(
+      () => this.clearCanvas(canvas),
+      () => this.clearCanvas(canvas),
+    );
+  }
+
   /** 释放本页:取消在途渲染、回收位图与文本层。 */
   release(): void {
     this.disposed = true;
@@ -387,12 +420,14 @@ export class PdfPageRenderer {
     this.element.removeEventListener('pointermove', this.handlePointerMove);
     this.element.removeEventListener('pointerup', this.handlePointerUp);
     this.element.removeEventListener('pointercancel', this.handlePointerCancel);
-    if (this.renderTask) {
-      this.renderTask.cancel();
-      this.renderTask = null;
+    const task = this.renderTask;
+    this.renderTask = null;
+    if (task) {
+      task.cancel();
+      this.clearCanvasWhenTaskSettles(this.canvas, task);
+    } else {
+      this.clearCanvas(this.canvas);
     }
-    this.canvas.width = 0;
-    this.canvas.height = 0;
     this.textLayer.replaceChildren();
     this.element.remove();
   }

@@ -51,12 +51,20 @@ export interface PdfTextContent {
   readonly styles?: Record<string, { fontFamily?: string; vertical?: boolean }>;
 }
 
+/** PDF.js 文本内容读取参数。 */
+export interface PdfTextContentParameters {
+  readonly includeMarkedContent?: boolean;
+  readonly disableNormalization?: boolean;
+}
+
 /** PDF.js 页面对象(窄接口)。 */
 export interface PdfPage {
   getViewport(options: { scale: number }): PdfViewport;
   render(options: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }): PdfRenderTask;
-  streamTextContent(): Promise<PdfTextContent>;
-  getTextContent(): Promise<PdfTextContent>;
+  /** PDF.js 5.x 的流式接口返回 ReadableStream,不是完整 TextContent 对象。 */
+  streamTextContent(options?: PdfTextContentParameters): ReadableStream<PdfTextContent>;
+  /** 返回已聚合的文本内容,适合当前需要一次性建立自定义文本层的实现。 */
+  getTextContent(options?: PdfTextContentParameters): Promise<PdfTextContent>;
   getAnnotations(): Promise<unknown[]>;
   /** 释放页面解码缓存(如字体/字形),用于内存预算回收。 */
   cleanup(): void;

@@ -84,9 +84,77 @@ describe('PdfPageRenderer 画布内存预算', () => {
     expect(renderer.getBitmapArea()).toBe(0);
   });
 
+  it('释放时不把仍在 PDF.js 内部执行的画布清成零尺寸', async () => {
+    const page = makeFakePage({ width: 200, height: 300 });
+    let continueRender: () => void = () => undefined;
+    let invalidCanvasSize: Error | null = null;
+    const rasterize = vi.fn((_page: PdfPage, canvas: HTMLCanvasElement) => ({
+      promise: new Promise<void>((resolve, reject) => {
+        continueRender = () => {
+          if (canvas.width <= 0 || canvas.height <= 0) {
+            invalidCanvasSize = new Error('Invalid canvas size');
+            reject(invalidCanvasSize);
+            return;
+          }
+          resolve();
+        };
+      }),
+      cancel: vi.fn(),
+    }));
+    const renderer = new PdfPageRenderer(1, rasterize);
+    const renderPromise = renderer.render(page, page.getViewport({ scale: 1 }), 1);
+    await Promise.resolve();
+
+    renderer.release();
+    continueRender();
+    await renderPromise;
+
+    expect(invalidCanvasSize).toBeNull();
+  });
+
+  it('重新渲染时为旧的在途任务保留独立画布', async () => {
+    const page = makeFakePage({ width: 200, height: 300 });
+    let resolveFirst: () => void = () => undefined;
+    const firstTask = {
+      promise: new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      }),
+      cancel: vi.fn(),
+    };
+    const canvases: HTMLCanvasElement[] = [];
+    const rasterize = vi.fn((_page: PdfPage, canvas: HTMLCanvasElement) => {
+      canvases.push(canvas);
+      return canvases.length === 1 ? firstTask : makeFakeRenderTask();
+    });
+    const renderer = new PdfPageRenderer(1, rasterize);
+    const firstRender = renderer.render(page, page.getViewport({ scale: 1 }), 1);
+    await Promise.resolve();
+
+    await renderer.render(page, page.getViewport({ scale: 2 }), 1);
+    expect(firstTask.cancel).toHaveBeenCalledOnce();
+    expect(canvases[0]).not.toBe(canvases[1]);
+    expect(canvases[0]?.width).toBeGreaterThan(0);
+    expect(canvases[0]?.height).toBeGreaterThan(0);
+
+    resolveFirst();
+    await firstRender;
+  });
+
+  it('极端宽高比导致小于一个像素时仍分配有效画布', async () => {
+    const page = makeFakePage({ width: 1_000_000, height: 1 });
+    const renderer = new PdfPageRenderer(1, () => makeFakeRenderTask());
+
+    await renderer.render(page, { width: 1, height: 0.000001 }, 1);
+
+    const canvas = renderer.element.querySelector('canvas');
+    expect(canvas?.width).toBe(1);
+    expect(canvas?.height).toBe(1);
+    expect(renderer.getBitmapArea()).toBe(1);
+  });
+
   it('扫描页无文字层时仍正常显示页面图像', async () => {
     const page = makeFakePage({ width: 200, height: 300 }) as PdfPage;
-    (page.streamTextContent as ReturnType<typeof vi.fn>).mockRejectedValue(
+    (page.getTextContent as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('no text layer'),
     );
     const renderer = new PdfPageRenderer(1, () => makeFakeRenderTask());
@@ -95,6 +163,32 @@ describe('PdfPageRenderer 画布内存预算', () => {
 
     // 文本层读取失败不阻塞页面图像渲染。
     expect(renderer.getBitmapArea()).toBeGreaterThan(0);
+  });
+
+  it('兼容 PDF.js streamTextContent 返回 ReadableStream 的真实 API', async () => {
+    const page = makeFakePage({ width: 200, height: 300 }, [
+      { str: 'PDF.js 流式文字', transform: [1, 0, 0, 1, 0, 0], width: 80, height: 12 },
+    ]);
+    const textStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          items: [
+            { str: 'PDF.js 流式文字', transform: [1, 0, 0, 1, 0, 0], width: 80, height: 12 },
+          ],
+          styles: {},
+        });
+        controller.close();
+      },
+    });
+    (page.streamTextContent as ReturnType<typeof vi.fn>).mockReturnValue(textStream);
+    const onError = vi.fn();
+    const renderer = new PdfPageRenderer(1, () => makeFakeRenderTask(), { onError });
+
+    await renderer.render(page, page.getViewport({ scale: 1 }), 1);
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(renderer.element.dataset.textSelectable).toBe('true');
+    expect(renderer.element.querySelector('.pdf-text-layer span')).toBeTruthy();
   });
 
   it('当前页面图像读取失败时向上层传播并保留诊断回调', async () => {

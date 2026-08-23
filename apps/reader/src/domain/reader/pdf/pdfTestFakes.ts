@@ -69,7 +69,14 @@ export function makeFakePage(spec: FakePageSpec, textItems: FakeTextItem[] = [])
       return { width: spec.width * options.scale, height: spec.height * options.scale };
     },
     render: vi.fn((): PdfRenderTask => makeFakeRenderTask()),
-    streamTextContent: vi.fn(async () => ({ items: textItems, styles: {} })),
+    streamTextContent: vi.fn(() =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue({ items: textItems, styles: {} });
+          controller.close();
+        },
+      }),
+    ),
     getTextContent: vi.fn(async () => ({ items: textItems, styles: {} })),
     getAnnotations: vi.fn(async () => []),
     cleanup: vi.fn(),
