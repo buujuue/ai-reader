@@ -20,7 +20,7 @@ import {
   type ConcurrentRangeTransport,
   withRangeFailure,
 } from './pdfRangeTransport';
-import { toPdfOpenError } from './pdfErrors';
+import { toPdfOpenError, toPdfReadError } from './pdfErrors';
 import { searchPdf } from './pdfSearch';
 import {
   decodePdfTextAnchor,
@@ -161,7 +161,7 @@ export class PdfBookDocument implements BookDocument {
           onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
           onPageRendered: (page) => this.redrawPage(page),
           onAreaSelection: (selection) => this.notifyAreaSelection(selection),
-          onError: (error) => this.notifyReadError(toPdfOpenError(error)),
+          onError: (error) => this.notifyReadError(toPdfReadError(error)),
         },
       );
       this.renderer = renderer;

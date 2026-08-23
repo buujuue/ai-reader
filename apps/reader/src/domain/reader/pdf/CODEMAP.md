@@ -6,7 +6,7 @@ PDF 阅读内核，把 PDF.js 的全部能力封装在 `BookDocument` 窄接口�
 
 - `pdfLibrary.ts`：PDF.js 窄接口类型定义（`PdfJsLib`、`PdfDocumentProxy`、`PdfPage` 等）与懒加载引导 `loadPdfLib()`；加载时关闭 `isEvalSupported`，落实不可信内容安全边界（ADR-0010）。文本内容项携带 `transform`/`width`/`height` 几何数据，供文本层定位。
 - `pdfRangeTransport.ts`：范围读取传输层，限制 PDF.js 范围请求并发上限 `MAX_CONCURRENT_RANGES`，支持队列取消、越界拒绝、读取失败后的槽位释放与结果抑制，并通过 `PdfRangeReadError`/`withRangeFailure` 向打开和检查边界报告失败范围。
-- `pdfErrors.ts`：把 PDF.js 初始化、结构损坏和托管范围读取错误转换为稳定的简体中文 `PdfOpenError`；原始错误仅保留给日志，不直接暴露给阅读界面。
+- `pdfErrors.ts`：把 PDF.js 打开阶段的初始化/结构损坏/托管范围错误与已打开页面的读取/渲染错误分别转换为稳定的简体中文 `PdfOpenError`/`PdfReadError`；原始错误仅保留给日志，不直接暴露给阅读界面。
 - `pdfInspector.ts`：`inspectPdf` 接收 PDF 范围来源并通过同一范围传输做格式校验、元数据提取（标题/作者/页数）和首页来源封面派生，可注入伪引擎；封面失败只返回可诊断警告，不阻断正文检查。错误分类覆盖空文件、无 PDF 头（unsupported）、损坏结构（corrupt）。XMP 元数据（`dc:creator` 等多作者）可能返回数组，统一归一化为 `string | null`（以「、」连接），避免传给 Rust `commit_import` 时序列化失败。
 - `pdfCover.ts`：一次性渲染 PDF 页面为临时 PNG，限制首页 Canvas 长边、检测透明空白页，并在完成/失败/取消时统一取消渲染任务、释放 Canvas 位图和调用 `page.cleanup()`；导入检查与 `PdfBookDocument.getCover()` 共用该生命周期 helper。
 - `pdfTextLayer.ts`：文本层定位。把文本项 transform 换算成与 Canvas 对齐的绝对定位 span（参考 pdf.js `TextLayer`），使文本可选、可复制。

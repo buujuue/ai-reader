@@ -3,6 +3,9 @@ import { PdfRangeReadError } from './pdfRangeTransport';
 /** PDF 阅读打开阶段可向工作台展示的错误分类。 */
 export type PdfOpenErrorKind = 'corrupt' | 'range' | 'initialization';
 
+/** 已打开文档的页面读取/渲染错误分类。 */
+export type PdfReadErrorKind = 'range' | 'rendering';
+
 /**
  * PDF 阅读错误的中文诊断包装。
  *
@@ -14,6 +17,19 @@ export class PdfOpenError extends Error {
 
   constructor(
     readonly kind: PdfOpenErrorKind,
+    message: string,
+    override readonly cause: unknown,
+  ) {
+    super(message);
+  }
+}
+
+/** 已打开 PDF 的运行时页面错误,不冒充打开阶段的初始化失败。 */
+export class PdfReadError extends Error {
+  override name = 'PdfReadError';
+
+  constructor(
+    readonly kind: PdfReadErrorKind,
     message: string,
     override readonly cause: unknown,
   ) {
@@ -39,4 +55,19 @@ export function toPdfOpenError(error: unknown): PdfOpenError {
     return new PdfOpenError('corrupt', 'PDF 文件损坏或结构无效，无法打开。', error);
   }
   return new PdfOpenError('initialization', 'PDF.js 初始化失败，无法打开该 PDF。', error);
+}
+
+/** 把已打开文档的页面错误转换为准确的中文运行时诊断。 */
+export function toPdfReadError(error: unknown): PdfReadError {
+  if (error instanceof PdfReadError) {
+    return error;
+  }
+  if (error instanceof PdfRangeReadError) {
+    return new PdfReadError(
+      'range',
+      `PDF 范围读取失败（请求区间 [${error.begin},${error.end})），请检查托管文件是否完整。`,
+      error,
+    );
+  }
+  return new PdfReadError('rendering', 'PDF 页面读取或渲染失败，请重新加载该页。', error);
 }

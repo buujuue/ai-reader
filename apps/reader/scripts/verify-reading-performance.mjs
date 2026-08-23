@@ -213,13 +213,26 @@ async function main() {
       epubBook.close();
       epubContainer.remove();
 
-      const pdfBytes = buildLargePdfFixture({ pageCount: 12, paddingBytes: 10 * 1024 * 1024 });
+      const pdfBytes = buildLargePdfFixture({ pageCount: 640, paddingBytes: 10 * 1024 * 1024 });
       const pdfTracker = trackedSource(pdfBytes, 'large-range.pdf');
       const pdfContainer = makeContainer('large-pdf-performance');
+      const loadedPdfLib = await loadPdfLib();
+      let pdfDocumentLoads = 0;
+      const pdfLib = new Proxy(loadedPdfLib, {
+        get(target, property, receiver) {
+          if (property === 'getDocument') {
+            return (options) => {
+              pdfDocumentLoads += 1;
+              return target.getDocument(options);
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
       const pdfBook = new PdfBookDocument({
         source: pdfTracker.source,
         metadata: { title: '大型范围读取 PDF', author: null, language: 'zh' },
-        pdfLib: await loadPdfLib(),
+        pdfLib,
       });
       const pdfOpen = await phase(pdfTracker, async () => {
         await pdfBook.open(pdfContainer);
@@ -230,7 +243,10 @@ async function main() {
         await waitFor(() => pdfBook.getCurrentIndex() === 2, 'PDF 翻页');
       });
       const pdfPageCount = pdfBook.getPageCount();
-      if (pdfPageCount !== 12) throw new Error(`PDF 文档信息页数异常:${pdfPageCount}`);
+      if (pdfPageCount !== 640) throw new Error(`PDF 文档信息页数异常:${pdfPageCount}`);
+      if (pdfDocumentLoads !== 1) {
+        throw new Error(`PDF 首次打开创建了 ${pdfDocumentLoads} 份 PDF.js 文档,预期为 1`);
+      }
       const pdfTotalReadBytes = pdfTracker.snapshot().cumulativeReadBytes;
       pdfBook.close();
       pdfContainer.remove();
