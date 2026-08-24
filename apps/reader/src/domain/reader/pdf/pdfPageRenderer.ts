@@ -103,6 +103,7 @@ export class PdfPageRenderer {
     this.element.appendChild(this.areaSelectionLayer);
 
     this.element.dataset.textSelectable = 'pending';
+    this.element.dataset.textLayerState = 'pending';
 
     this.element.addEventListener('pointerdown', this.handlePointerDown);
     this.element.addEventListener('pointermove', this.handlePointerMove);
@@ -140,6 +141,7 @@ export class PdfPageRenderer {
     previousCanvas.replaceWith(this.canvas);
 
     this.textLayer.replaceChildren();
+    this.element.dataset.textLayerState = 'pending';
 
     const renderDpr = computeRenderDpr(page, this.displayScale, devicePixelRatio);
     const renderScale = this.displayScale * renderDpr;
@@ -227,7 +229,9 @@ export class PdfPageRenderer {
         pageDims: this.pageBaseDims,
         scale: this.displayScale,
       });
+      this.element.dataset.textLayerState = hasTextLayer ? 'ready' : 'none';
     } catch (error) {
+      this.element.dataset.textLayerState = 'error';
       if (!this.disposed && this.generation === generation) {
         this.callbacks.onError?.(error);
       }

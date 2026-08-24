@@ -107,7 +107,8 @@ const checks = [
       !tauriCommands.includes('commands::import::read_managed_file,') &&
       readerCommands.includes('openManagedFileSource') &&
       performanceScript.includes('MAX_RANGE_BYTES') &&
-      performanceScript.includes('cumulativeReadBytes >= bytes.byteLength') &&
+      performanceScript.includes('totalReadBytes') &&
+      performanceScript.includes('hasValidVisiblePage') &&
       performanceScript.includes('getPageCount'),
   },
   {

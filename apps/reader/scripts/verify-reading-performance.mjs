@@ -36,10 +36,13 @@ const EXPECTED_FIXTURE_CONTENT_BYTES_PER_PAGE = 16 * 1024;
 const MAX_RANGE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_READ_RATIO = 1.1;
 const MAX_PEAK_MEMORY_BYTES = 512 * 1024 * 1024;
+const MIN_GENERATED_RANGE_REQUESTS = 32;
+const MIN_GENERATED_READ_RATIO = 0.1;
 
 let devServerProcess = null;
 let sampleServer = null;
 let browser = null;
+let baselineBrowser = null;
 let connectedToExternalBrowser = false;
 let failureReport = null;
 
@@ -190,6 +193,13 @@ async function closeBrowser() {
   }
 }
 
+async function closeBaselineBrowser() {
+  if (!baselineBrowser) return;
+  const current = baselineBrowser;
+  baselineBrowser = null;
+  await current.close();
+}
+
 function writeFailureArtifact(error) {
   mkdirSync(dirname(OUTPUT), { recursive: true });
   writeFileSync(
@@ -249,6 +259,8 @@ async function main() {
       maxRangeBytes: MAX_RANGE_BYTES,
       maxTotalReadRatio: MAX_TOTAL_READ_RATIO,
       maxPeakMemoryBytes: MAX_PEAK_MEMORY_BYTES,
+      minGeneratedRangeRequests: MIN_GENERATED_RANGE_REQUESTS,
+      minGeneratedReadRatio: MIN_GENERATED_READ_RATIO,
     });
     if (pageErrors.length > 0) throw new Error(`页面错误:${pageErrors.join('; ')}`);
     const browserDescription = await getBrowserDescription();
@@ -270,7 +282,37 @@ async function main() {
   const tauriPageUrl = new URL(await page.url());
   tauriPageUrl.searchParams.set('prototype', 'workbench');
   await page.goto(tauriPageUrl.toString(), { waitUntil: 'networkidle0' });
-  const result = await page.evaluate(runPerformanceMeasurements, {
+  // Tauri 的 direct File 只用于额外诊断；正式 2x 门禁必须和同一机器上
+  // 独立 Chrome 的 File 基线比较,不能拿 WebView2 自己的基线冒充 Chrome。
+  const sampleUrl = await startSampleServer(LOCAL_PDF_PATH);
+  baselineBrowser = await puppeteer.launch({
+    executablePath: CHROME,
+    headless: true,
+    args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--enable-precise-memory-info'],
+  });
+  const baselinePage = await baselineBrowser.newPage();
+  const baselinePageErrors = [];
+  baselinePage.on('pageerror', (error) => baselinePageErrors.push(sanitizeError(error)));
+  await baselinePage.setViewport({ width: 1280, height: 900 });
+  await baselinePage.goto(`${APP_URL}?prototype=workbench`, { waitUntil: 'networkidle0' });
+  const chromeBaseline = await baselinePage.evaluate(runPerformanceMeasurements, {
+    mode: 'browser',
+    sampleUrl,
+    runCount: RUN_COUNT,
+    expectedPageCount: EXPECTED_FIXTURE_PAGE_COUNT,
+    expectedContentBytesPerPage: EXPECTED_FIXTURE_CONTENT_BYTES_PER_PAGE,
+    maxRangeBytes: MAX_RANGE_BYTES,
+    maxTotalReadRatio: MAX_TOTAL_READ_RATIO,
+    maxPeakMemoryBytes: MAX_PEAK_MEMORY_BYTES,
+    minGeneratedRangeRequests: MIN_GENERATED_RANGE_REQUESTS,
+    minGeneratedReadRatio: MIN_GENERATED_READ_RATIO,
+  });
+  if (baselinePageErrors.length > 0) throw new Error(`Chrome 基线页面错误:${baselinePageErrors.join('; ')}`);
+  const chromeBaselineBrowser = await baselineBrowser.version();
+  await closeBaselineBrowser();
+  await closeSampleServer();
+
+  const tauriResult = await page.evaluate(runPerformanceMeasurements, {
     mode: MODE,
     sampleUrl: null,
     localPdfPath: LOCAL_PDF_PATH,
@@ -280,13 +322,41 @@ async function main() {
     maxRangeBytes: MAX_RANGE_BYTES,
     maxTotalReadRatio: MAX_TOTAL_READ_RATIO,
     maxPeakMemoryBytes: MAX_PEAK_MEMORY_BYTES,
+    minGeneratedRangeRequests: MIN_GENERATED_RANGE_REQUESTS,
+    minGeneratedReadRatio: MIN_GENERATED_READ_RATIO,
+    enforceManagedRatio: false,
   });
   if (pageErrors.length > 0) throw new Error(`Tauri WebView 页面错误:${pageErrors.join('; ')}`);
   const browserDescription = await getBrowserDescription();
+  const directMedian = chromeBaseline.summary?.directFile?.medianFirstVisibleMs;
+  const managedMedian = tauriResult.summary?.managed?.medianFirstVisibleMs;
+  const managedToChromeRatio =
+    typeof directMedian === 'number' && directMedian > 0 && typeof managedMedian === 'number'
+      ? managedMedian / directMedian
+      : null;
+  if (managedToChromeRatio === null || managedToChromeRatio > 2) {
+    throw new Error(`Windows Tauri 首屏中位数超过 Chrome File 基线 2 倍:${managedToChromeRatio}`);
+  }
   await closeBrowser();
   killDevServer();
   const output = {
-    ...result,
+    ...tauriResult,
+    runs: tauriResult.runs.map((run, index) => ({
+      ...run,
+      directFile: chromeBaseline.runs[index]?.directFile ?? null,
+    })),
+    summary: {
+      ...tauriResult.summary,
+      directFile: chromeBaseline.summary.directFile,
+      epub: chromeBaseline.summary.epub,
+    },
+    checks: {
+      ...tauriResult.checks,
+      managedToDirectMedianRatio: managedToChromeRatio,
+      managedToDirectMedianWithinTwoX: managedToChromeRatio !== null && managedToChromeRatio <= 2,
+    },
+    tauriWebViewFile: tauriResult.summary.directFile,
+    chromeBaselineBrowser,
     recordedAt: new Date().toISOString(),
     browser: browserDescription,
     cleanup: { devServerClosed: true, sampleServerClosed: true, browserClosed: true },
@@ -346,6 +416,9 @@ async function runPerformanceMeasurements(config) {
     maxRangeBytes,
     maxTotalReadRatio,
     maxPeakMemoryBytes,
+    minGeneratedRangeRequests,
+    minGeneratedReadRatio,
+    enforceManagedRatio = mode !== 'tauri',
   } = config;
   const [
     { ManagedFileSource },
@@ -407,6 +480,7 @@ async function runPerformanceMeasurements(config) {
       phaseTotalBytes: 0,
       phaseTotalRequests: 0,
       phaseLargestRange: 0,
+      phaseStartPageGets: 0,
       binaryRangeResponses: 0,
       nonBinaryRangeResponses: 0,
       startPhase() {
@@ -415,6 +489,7 @@ async function runPerformanceMeasurements(config) {
         this.phaseTotalBytes = 0;
         this.phaseTotalRequests = 0;
         this.phaseLargestRange = 0;
+        this.phaseStartPageGets = this.pageGets;
         this.sampleMemory();
       },
       record(offset, length) {
@@ -445,6 +520,7 @@ async function runPerformanceMeasurements(config) {
           firstVisibleMs: values.firstVisibleMs ?? null,
           cumulativeReadBytes: this.phaseTotalBytes,
           requestCount: this.phaseTotalRequests,
+          pageGets: this.pageGets - this.phaseStartPageGets,
           maxRangeBytes: this.phaseLargestRange,
           peakInFlightBytes: this.phasePeakInFlightBytes,
           peakMemoryBytes: this.phasePeakHeapBytes,
@@ -546,7 +622,12 @@ async function runPerformanceMeasurements(config) {
     const page = container.querySelector(`.pdf-page[data-page="${pageNumber}"]`);
     const canvas = page?.querySelector('canvas');
     if (!(page instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) return false;
-    if (canvas.width <= 0 || canvas.height <= 0 || page.dataset.textSelectable === 'pending') return false;
+    if (
+      canvas.width <= 0 ||
+      canvas.height <= 0 ||
+      page.dataset.textLayerState === 'pending' ||
+      page.dataset.textLayerState === 'error'
+    ) return false;
     const context = canvas.getContext('2d');
     if (!context) return false;
     const sampleWidth = Math.max(1, Math.min(canvas.width, 8));
@@ -597,21 +678,28 @@ async function runPerformanceMeasurements(config) {
     const scrollStarted = performance.now();
     book.applyTypography({ fontFamily: 'sansSerif', fontSize: 18, lineHeight: 1.6, margin: 48, gap: 7, flow: 'scrolled', theme: 'light' });
     await waitFor(() => container.querySelectorAll('.pdf-page-placeholder').length === book.getPageCount(), 'PDF File 滚动占位');
+    await waitFor(() => hasValidVisiblePage(container, book.getCurrentIndex()), 'PDF File 滚动首屏');
+    const scrollFirstVisibleMs = performance.now() - scrollStarted;
+    const scrollOpen = tracker.finishPhase({ elapsedMs: scrollFirstVisibleMs, firstVisibleMs: scrollFirstVisibleMs });
+    scrollOpen.activeCanvasCount = countActiveCanvases(container);
+
+    tracker.startPhase();
     const target = container.querySelector('[data-page="320"]');
     if (!(target instanceof HTMLElement)) throw new Error('PDF File 滚动第 320 页占位不存在');
     const targetScrollTop = Number.parseFloat(target.style.top);
+    const jumpStarted = performance.now();
     const getsBeforeJump = tracker.pageGets;
     await book.goToLocation({ kind: 'pdf', page: 320, scrollTop: Number.isFinite(targetScrollTop) ? targetScrollTop : 0, zoom: 100, fit: 'width' });
     await waitFor(() => book.getCurrentIndex() === 320 && hasValidVisiblePage(container, 320), 'PDF File 滚动位置');
-    const scrollFirstVisibleMs = performance.now() - scrollStarted;
-    const scrollWindow = tracker.finishPhase({ elapsedMs: scrollFirstVisibleMs, firstVisibleMs: scrollFirstVisibleMs });
+    const scrollWindow = tracker.finishPhase({ elapsedMs: performance.now() - jumpStarted });
     scrollWindow.activeCanvasCount = countActiveCanvases(container);
     scrollWindow.pageGetsForJump = tracker.pageGets - getsBeforeJump;
     const total = tracker.finishTotal(fileSize, rangeLimit);
-    validateMemory([open, nextPage, scrollWindow], memoryLimit);
+    validateMemory([open, nextPage, scrollOpen, scrollWindow], memoryLimit);
+    if (scrollOpen.activeCanvasCount > 12) throw new Error(`PDF File 滚动首屏活跃 Canvas 超过 12:${scrollOpen.activeCanvasCount}`);
     if (scrollWindow.activeCanvasCount > 12) throw new Error(`PDF File 滚动活跃 Canvas 超过 12:${scrollWindow.activeCanvasCount}`);
     if (scrollWindow.pageGetsForJump >= 20) throw new Error(`PDF File 滚动跳页取得页面过多:${scrollWindow.pageGetsForJump}`);
-    return { pageCount: book.getPageCount(), pdfDocumentLoads: tracker.pdfDocumentLoads, phases: { open, nextPage, scrollWindow }, scrollWindow, total, memorySampleAvailable: [open, nextPage, scrollWindow].some((phase) => phase.memorySampleAvailable), firstVisibleMs: open.firstVisibleMs };
+    return { pageCount: book.getPageCount(), pdfDocumentLoads: tracker.pdfDocumentLoads, phases: { open, nextPage, scrollOpen, scrollWindow }, scrollOpen, scrollWindow, total, memorySampleAvailable: [open, nextPage, scrollOpen, scrollWindow].some((phase) => phase.memorySampleAvailable), firstVisibleMs: open.firstVisibleMs };
   }
 
   async function measureDirectFile({ PdfBookDocument, loadPdfLib: getPdfLib, pdfBytes, maxRangeBytes: rangeLimit, maxPeakMemoryBytes: memoryLimit }) {
@@ -712,23 +800,30 @@ async function runPerformanceMeasurements(config) {
       const scrollStarted = performance.now();
       await services.commands.execute(ids.readerSetPdfFlow, viewId, 'scrolled');
       await waitFor(() => container.querySelectorAll('.pdf-page-placeholder').length === book.getPageCount(), 'Reader Command 滚动占位');
+      await waitFor(() => hasValidVisiblePage(container, book.getCurrentIndex()), 'Reader Command 滚动首屏');
+      const scrollFirstVisibleMs = performance.now() - scrollStarted;
+      const scrollOpen = tracker.finishPhase({ elapsedMs: scrollFirstVisibleMs, firstVisibleMs: scrollFirstVisibleMs });
+      scrollOpen.activeCanvasCount = countActiveCanvases(container);
+
+      tracker.startPhase();
       const target = container.querySelector('[data-page="320"]');
       if (!(target instanceof HTMLElement)) throw new Error('Reader Command 滚动第 320 页占位不存在');
       const targetScrollTop = Number.parseFloat(target.style.top);
+      const jumpStarted = performance.now();
       const getsBeforeJump = tracker.pageGets;
       await book.goToLocation({ kind: 'pdf', page: 320, scrollTop: Number.isFinite(targetScrollTop) ? targetScrollTop : 0, zoom: 100, fit: 'width' });
       await waitFor(() => book.getCurrentIndex() === 320 && hasValidVisiblePage(container, 320), 'Reader Command 滚动位置');
-      const scrollFirstVisibleMs = performance.now() - scrollStarted;
-      const scrollWindow = tracker.finishPhase({ elapsedMs: scrollFirstVisibleMs, firstVisibleMs: scrollFirstVisibleMs });
+      const scrollWindow = tracker.finishPhase({ elapsedMs: performance.now() - jumpStarted });
       scrollWindow.activeCanvasCount = countActiveCanvases(container);
       scrollWindow.pageGetsForJump = tracker.pageGets - getsBeforeJump;
       const total = tracker.finishTotal(bytes.byteLength, rangeLimit);
       total.binaryRangeResponses = tracker.binaryRangeResponses;
       total.nonBinaryRangeResponses = tracker.nonBinaryRangeResponses;
-      validateMemory([open, nextPage, scrollWindow], memoryLimit);
+      validateMemory([open, nextPage, scrollOpen, scrollWindow], memoryLimit);
+      if (scrollOpen.activeCanvasCount > 12) throw new Error(`Reader Command 滚动首屏活跃 Canvas 超过 12:${scrollOpen.activeCanvasCount}`);
       if (scrollWindow.activeCanvasCount > 12) throw new Error(`滚动模式活跃 Canvas 超过 12:${scrollWindow.activeCanvasCount}`);
       if (scrollWindow.pageGetsForJump >= 20) throw new Error(`滚动跳页取得页面过多:${scrollWindow.pageGetsForJump}`);
-      return { pageCount: book.getPageCount(), pdfDocumentLoads: tracker.pdfDocumentLoads, phases: { open, nextPage, scrollWindow }, scrollWindow, total, memorySampleAvailable: [open, nextPage, scrollWindow].some((phase) => phase.memorySampleAvailable), firstVisibleMs };
+      return { pageCount: book.getPageCount(), pdfDocumentLoads: tracker.pdfDocumentLoads, phases: { open, nextPage, scrollOpen, scrollWindow }, scrollOpen, scrollWindow, total, memorySampleAvailable: [open, nextPage, scrollOpen, scrollWindow].some((phase) => phase.memorySampleAvailable), firstVisibleMs };
     } finally {
       if (viewId) await services.commands.execute(ids.readerCloseView, viewId).catch(() => undefined);
       await flush().catch(() => undefined);
@@ -913,7 +1008,7 @@ async function runPerformanceMeasurements(config) {
     measurementCount: runCount,
     atLeastThreeMeasurements: runCount >= 3,
     managedToDirectMedianRatio: ratio,
-    managedToDirectMedianWithinTwoX: mode !== 'tauri' || (ratio !== null && ratio <= 2),
+    managedToDirectMedianWithinTwoX: !enforceManagedRatio || (ratio !== null && ratio <= 2),
     pdfDocumentLoadsPerRun: Math.max(...allSamples.map((sample) => sample.pdfDocumentLoads)),
     singlePdfDocumentPerRun: allSamples.every((sample) => sample.pdfDocumentLoads === 1),
     maxRangeBytes: Math.max(...allSamples.map((sample) => sample.total.maxRangeBytes)),
@@ -922,12 +1017,22 @@ async function runPerformanceMeasurements(config) {
     noFullFileRead: allSamples.every((sample) => sample.total.maxRangeBytes < pdfBytes.byteLength),
     totalReadWithinBudget: allSamples.every((sample) => sample.total.readRatio <= maxTotalReadRatio),
     memorySamples: allSamples.map((sample) => sample.memorySampleAvailable),
+    scrollFirstVisibleRecorded: allSamples.every((sample) => typeof sample.scrollOpen.firstVisibleMs === 'number'),
+    scrollFirstVisibleWindowed: allSamples.every((sample) => sample.scrollOpen.activeCanvasCount <= 12),
+    scrollFirstVisibleDoesNotOpenAllPages: allSamples.every((sample) => sample.scrollOpen.pageGets < expectedPageCount),
     scrollCanvasWindowed: allSamples.every((sample) => sample.scrollWindow.activeCanvasCount <= 12),
     tauriBinaryManagedRange:
       mode !== 'tauri' || runs.every((run) =>
         run.managed.transport === 'windows-managed-range' &&
         run.managed.total.binaryRangeResponses > 0 &&
         run.managed.total.nonBinaryRangeResponses === 0,
+      ),
+    generatedStructureIsDemanding:
+      sampleUrl ||
+      mode === 'tauri' ||
+      allSamples.every((sample) =>
+        sample.total.requestCount >= minGeneratedRangeRequests &&
+        sample.total.readRatio >= minGeneratedReadRatio,
       ),
     epubRangeWithinBudget:
       epub === null ||
@@ -940,9 +1045,13 @@ async function runPerformanceMeasurements(config) {
   if (!checks.noOversizedRange) throw new Error('出现超过 8 MiB 的底层范围请求');
   if (!checks.noFullFileRead) throw new Error('出现整本 PDF 范围请求');
   if (!checks.totalReadWithinBudget) throw new Error('累计底层读取超过文件大小的 110%');
+  if (!checks.scrollFirstVisibleRecorded) throw new Error('滚动模式没有记录首屏耗时');
+  if (!checks.scrollFirstVisibleWindowed) throw new Error('滚动首屏活跃 Canvas 超过 12 个');
+  if (!checks.scrollFirstVisibleDoesNotOpenAllPages) throw new Error('滚动首屏访问了全部页面对象');
   if (!checks.scrollCanvasWindowed) throw new Error('滚动模式活跃 Canvas 超过 12 个');
   if (!checks.managedToDirectMedianWithinTwoX) throw new Error('Windows Tauri 首屏中位数超过浏览器 File 基线的 2 倍');
   if (!checks.tauriBinaryManagedRange) throw new Error('Windows Tauri 没有使用 managed-range 二进制协议');
+  if (!checks.generatedStructureIsDemanding) throw new Error('确定性 PDF 结构触发的范围请求或累计读取不足');
   if (!checks.epubRangeWithinBudget) throw new Error('EPUB 性能阶段超出范围读取预算');
 
   return {
@@ -994,6 +1103,7 @@ main().catch(async (error) => {
   failureReport = sanitizeError(error);
   try {
     await closeBrowser();
+    await closeBaselineBrowser();
     await closeSampleServer();
     killDevServer();
   } finally {

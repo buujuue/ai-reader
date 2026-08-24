@@ -189,6 +189,7 @@ describe('PdfPageRenderer 画布内存预算', () => {
 
     expect(onError).not.toHaveBeenCalled();
     expect(renderer.element.dataset.textSelectable).toBe('true');
+    expect(renderer.element.dataset.textLayerState).toBe('ready');
     expect(renderer.element.querySelector('.pdf-text-layer span')).toBeTruthy();
   });
 
