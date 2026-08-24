@@ -100,7 +100,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### BookDocument
 
-把 EPUB、PDF、Markdown 统一为目录、章节/页面、搜索、位置和封面能力。外部 Module 不直接操作 Foliate View；所有直接调用集中在 Reader Adapter 内。PDF.js 只经并发上限为 6 的 `PDFDataRangeTransport` 读取共享 `ManagedFileSource`，不传入完整 `data`。
+把 EPUB、PDF、Markdown 统一为目录、章节/页面、搜索、位置和封面能力。外部 Module 不直接操作 Foliate View；所有直接调用集中在 Reader Adapter 内。PDF.js 只经并发上限为 6 的 `PDFDataRangeTransport` 读取共享 `ManagedFileSource`，不传入完整 `data`。PDF 滚动模式先建立与页数等长的默认尺寸占位，只有 `IntersectionObserver` 预加载窗口附近的页面才调用 `getPage` 并渲染；页面真实尺寸到达后按当前页内比例恢复滚动锚点，页面加载最多 3 个在途，已渲染页面上限为 12，分页模式仍维持当前页 + 一页前瞻。
 
 ### Reader Runtime
 
@@ -170,10 +170,11 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 18 切片**：PDF 范围加载与首屏渲染（导入检查器与阅读文档共享 `ManagedFileSource` 契约，PDF.js 通过最多 6 个并发范围请求按需加载文档信息、首屏与翻页，打开/销毁取消队列）。对应工单 #35，具体决策见 ADR-0030。
 - **第 19 切片**：已导入 PDF 单次打开解析（阅读 Command 复用书库有效元数据，首屏挂载阶段每个新建活动 PDF Runtime 只调用一次 PDF.js `getDocument`；结构损坏、范围失败和初始化失败直接转换为中文诊断）。对应工单 #43，具体决策见 ADR-0030。
 - **第 20 切片**：Windows 大型 PDF 的 MaterialId 二进制范围协议（Tauri `managed-range` custom URI 由 Rust 校验活跃 ready 材料并返回二进制；Windows PDF 通过 WebView fetch 读取，非 Windows/EPUB/Markdown 保持现有 typed range fallback）。对应工单 #44，具体决策见 ADR-0032。
+- **第 21 切片**：窗口化 PDF 滚动布局（滚动模式全页占位、`IntersectionObserver` 视口调度、最近页面优先、最多 3 个在途、最多 12 个已渲染页面、混合尺寸增量修正与阅读位置锚点恢复）；分页模式与 PDF.js 的既有读取/取消/内存边界保持不变。对应工单 #45，具体决策见 ADR-0033。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 - **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 导入检查和阅读均经 `PDFDataRangeTransport` 按需加载，但已导入阅读路径不再先检查后重建 PDF.js 文档；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。Windows Tauri 的 PDF Source 可通过 `managed-range.localhost` 以 MaterialId + 半开范围接收二进制响应；非 Windows、非 PDF 和浏览器降级继续使用现有受控范围回退，Windows 协议授权或读取失败则直接报告可诊断错误，禁止路径暴露或静默全量读取。具体决策见 ADR-0028、ADR-0029、ADR-0030、ADR-0031 与 ADR-0032。
-- **阅读读取性能验收**：`apps/reader/scripts/verify-reading-performance.mjs` 在真实 Chrome 中使用确定性大型 EPUB/PDF 夹具，覆盖 EPUB 首屏、章节切换、资源加载与 PDF 文档信息、首屏、翻页，记录首次可见内容耗时、阶段累计读取字节和读取峰值，并以大于 8 MiB 夹具、单次请求不超过 8 MiB、阶段不读取整本文件等结构性阈值阻止回退。
+- **阅读读取性能验收**：`apps/reader/scripts/verify-reading-performance.mjs` 在真实 Chrome 中使用确定性大型 EPUB/PDF 夹具，覆盖 EPUB 首屏、章节切换、资源加载与 PDF 文档信息、首屏、翻页、IntersectionObserver 窗口化滚动和位置恢复，记录首次可见内容耗时、阶段累计读取字节和读取峰值，并以大于 8 MiB 夹具、单次请求不超过 8 MiB、阶段不读取整本文件等结构性阈值阻止回退。
 
 macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`；iPadOS 的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`；Android 平板的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS/iPadOS/Android 启动、导入、阅读与重启恢复不计入浏览器降级证据，统一由 `.github/workflows/cross-platform.yml` 承载对应平台的自动校验；未能在 CI 自动完成的移动系统交互按冒烟文档记录人工证据。
 

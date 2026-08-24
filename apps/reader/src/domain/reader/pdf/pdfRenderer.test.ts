@@ -160,6 +160,191 @@ describe('PdfRenderer 分页模式', () => {
 });
 
 describe('PdfRenderer 滚动模式', () => {
+  it('600 页以上只为当前位置附近取得页面,其余页面先保留稳定占位', async () => {
+    const document = makeFakeDocument(640);
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      { document, container, lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+
+    expect(document.getPage).toHaveBeenCalled();
+    const getPage = document.getPage as ReturnType<typeof vi.fn>;
+    expect(getPage.mock.calls.length).toBeLessThan(20);
+    expect(getPage.mock.calls.length).toBeLessThan(document.numPages);
+    expect(getPage).not.toHaveBeenCalledWith(640);
+    expect(renderer
+      .getPageRenderer(640))
+      .toBeNull();
+    expect(container.querySelectorAll('.pdf-page-placeholder')).toHaveLength(640);
+    expect(container.querySelector('.pdf-page[data-page="640"]')).toBeNull();
+    renderer.dispose();
+  });
+
+  it('滚动模式为每一页建立占位,混合尺寸加载后保持当前页锚点', async () => {
+    const document = makeFakeDocument(30, [
+      { width: 1200, height: 1600 },
+      { width: 400, height: 500 },
+      { width: 900, height: 700 },
+    ]);
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+    renderer.setScrollTop(4_000);
+    const pageBeforeLoad = renderer.getCurrentPage();
+    await vi.waitFor(() => expect(renderer.getPageRenderer(pageBeforeLoad)).not.toBeNull());
+
+    const scrollBefore = renderer.getScrollTop();
+    const getPage = document.getPage as ReturnType<typeof vi.fn>;
+    await vi.waitFor(() => expect(getPage.mock.calls.length).toBeGreaterThan(3));
+
+    expect(renderer.getCurrentPage()).toBe(pageBeforeLoad);
+    expect(renderer.getScrollTop()).toBeGreaterThanOrEqual(scrollBefore - 1);
+    expect(renderer.getScrollTop()).toBeLessThanOrEqual(scrollBefore + 1_000);
+    renderer.dispose();
+  });
+
+  it('快速滚动按最近页优先且在途页面不超过 3 个', async () => {
+    const document = makeFakeDocument(640);
+    const pages = (document as unknown as { pages: PdfPage[] }).pages;
+    let activeReads = 0;
+    let maximumActiveReads = 0;
+    (document.getPage as ReturnType<typeof vi.fn>).mockImplementation(async (pageNumber: number) => {
+      activeReads += 1;
+      maximumActiveReads = Math.max(maximumActiveReads, activeReads);
+      await Promise.resolve();
+      activeReads -= 1;
+      return pages[pageNumber - 1]!;
+    });
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+    renderer.setScrollTop(200 * ((800 / 595) * 842 + 20));
+    await vi.waitFor(() => expect(renderer.getCurrentPage()).toBeGreaterThan(190));
+    await vi.waitFor(() => expect(renderer.getPageRenderer(renderer.getCurrentPage())).not.toBeNull());
+
+    expect(maximumActiveReads).toBeLessThanOrEqual(3);
+    const getPage = document.getPage as ReturnType<typeof vi.fn>;
+    expect(getPage).toHaveBeenCalledWith(expect.any(Number));
+    expect(getPage.mock.calls.some(([page]) => page >= 195 && page <= 205)).toBe(true);
+    expect(getPage.mock.calls.length).toBeLessThan(40);
+    renderer.dispose();
+  });
+
+  it('连续滚动释放最远不可见页面,当前页保留且渲染器不超过 12 个', async () => {
+    const document = makeFakeDocument(80);
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+    for (const page of [10, 20, 30, 40, 50, 60]) {
+      await renderer.goToPage(page);
+      await vi.waitFor(() => expect(renderer.getPageRenderer(page)).not.toBeNull());
+    }
+
+    const rendererContainer = (renderer as unknown as { container: HTMLElement }).container;
+    expect(rendererContainer.querySelectorAll('.pdf-page').length).toBeLessThanOrEqual(12);
+    expect(renderer.getPageRenderer(renderer.getCurrentPage())).not.toBeNull();
+    renderer.dispose();
+  });
+
+  it('使用 IntersectionObserver 标记预加载窗口,并把可见页面交给最近页优先调度', async () => {
+    const observer: {
+      observed: Element[];
+      options: IntersectionObserverInit;
+      trigger: (elements: Element[]) => void;
+    } = {
+      observed: [],
+      options: {},
+      trigger: () => undefined,
+    };
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class FakeIntersectionObserver {
+        readonly observed: Element[] = [];
+        readonly options: IntersectionObserverInit;
+        constructor(
+          private readonly callback: (entries: IntersectionObserverEntry[]) => void,
+          options: IntersectionObserverInit,
+        ) {
+          this.options = options;
+          observer.observed = this.observed;
+          observer.options = options;
+          observer.trigger = (elements: Element[]) => {
+            this.callback(
+              elements.map((target: Element) => ({
+                target,
+                isIntersecting: true,
+              }) as IntersectionObserverEntry),
+            );
+          };
+        }
+        observe(element: Element): void {
+          this.observed.push(element);
+        }
+        disconnect(): void {}
+      },
+    );
+
+    const document = makeFakeDocument(40);
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      { document, container, lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+    expect(observer.options.root).toBe(container);
+    expect(observer.options.rootMargin).toBe('200% 0px');
+    expect(observer.observed).toHaveLength(40);
+
+    await renderer.goToPage(20);
+    const page20 = container.querySelector('[data-page="20"]');
+    const page21 = container.querySelector('[data-page="21"]');
+    expect(page20).not.toBeNull();
+    expect(page21).not.toBeNull();
+    observer.trigger([page20!, page21!]);
+    await vi.waitFor(() => expect(renderer.getPageRenderer(20)).not.toBeNull());
+    renderer.dispose();
+  });
+
+  it('位置恢复的绝对 scrollTop 不属于目标页时回退到目标页顶端', async () => {
+    const document = makeFakeDocument(10);
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      { document, container, lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+    await renderer.goToPage(5, 0);
+
+    const placeholder = container.querySelector<HTMLElement>('[data-page="5"]');
+    const pageTop = Number.parseFloat(placeholder?.style.top ?? 'NaN');
+    expect(renderer.getCurrentPage()).toBe(5);
+    expect(renderer.getScrollTop()).toBe(pageTop);
+
+    await renderer.goToPage(5, pageTop + 100);
+    expect(renderer.getScrollTop()).toBe(pageTop + 100);
+    renderer.dispose();
+  });
+
   it('初始布局会预渲染当前页与下一页,原生滚动事件也会重排窗口', async () => {
     const document = makeFakeDocument(30);
     const pages = (document as unknown as { pages: PdfPage[] }).pages;

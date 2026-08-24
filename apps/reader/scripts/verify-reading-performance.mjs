@@ -220,12 +220,29 @@ async function main() {
       const pdfContainer = makeContainer('large-pdf-performance');
       const loadedPdfLib = await loadPdfLib();
       let pdfDocumentLoads = 0;
+      let pdfPageGets = 0;
+      const wrapPdfDocument = (document) => new Proxy(document, {
+        get(target, property) {
+          if (property === 'getPage') {
+            return async (pageNumber) => {
+              pdfPageGets += 1;
+              return target.getPage(pageNumber);
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
       const pdfLib = new Proxy(loadedPdfLib, {
         get(target, property, receiver) {
           if (property === 'getDocument') {
             return (options) => {
               pdfDocumentLoads += 1;
-              return target.getDocument(options);
+              const loadingTask = target.getDocument(options);
+              return {
+                promise: loadingTask.promise.then((document) => wrapPdfDocument(document)),
+                destroy: loadingTask.destroy?.bind(loadingTask),
+              };
             };
           }
           return Reflect.get(target, property, receiver);
@@ -278,6 +295,54 @@ async function main() {
       if (pdfDocumentLoads !== 1) {
         throw new Error(`PDF 首次打开创建了 ${pdfDocumentLoads} 份 PDF.js 文档,预期为 1`);
       }
+      const pdfScroll = await phase(pdfTracker, async () => {
+        if (typeof IntersectionObserver === 'undefined') {
+          throw new Error('真实 Chrome 未提供 IntersectionObserver');
+        }
+        pdfBook.applyTypography({
+          fontFamily: 'sansSerif',
+          fontSize: 18,
+          lineHeight: 1.6,
+          margin: 48,
+          gap: 7,
+          flow: 'scrolled',
+          theme: 'light',
+        });
+        await waitFor(
+          () => pdfContainer.querySelectorAll('.pdf-page-placeholder').length === 640,
+          'PDF 滚动模式占位布局',
+        );
+        const placeholderCount = pdfContainer.querySelectorAll('.pdf-page-placeholder').length;
+        if (placeholderCount !== 640) {
+          throw new Error(`PDF 滚动模式占位数量异常:${placeholderCount}`);
+        }
+        const getsBeforeJump = pdfPageGets;
+        const targetPlaceholder = pdfContainer.querySelector('[data-page="320"]');
+        if (!(targetPlaceholder instanceof HTMLElement)) {
+          throw new Error('PDF 第 320 页占位不存在');
+        }
+        const targetScrollTop = Number.parseFloat(targetPlaceholder.style.top);
+        await pdfBook.goToLocation({
+          kind: 'pdf',
+          page: 320,
+          scrollTop: Number.isFinite(targetScrollTop) ? targetScrollTop : 0,
+          zoom: 100,
+          fit: 'width',
+        });
+        await waitFor(
+          () => pdfBook.getCurrentIndex() === 320 &&
+            Boolean(pdfContainer.querySelector('.pdf-page[data-page="320"] canvas')),
+          'PDF 滚动模式位置恢复与目标页绘制',
+        );
+        const loadedPageCount = pdfContainer.querySelectorAll('.pdf-page').length;
+        if (loadedPageCount > 12) {
+          throw new Error(`PDF 滚动模式已渲染页面超过 12:${loadedPageCount}`);
+        }
+        const getsForJump = pdfPageGets - getsBeforeJump;
+        if (getsForJump >= 20) {
+          throw new Error(`PDF 跳到第 320 页取得了过多页面:${getsForJump}`);
+        }
+      });
       const pdfTotalReadBytes = pdfTracker.snapshot().cumulativeReadBytes;
       pdfBook.close();
       pdfContainer.remove();
@@ -305,7 +370,7 @@ async function main() {
         }
       };
       validate('EPUB', epubBytes, { open: epubOpen, resource: epubResource, chapterSwitch: epubSwitch }, ['open']);
-      validate('PDF', pdfBytes, { open: pdfOpen, nextPage: pdfNext }, ['open', 'nextPage']);
+      validate('PDF', pdfBytes, { open: pdfOpen, nextPage: pdfNext, scrollWindow: pdfScroll }, ['open']);
       if (!epubResourceLoaded) throw new Error('EPUB 性能夹具资源没有加载');
 
       return {
@@ -325,6 +390,7 @@ async function main() {
             pageCount: pdfPageCount,
             firstVisible: pdfOpen,
             nextPage: pdfNext,
+            scrollWindow: pdfScroll,
             totalReadBytes: pdfTotalReadBytes,
             ranges: pdfTracker.ranges,
           },
@@ -343,7 +409,7 @@ async function main() {
     console.log('阅读范围性能验收结果:');
     console.log(JSON.stringify(result, null, 2));
     console.log(`记录: ${OUTPUT}`);
-    console.log('通过: EPUB 首屏/章节切换/资源加载与 PDF 文档信息/首屏/翻页均未发出整本范围请求。');
+    console.log('通过: EPUB 首屏/章节切换/资源加载与 PDF 文档信息/首屏/翻页/滚动窗口位置恢复均未发出整本范围请求。');
   } finally {
     killDevServer();
   }

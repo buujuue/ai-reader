@@ -6,8 +6,16 @@ import type { PdfHighlight } from './pdfTextAnchor';
 
 /** 解码页面对象缓存上限(LRU)。解码对象比画布位图廉价,但超出后仍应 `cleanup()` 回收。 */
 export const DEFAULT_MAX_DECODED_PAGES = 16;
-/** 同时保持已光栅化画布的窗口大小(滚动模式视口附近),超出即释放位图。 */
-export const DEFAULT_RENDER_WINDOW = 8;
+/** 滚动模式预加载窗口相对视口的倍数(IntersectionObserver rootMargin)。 */
+export const DEFAULT_RENDER_WINDOW = 2;
+/** 滚动模式同时保持的已光栅化页面上限。 */
+export const DEFAULT_MAX_RENDERED_PAGES = 12;
+/** 滚动模式同时进行页面读取/渲染的上限。 */
+export const DEFAULT_MAX_CONCURRENT_PAGE_LOADS = 3;
+
+/** 未取得真实 PDF 页面对象前使用的稳定占位尺寸。 */
+const DEFAULT_PAGE_WIDTH = 595;
+const DEFAULT_PAGE_HEIGHT = 842;
 
 /** 分页/滚动间共用的页面间距(px)。 */
 const PAGE_GAP = 20;
@@ -33,6 +41,8 @@ export interface PdfRendererOptions {
   rasterize?: PdfPageRasterizer | undefined;
   maxDecodedPages?: number;
   renderWindow?: number;
+  maxRenderedPages?: number;
+  maxConcurrentPageLoads?: number;
   /** 设备像素比(生产读真实值,测试注入固定值)。 */
   devicePixelRatio?: () => number;
 }
@@ -43,6 +53,24 @@ interface PageLayout {
   width: number;
   height: number;
   top: number;
+}
+
+interface ScrollAnchor {
+  pageNumber: number;
+  fraction: number;
+}
+
+interface ScrolledPageState {
+  pageNumber: number;
+  element: HTMLElement;
+  layout: PageLayout;
+  naturalWidth: number;
+  naturalHeight: number;
+  visible: boolean;
+  state: 'idle' | 'loading' | 'loaded' | 'error';
+  generation: number;
+  page: PdfPage | null;
+  renderer: PdfPageRenderer | null;
 }
 
 interface CachedPageRender {
@@ -62,6 +90,8 @@ export class PdfRenderer {
   private readonly rasterize: PdfPageRasterizer;
   private readonly maxDecodedPages: number;
   private readonly renderWindow: number;
+  private readonly maxRenderedPages: number;
+  private readonly maxConcurrentPageLoads: number;
   private readonly getDpr: () => number;
 
   private flow: 'paginated' | 'scrolled' = 'paginated';
@@ -76,8 +106,13 @@ export class PdfRenderer {
   private paginatedRenders = new Map<number, CachedPageRender>();
   /** 滚动模式的渲染结果缓存,窗口变化时复用仍在窗口内的页面。 */
   private scrolledRenders = new Map<number, CachedPageRender>();
+  /** 滚动模式的页面占位与调度状态;占位本身不触发 PDF.js getPage。 */
+  private scrolledPages: ScrolledPageState[] = [];
+  private scrollObserver: IntersectionObserver | null = null;
+  private scrollIntersectionReported = false;
+  private scrollLoadingCount = 0;
+  private pendingScrollAnchor: ScrollAnchor | null = null;
   private resizeObserver: ResizeObserver | null = null;
-  private lastScrollWindowKey = '';
   /** 滚动布局对应的容器宽度;宽度变化时必须重新计算页面 top/height。 */
   private layoutWidth = 0;
   /** 只允许最新一次异步重排提交 DOM,避免尺寸/翻页竞态写回过期页面。 */
@@ -106,6 +141,11 @@ export class PdfRenderer {
       });
     this.maxDecodedPages = options.maxDecodedPages ?? DEFAULT_MAX_DECODED_PAGES;
     this.renderWindow = options.renderWindow ?? DEFAULT_RENDER_WINDOW;
+    this.maxRenderedPages = Math.max(1, options.maxRenderedPages ?? DEFAULT_MAX_RENDERED_PAGES);
+    this.maxConcurrentPageLoads = Math.max(
+      1,
+      options.maxConcurrentPageLoads ?? DEFAULT_MAX_CONCURRENT_PAGE_LOADS,
+    );
 
     this.container.classList.add('pdf-renderer');
     this.container.style.position = 'relative';
@@ -157,6 +197,9 @@ export class PdfRenderer {
     if (this.flow === flow) {
       return;
     }
+    if (this.flow === 'scrolled') {
+      this.destroyScrolledMode();
+    }
     this.flow = flow;
     this.invalidateLayout();
     this.container.style.overflow = flow === 'scrolled' ? 'auto' : 'hidden';
@@ -172,7 +215,7 @@ export class PdfRenderer {
     void this.relayout();
   }
 
-  async goToPage(page: number): Promise<void> {
+  async goToPage(page: number, scrollTop?: number): Promise<void> {
     const target = Math.min(Math.max(1, page), this.pageCount);
     if (this.flow === 'paginated') {
       this.currentPage = target;
@@ -187,8 +230,18 @@ export class PdfRenderer {
       }
       const layout = this.layouts[target - 1];
       if (layout) {
-        this.container.scrollTop = layout.top;
+        const requestedScrollTop =
+          scrollTop !== undefined &&
+          Number.isFinite(scrollTop) &&
+          scrollTop >= layout.top &&
+          scrollTop <= layout.top + layout.height
+            ? scrollTop
+            : layout.top;
+        this.container.scrollTop = requestedScrollTop;
         this.handleScroll();
+        // 目录、位置恢复和批注跳转需要在返回前至少完成目标页附近的
+        // 调度,避免调用方立刻读取目标页面渲染器时只得到占位。
+        await this.relayout();
       }
     }
   }
@@ -335,109 +388,405 @@ export class PdfRenderer {
   }
 
   private async renderScrolled(clientWidth: number, generation: number): Promise<void> {
-    // 先构建全部页面的布局(仅需 getViewport,不实际光栅化),保证总高与偏移正确。
-    if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
-      const layouts: PageLayout[] = [];
-      let top = 0;
-      for (let i = 1; i <= this.pageCount; i += 1) {
-        const page = await this.acquirePage(i);
-        if (!this.isCurrentLayout(generation)) {
-          return;
-        }
-        const scale = this.scrollScale(page, clientWidth);
-        const viewport = page.getViewport({ scale });
-        layouts.push({
-          pageNumber: i,
-          width: viewport.width,
-          height: viewport.height,
-          top,
-        });
-        top += viewport.height + PAGE_GAP;
-      }
-      if (!this.isCurrentLayout(generation)) {
-        return;
-      }
-      this.layouts = layouts;
-      this.layoutWidth = clientWidth;
-      this.lastScrollWindowKey = '';
-    }
-
+    this.ensureScrolledPages();
     if (!this.isCurrentLayout(generation)) {
       return;
     }
 
-    this.pages.style.display = 'block';
-    this.pages.style.height = `${this.layouts.reduce((sum, l) => sum + l.height + PAGE_GAP, 0)}px`;
+    this.ensureScrollObserver();
+    if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
+      this.rebuildScrolledLayouts(clientWidth);
+    } else {
+      this.applyScrolledPageStyles();
+    }
+    if (!this.isCurrentLayout(generation)) {
+      return;
+    }
 
+    this.refreshFallbackScrollVisibility();
+    // 已取得页面的缩放重绘也走同一调度器,避免一次缩放同时启动超过 3 个
+    // Canvas/文字层任务;未知页面仍保持占位,不为了计算总高度调用 getPage。
+    await this.scheduleScrollPages();
+    if (!this.isCurrentLayout(generation)) {
+      return;
+    }
+  }
+
+  /** 创建与页数等长的占位 DOM;占位尺寸先使用稳定的通用 PDF 页面尺寸。 */
+  private ensureScrolledPages(): void {
+    if (this.scrolledPages.length === this.pageCount) {
+      return;
+    }
+
+    this.destroyScrollObserver();
+    this.scrolledPages = [];
+    this.pages.replaceChildren();
+    this.pages.style.position = 'relative';
+    for (let index = 0; index < this.pageCount; index += 1) {
+      const pageNumber = index + 1;
+      const element = document.createElement('div');
+      element.className = 'pdf-page-placeholder';
+      element.dataset.page = String(pageNumber);
+      element.style.position = 'absolute';
+      element.style.left = '0';
+      this.pages.appendChild(element);
+      this.scrolledPages.push({
+        pageNumber,
+        element,
+        layout: {
+          pageNumber,
+          width: DEFAULT_PAGE_WIDTH,
+          height: DEFAULT_PAGE_HEIGHT,
+          top: 0,
+        },
+        naturalWidth: DEFAULT_PAGE_WIDTH,
+        naturalHeight: DEFAULT_PAGE_HEIGHT,
+        visible: false,
+        state: 'idle',
+        generation: 0,
+        page: null,
+        renderer: null,
+      });
+    }
+  }
+
+  /** IntersectionObserver 只负责更新可见标志,调度仍由渲染器统一控制。 */
+  private ensureScrollObserver(): void {
+    if (this.scrollObserver || typeof IntersectionObserver === 'undefined') {
+      return;
+    }
+    this.scrollIntersectionReported = false;
+    this.scrollObserver = new IntersectionObserver(
+      (entries) => {
+        this.scrollIntersectionReported = true;
+        for (const entry of entries) {
+          const pageNumber = Number((entry.target as HTMLElement).dataset.page ?? 0);
+          const state = this.scrolledPages[pageNumber - 1];
+          if (state) {
+            state.visible = entry.isIntersecting;
+          }
+        }
+        void this.scheduleScrollPages();
+      },
+      {
+        root: this.container,
+        rootMargin: `${this.renderWindow * 100}% 0px`,
+      },
+    );
+    for (const state of this.scrolledPages) {
+      this.scrollObserver.observe(state.element);
+    }
+  }
+
+  private destroyScrollObserver(): void {
+    this.scrollObserver?.disconnect();
+    this.scrollObserver = null;
+    this.scrollIntersectionReported = false;
+  }
+
+  /** IntersectionObserver 尚未回报首批结果或浏览器不支持时的安全回退。 */
+  private refreshFallbackScrollVisibility(): void {
+    if (this.scrollIntersectionReported) {
+      return;
+    }
     const viewportTop = this.container.scrollTop;
     const viewportBottom = viewportTop + this.container.clientHeight;
-    // 以像素缓冲保持窗口化,但无论页面高度多大都额外保留当前页的下一页。
-    // 仅按 PAGE_GAP 计算会在常见的 842px 页面上只得到约 160px 缓冲,
-    // 导致用户滚到下一页时才开始创建 Canvas 和文字层。
-    const nextPageNumber = this.currentPage + 1;
-    const visible = this.layouts.filter(
-      (layout) =>
-        (layout.top + layout.height >= viewportTop - this.renderWindow * PAGE_GAP &&
-          layout.top <= viewportBottom + this.renderWindow * PAGE_GAP) ||
-        layout.pageNumber === nextPageNumber,
-    );
-    const visibleSet = new Set(visible.map((layout) => layout.pageNumber));
+    const margin = Math.max(this.container.clientHeight, DEFAULT_PAGE_HEIGHT) * this.renderWindow;
+    for (const state of this.scrolledPages) {
+      const { top, height } = state.layout;
+      state.visible =
+        top + height >= viewportTop - margin && top <= viewportBottom + margin;
+    }
+    this.scrolledPages[this.currentPage - 1]!.visible = true;
+  }
 
-    // 窗口未变化时跳过重渲染,避免每次滚动都重绘画布。
-    const windowKey = `${visible[0]?.pageNumber ?? 0}-${visible.at(-1)?.pageNumber ?? 0}`;
-    if (windowKey === this.lastScrollWindowKey) {
+  /** 重新计算所有占位的 top/height;未加载页不会触发页面对象读取。 */
+  private rebuildScrolledLayouts(clientWidth: number): void {
+    const anchor = this.pendingScrollAnchor ?? this.captureScrollAnchor();
+    this.pendingScrollAnchor = null;
+    let top = 0;
+    const layouts: PageLayout[] = [];
+    for (const state of this.scrolledPages) {
+      const scale = this.scrollScaleFromNaturalSize(state, clientWidth);
+      const layout: PageLayout = {
+        pageNumber: state.pageNumber,
+        width: state.naturalWidth * scale,
+        height: state.naturalHeight * scale,
+        top,
+      };
+      state.layout = layout;
+      layouts.push(layout);
+      top += layout.height + PAGE_GAP;
+    }
+    this.layouts = layouts;
+    this.layoutWidth = clientWidth;
+    this.pages.style.display = 'block';
+    this.pages.style.height = `${Math.max(0, top)}px`;
+    this.applyScrolledPageStyles();
+    this.restoreScrollAnchor(anchor);
+    this.updateCurrentPageFromScroll();
+  }
+
+  private applyScrolledPageStyles(): void {
+    this.pages.style.display = 'block';
+    for (const state of this.scrolledPages) {
+      const { layout } = state;
+      Object.assign(state.element.style, {
+        position: 'absolute',
+        left: '0',
+        top: `${layout.top}px`,
+        width: `${layout.width}px`,
+        height: `${layout.height}px`,
+      });
+      if (state.renderer) {
+        Object.assign(state.renderer.element.style, {
+          position: 'absolute',
+          left: '0',
+          top: `${layout.top}px`,
+          width: `${layout.width}px`,
+          height: `${layout.height}px`,
+        });
+        if (!this.pages.contains(state.renderer.element)) {
+          this.pages.appendChild(state.renderer.element);
+        }
+      }
+    }
+  }
+
+  private scrollScaleFromNaturalSize(state: ScrolledPageState, clientWidth: number): number {
+    if (this.fit === 'actual') {
+      return this.zoom / 100;
+    }
+    return clientWidth / (state.naturalWidth || DEFAULT_PAGE_WIDTH);
+  }
+
+  private captureScrollAnchor(): ScrollAnchor | null {
+    if (this.flow !== 'scrolled' || this.layouts.length === 0) {
+      return null;
+    }
+    const scrollTop = this.container.scrollTop;
+    const fallback = this.scrolledPages[this.currentPage - 1]?.layout;
+    const layout =
+      this.layouts.find(
+        (candidate) =>
+          candidate.height > 0 &&
+          scrollTop >= candidate.top &&
+          scrollTop < candidate.top + candidate.height,
+      ) ?? fallback;
+    if (!layout) {
+      return null;
+    }
+    return {
+      pageNumber: layout.pageNumber,
+      fraction: layout.height > 0
+        ? Math.min(1, Math.max(0, (scrollTop - layout.top) / layout.height))
+        : 0,
+    };
+  }
+
+  private restoreScrollAnchor(anchor: ScrollAnchor | null): void {
+    if (!anchor || this.layouts.length === 0) {
       return;
     }
+    const layout = this.layouts[anchor.pageNumber - 1];
+    if (!layout) {
+      return;
+    }
+    const totalHeight = this.getScrollContentHeight();
+    const maxScrollTop = Math.max(0, totalHeight - this.container.clientHeight);
+    const target = layout.top + layout.height * anchor.fraction;
+    this.container.scrollTop = Math.min(maxScrollTop, Math.max(0, target));
+  }
 
-    this.pages.replaceChildren();
+  private getScrollContentHeight(): number {
+    const last = this.layouts.at(-1);
+    return last ? last.top + last.height + PAGE_GAP : 0;
+  }
 
-    const renderPromises: Array<Promise<void>> = [];
-    for (const layout of visible) {
-      const renderer = this.ensurePageRenderer(layout.pageNumber);
-      renderer.element.style.position = 'absolute';
-      renderer.element.style.left = '0';
-      renderer.element.style.top = `${layout.top}px`;
-      renderer.element.style.width = `${layout.width}px`;
-      renderer.element.style.height = `${layout.height}px`;
-      this.pages.appendChild(renderer.element);
-      const page = await this.acquirePage(layout.pageNumber);
-      if (!this.isCurrentLayout(generation)) {
+  private updateCurrentPageFromScroll(): void {
+    const previousPage = this.currentPage;
+    let page = 1;
+    for (const layout of this.layouts) {
+      if (layout.top <= this.container.scrollTop + 1) {
+        page = layout.pageNumber;
+      } else {
+        break;
+      }
+    }
+    this.currentPage = Math.min(this.pageCount, Math.max(1, page));
+    if (this.currentPage !== previousPage) {
+      this.callbacks.onPageChange(this.currentPage);
+    }
+  }
+
+  /** 参考 Readest 的最近页优先计划,但只在 PdfRenderer 内部操作页面状态。 */
+  private async scheduleScrollPages(): Promise<void> {
+    if (this.disposed || this.flow !== 'scrolled' || this.scrolledPages.length === 0) {
+      return;
+    }
+    this.refreshFallbackScrollVisibility();
+    // IntersectionObserver 的异步回调可能落后于一次快速跳转,当前页必须
+    // 始终是可调度目标,否则滚动到尚未回报的页面会短暂显示整块占位。
+    this.scrolledPages[this.currentPage - 1]!.visible = true;
+    const currentPage = this.currentPage;
+    const distance = (state: ScrolledPageState) => Math.abs(state.pageNumber - currentPage);
+    const budget = Math.max(0, this.maxConcurrentPageLoads - this.scrollLoadingCount);
+    const toLoad = this.scrolledPages
+      .filter((state) => state.visible && state.state === 'idle')
+      .sort((a, b) => distance(a) - distance(b))
+      .slice(0, budget);
+
+    const loaded = this.scrolledPages.filter((state) => state.state === 'loaded');
+    if (loaded.length > this.maxRenderedPages) {
+      const toEvict = loaded
+        .filter((state) => !state.visible && state.pageNumber !== currentPage)
+        .sort((a, b) => distance(b) - distance(a))
+        .slice(0, loaded.length - this.maxRenderedPages);
+      for (const state of toEvict) {
+        this.releaseScrolledPage(state);
+      }
+    }
+
+    const toRender = this.scrolledPages
+      .filter(
+        (state) =>
+          state.visible &&
+          state.state === 'loaded' &&
+          state.page !== null &&
+          state.renderer !== null &&
+          this.needsScrolledRender(state),
+      )
+      .sort((a, b) => distance(a) - distance(b))
+      .slice(0, Math.max(0, budget - toLoad.length));
+
+    this.scrollLoadingCount += toRender.length;
+    try {
+      await Promise.all([
+        ...toLoad.map((state) => this.loadScrolledPage(state)),
+        ...toRender.map((state) => this.renderScrolledPageWithBudget(state)),
+      ]);
+    } finally {
+      this.scrollLoadingCount = Math.max(0, this.scrollLoadingCount - toRender.length);
+      if (toRender.length > 0 && !this.disposed && this.flow === 'scrolled') {
+        void this.scheduleScrollPages();
+      }
+    }
+  }
+
+  private needsScrolledRender(state: ScrolledPageState): boolean {
+    const layout = state.layout;
+    const key = `${layout.width}:${layout.height}:${this.getDpr()}`;
+    return this.scrolledRenders.get(state.pageNumber)?.key !== key;
+  }
+
+  private async renderScrolledPageWithBudget(state: ScrolledPageState): Promise<void> {
+    try {
+      await this.renderLoadedScrolledPage(state, this.layoutGeneration);
+    } catch (error) {
+      this.callbacks.onError?.(error);
+    }
+  }
+
+  private async loadScrolledPage(state: ScrolledPageState): Promise<void> {
+    if (state.state !== 'idle' || this.disposed || this.flow !== 'scrolled') {
+      return;
+    }
+    state.state = 'loading';
+    const generation = ++state.generation;
+    this.scrollLoadingCount += 1;
+    try {
+      const page = await this.acquirePage(state.pageNumber);
+      if (!this.isCurrentScrolledPage(state, generation)) {
         return;
       }
+      state.page = page;
       const base = page.getViewport({ scale: 1 });
-      const scale = layout.width / (base.width || 1);
-      renderPromises.push(
-        this.renderCachedPage(
-          this.scrolledRenders,
-          layout.pageNumber,
-          renderer,
-          page,
-          page.getViewport({ scale }),
-          `${layout.width}:${layout.height}:${this.getDpr()}`,
-        ),
-      );
-    }
-
-    // 释放离开窗口的页面画布位图(内存预算)。
-    for (const [pageNumber, existing] of this.pageRenderers) {
-      if (!visibleSet.has(pageNumber)) {
-        this.releasePageRenderer(pageNumber, existing);
+      if (base.width > 0 && base.height > 0) {
+        this.pendingScrollAnchor = this.captureScrollAnchor();
+        state.naturalWidth = base.width;
+        state.naturalHeight = base.height;
+        this.rebuildScrolledLayouts(this.container.clientWidth || 1);
+      }
+      state.renderer = this.ensurePageRenderer(state.pageNumber);
+      this.pages.appendChild(state.renderer.element);
+      this.applyScrolledPageStyles();
+      await this.renderLoadedScrolledPage(state, this.layoutGeneration);
+      if (!this.isCurrentScrolledPage(state, generation)) {
+        return;
+      }
+      state.state = 'loaded';
+    } catch (error) {
+      if (this.isCurrentScrolledPage(state, generation)) {
+        state.state = 'error';
+        if (state.renderer) {
+          this.releasePageRenderer(state.pageNumber, state.renderer);
+          state.renderer = null;
+        }
+        this.callbacks.onError?.(error);
+      }
+    } finally {
+      this.scrollLoadingCount = Math.max(0, this.scrollLoadingCount - 1);
+      if (!this.disposed && this.flow === 'scrolled') {
+        void this.scheduleScrollPages();
       }
     }
+  }
 
-    // 当前页码由调用方(setScrollTop / goToPage)在 handleScroll 中维护,这里不回调,
-    // 避免 relayout → renderScrolled → handleScroll → relayout 的无限递归。
-    await Promise.all(renderPromises);
-    if (!this.isCurrentLayout(generation)) {
+  private isCurrentScrolledPage(state: ScrolledPageState, generation: number): boolean {
+    return (
+      !this.disposed &&
+      this.flow === 'scrolled' &&
+      state.generation === generation &&
+      this.scrolledPages[state.pageNumber - 1] === state
+    );
+  }
+
+  private async renderLoadedScrolledPage(
+    state: ScrolledPageState,
+    generation: number,
+  ): Promise<void> {
+    const page = state.page;
+    const renderer = state.renderer;
+    if (!page || !renderer || this.disposed || this.flow !== 'scrolled') {
       return;
     }
-    // 只有最新窗口的全部页面渲染成功后才记住 key;否则下一次重排不能
-    // 因为过期渲染提前写入的 key 而误跳过真正需要的绘制。
-    this.lastScrollWindowKey = windowKey;
-    // 滚动窗口渲染完成后逐一重绘各页高亮,保证离开窗口再回来时批注/搜索高亮不丢失。
-    for (const layout of visible) {
-      this.callbacks.onPageRendered?.(layout.pageNumber);
+    const layout = state.layout;
+    const base = page.getViewport({ scale: 1 });
+    const scale = layout.width / (base.width || 1);
+    renderer.element.style.width = `${layout.width}px`;
+    renderer.element.style.height = `${layout.height}px`;
+    const key = `${layout.width}:${layout.height}:${this.getDpr()}`;
+    const needsRender = this.scrolledRenders.get(state.pageNumber)?.key !== key;
+    await this.renderCachedPage(
+      this.scrolledRenders,
+      state.pageNumber,
+      renderer,
+      page,
+      page.getViewport({ scale }),
+      key,
+    );
+    if (
+      this.disposed ||
+      this.flow !== 'scrolled' ||
+      generation !== this.layoutGeneration ||
+      this.scrolledRenders.get(state.pageNumber)?.key !== key
+    ) {
+      return;
     }
+    if (needsRender) {
+      this.callbacks.onPageRendered?.(state.pageNumber);
+    }
+  }
+
+  private releaseScrolledPage(state: ScrolledPageState): void {
+    state.generation += 1;
+    if (state.renderer) {
+      this.releasePageRenderer(state.pageNumber, state.renderer);
+      state.renderer = null;
+    }
+    state.state = 'idle';
+    state.page = null;
+    state.element.replaceChildren();
   }
 
   private isCurrentLayout(generation: number, pageNumber?: number): boolean {
@@ -449,9 +798,11 @@ export class PdfRenderer {
   }
 
   private invalidateLayout(): void {
+    if (this.flow === 'scrolled' && this.layouts.length > 0) {
+      this.pendingScrollAnchor = this.captureScrollAnchor();
+    }
     this.layouts = [];
     this.layoutWidth = 0;
-    this.lastScrollWindowKey = '';
   }
 
   /** 滚动模式下页面显示缩放:非 actual 一律按容器宽度适配。 */
@@ -497,7 +848,12 @@ export class PdfRenderer {
     if (cached) {
       return cached;
     }
-    const promise = this.document.getPage(pageNumber).then((page) => page);
+    const promise = this.document.getPage(pageNumber).then((page) => page).catch((error: unknown) => {
+      if (this.pageCache.get(pageNumber) === promise) {
+        this.pageCache.delete(pageNumber);
+      }
+      throw error;
+    });
     this.pageCache.set(pageNumber, promise);
     // LRU 上限:超出后清理最旧解码页,释放其内部缓存。
     while (this.pageCache.size > this.maxDecodedPages) {
@@ -527,21 +883,44 @@ export class PdfRenderer {
       this.callbacks.onPageChange(page);
     }
     this.callbacks.onScroll(scrollTop, this.currentPage);
-    // 滚动位置变化时按需重排可见窗口(懒节流由调用方负责)。
+    // 滚动位置变化时只调度附近占位页;占位布局本身无需重建。
     void this.relayout();
   };
+
+  private destroyScrolledMode(): void {
+    this.destroyScrollObserver();
+    for (const state of this.scrolledPages) {
+      state.generation += 1;
+      state.renderer = null;
+      state.element.replaceChildren();
+    }
+    for (const [pageNumber, renderer] of this.pageRenderers) {
+      this.releasePageRenderer(pageNumber, renderer);
+    }
+    this.scrolledPages = [];
+    this.scrollLoadingCount = 0;
+    this.pendingScrollAnchor = null;
+    this.pages.replaceChildren();
+  }
 
   dispose(): void {
     this.disposed = true;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.container.removeEventListener('scroll', this.handleScroll);
+    this.destroyScrollObserver();
+    for (const state of this.scrolledPages) {
+      state.generation += 1;
+    }
     for (const renderer of this.pageRenderers.values()) {
       renderer.release();
     }
     this.pageRenderers.clear();
     this.paginatedRenders.clear();
     this.scrolledRenders.clear();
+    this.scrolledPages = [];
+    this.scrollLoadingCount = 0;
+    this.pendingScrollAnchor = null;
     this.layoutWidth = 0;
     for (const promise of this.pageCache.values()) {
       void promise.then((page) => page.cleanup()).catch(() => undefined);

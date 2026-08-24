@@ -278,8 +278,7 @@ export class PdfBookDocument implements BookDocument {
     if (this.typography.flow === 'paginated') {
       await this.renderer?.goToPage(location.page);
     } else {
-      await this.renderer?.goToPage(location.page);
-      this.renderer?.setScrollTop(location.scrollTop);
+      await this.renderer?.goToPage(location.page, location.scrollTop);
     }
     this.notifyLocation();
   }
