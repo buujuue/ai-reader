@@ -1,32 +1,33 @@
 /**
  * 只用于范围读取性能验收的确定性 PDF 生成器。
- * 文件包含可渲染的多页正文和一个未引用的 80 MiB 尾部流;第二页正文对象
- * 放在该流之后,用于检测文档信息/首屏/翻页阶段是否错误复制整本 PDF。
+ *
+ * 每一页都有自己的、被 `/Contents` 引用的内容流；大文件体积来自真实的
+ * 页面对象和内容对象，而不是未引用的尾部填充。这样 PDF.js 在解析文档、
+ * 打开首屏和跳到远处页面时都会访问不同的有效 PDF 结构。
  */
 
 const encoder = new TextEncoder();
 
 export interface LargePdfFixtureOptions {
   pageCount?: number;
-  paddingBytes?: number;
+  /** 每页内容流的确定性大小,用于让文件规模随有效页面数量增长。 */
+  contentBytesPerPage?: number;
 }
 
 export function buildLargePdfFixture(options: LargePdfFixtureOptions = {}): Uint8Array {
   const pageCount = options.pageCount ?? 12;
-  const paddingBytes = options.paddingBytes ?? 10 * 1024 * 1024;
+  const contentBytesPerPage = options.contentBytesPerPage ?? 16 * 1024;
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) {
     throw new Error(`PDF 性能夹具页数无效:${pageCount}`);
   }
-  if (!Number.isSafeInteger(paddingBytes) || paddingBytes < 0) {
-    throw new Error(`PDF 性能夹具填充大小无效:${paddingBytes}`);
+  if (!Number.isSafeInteger(contentBytesPerPage) || contentBytesPerPage < 256) {
+    throw new Error(`PDF 性能夹具每页内容大小无效:${contentBytesPerPage}`);
   }
 
   const firstPageObject = 3;
   const firstContentObject = firstPageObject + pageCount;
   const fontObject = firstContentObject + pageCount;
-  const prefixPaddingObject = fontObject + 1;
-  const paddingObject = prefixPaddingObject + 1;
-  const objectCount = paddingObject;
+  const objectCount = fontObject;
   const objects = new Map<number, Uint8Array>();
 
   objects.set(1, objectBytes(1, '<< /Type /Catalog /Pages 2 0 R >>'));
@@ -51,17 +52,19 @@ export function buildLargePdfFixture(options: LargePdfFixtureOptions = {}): Uint
         `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${contentObject} 0 R /Resources << /Font << /F1 ${fontObject} 0 R >> >> >>`,
       ),
     );
-    const text = `BT /F1 18 Tf 72 720 Td (AI Reader performance page ${index + 1}) Tj ET`;
-    objects.set(contentObject, streamObjectBytes(contentObject, encoder.encode(text)));
+    objects.set(
+      contentObject,
+      streamObjectBytes(
+        contentObject,
+        buildPageContent(index, contentBytesPerPage),
+      ),
+    );
   }
 
-  objects.set(fontObject, objectBytes(fontObject, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'));
-  const prefixPadding = new Uint8Array(256 * 1024);
-  prefixPadding.fill(0x31);
-  objects.set(prefixPaddingObject, streamObjectBytes(prefixPaddingObject, prefixPadding));
-  const padding = new Uint8Array(paddingBytes);
-  padding.fill(0x30);
-  objects.set(paddingObject, streamObjectBytes(paddingObject, padding));
+  objects.set(
+    fontObject,
+    objectBytes(fontObject, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+  );
 
   const header = Uint8Array.from([
     ...encoder.encode('%PDF-1.7\n%'),
@@ -77,15 +80,11 @@ export function buildLargePdfFixture(options: LargePdfFixtureOptions = {}): Uint
   const objectOrder = [
     1,
     2,
-    ...Array.from({ length: pageCount }, (_, index) => firstPageObject + index),
-    firstContentObject,
     fontObject,
-    prefixPaddingObject,
-    paddingObject,
-    ...Array.from(
-      { length: Math.max(0, pageCount - 1) },
-      (_, index) => firstContentObject + index + 1,
-    ),
+    ...Array.from({ length: pageCount }, (_, index) => [
+      firstPageObject + index,
+      firstContentObject + index,
+    ]).flat(),
   ];
   for (const number of objectOrder) {
     const object = objects.get(number);
@@ -103,6 +102,25 @@ export function buildLargePdfFixture(options: LargePdfFixtureOptions = {}): Uint
   ];
   chunks.push(encoder.encode(xref.join('')));
   return concat(chunks);
+}
+
+function buildPageContent(pageIndex: number, byteLength: number): Uint8Array {
+  const visible = encoder.encode(
+    `BT /F1 18 Tf 72 720 Td (AI Reader performance page ${pageIndex + 1}) Tj ET\n`,
+  );
+  if (visible.byteLength > byteLength) {
+    throw new Error(`PDF 性能夹具每页内容太小:${byteLength}`);
+  }
+
+  const result = new Uint8Array(byteLength);
+  result.fill(0x20);
+  result.set(visible);
+  const filler = encoder.encode(`% referenced page ${pageIndex + 1} content\n`);
+  result.set(
+    filler.subarray(0, Math.min(filler.byteLength, byteLength - visible.byteLength)),
+    visible.byteLength,
+  );
+  return result;
 }
 
 function objectBytes(number: number, body: string): Uint8Array {
