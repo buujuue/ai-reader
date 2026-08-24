@@ -52,7 +52,6 @@ export class PdfPageRenderer {
   private readonly textLayer: HTMLElement;
   private readonly highlightLayer: HTMLElement;
   private readonly areaSelectionLayer: HTMLElement;
-  private readonly scanNotice: HTMLElement;
 
   private page: PdfPage | null = null;
   private displayScale = 1;
@@ -103,17 +102,7 @@ export class PdfPageRenderer {
     this.areaSelectionLayer.style.zIndex = '3';
     this.element.appendChild(this.areaSelectionLayer);
 
-    this.scanNotice = document.createElement('div');
-    this.scanNotice.className = 'pdf-scan-notice';
-    this.scanNotice.setAttribute('role', 'status');
-    this.scanNotice.textContent = '此页没有可选择文本，可拖动框选区域创建批注';
-    this.scanNotice.style.position = 'absolute';
-    this.scanNotice.style.top = '8px';
-    this.scanNotice.style.right = '8px';
-    this.scanNotice.style.pointerEvents = 'none';
-    this.scanNotice.style.zIndex = '4';
     this.element.dataset.textSelectable = 'pending';
-    this.element.appendChild(this.scanNotice);
 
     this.element.addEventListener('pointerdown', this.handlePointerDown);
     this.element.addEventListener('pointermove', this.handlePointerMove);
@@ -250,11 +239,6 @@ export class PdfPageRenderer {
     }
 
     this.element.dataset.textSelectable = String(hasTextLayer);
-    if (hasTextLayer) {
-      this.scanNotice.remove();
-    } else if (!this.scanNotice.isConnected) {
-      this.element.appendChild(this.scanNotice);
-    }
 
     // 重渲染后按归一化矩形重绘批注/搜索高亮,保证缩放或适配变化后仍对齐正文。
     this.redrawHighlights();

@@ -56,7 +56,7 @@ Status: ready-for-agent
 38. As a 学习者, I want 独立调整每个 PDF View 的缩放和适配模式, so that 并排比较时两侧可以采用不同视野。
 39. As a 学习者, I want PDF 自带文本层时能够选择文本, so that 我能复制、搜索和批注。
 40. As a 学习者, I want 扫描 PDF 即使没有文字层也能正常显示, so that 图片型资料仍可阅读。
-41. As a 学习者, I want 扫描页明确提示没有可选择文本, so that 我不会误以为搜索损坏。
+41. As a 学习者, I want 扫描页无文字层时保持干净且不出现遮挡阅读内容的提示浮层, so that 我仍可正常阅读并通过框选区域创建页内批注。
 42. As a 学习者, I want 在扫描 PDF 上框选区域并添加页内批注, so that 无 OCR 时仍能做手工标记。
 43. As a 学习者, I want Markdown 以安全渲染后的阅读模式打开, so that 文本拥有统一阅读体验。
 44. As a 学习者, I want 切换 Markdown 源码模式, so that 我能直接维护内容。

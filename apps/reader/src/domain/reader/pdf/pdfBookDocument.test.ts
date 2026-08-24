@@ -56,6 +56,7 @@ describe('PdfBookDocument', () => {
     expect(lib.getDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         isEvalSupported: false,
+        wasmUrl: expect.stringMatching(/pdfjs\/wasm\/$/),
         disableStream: true,
         disableAutoFetch: true,
         range: expect.objectContaining({ requestDataRange: expect.any(Function) }),

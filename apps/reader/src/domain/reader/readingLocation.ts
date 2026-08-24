@@ -22,7 +22,7 @@ export interface PdfReadingLocation {
   kind: 'pdf';
   /** 1 起始页码。 */
   page: number;
-  /** 滚动模式下当前滚动位移(px);分页模式为 0。 */
+  /** 滚动模式下当前滚动位移(px,允许 CSS 像素小数);分页模式为 0。 */
   scrollTop: number;
   /** 缩放(百分比整数,如 100 表示 100%)。 */
   zoom: number;

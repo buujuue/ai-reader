@@ -121,6 +121,8 @@ export interface PdfJsLib {
   getDocument(options: {
     range: PdfDataRangeTransport;
     isEvalSupported: boolean;
+    /** PDF.js 5.x 图片解码器运行时 WASM 与 fallback 的静态目录,必须以 / 结尾。 */
+    wasmUrl: string;
     /** 禁止 PDF.js 自己建立整文件流,保持所有内容通过范围队列取得。 */
     disableStream?: boolean;
     /** 禁止解析阶段预取后续内容,由页面/文档按需触发范围请求。 */
@@ -143,6 +145,12 @@ export function createPdfSourceFromBytes(bytes: Uint8Array): PdfFileSource {
       };
     },
   };
+}
+
+/** 返回由 Vite 与 Tauri 静态资源根共同解析的 PDF.js WASM 目录。 */
+export function getPdfJsWasmUrl(): string {
+  const baseUrl = import.meta.env.BASE_URL;
+  return `${baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`}pdfjs/wasm/`;
 }
 
 /** 懒加载并引导 PDF.js 引擎的缓存的 Promise。 */

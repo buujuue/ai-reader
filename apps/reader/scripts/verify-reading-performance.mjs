@@ -89,7 +89,7 @@ async function main() {
           top: '0',
           width: '900px',
           height: '760px',
-          visibility: 'hidden',
+          visibility: 'visible',
         });
         document.body.append(container);
         return container;
@@ -236,13 +236,42 @@ async function main() {
         metadata: { title: '大型范围读取 PDF', author: null, language: 'zh' },
         pdfLib,
       });
+      const pdfCanvasStats = () => {
+        const canvas = pdfContainer.querySelector('.pdf-page canvas');
+        if (!(canvas instanceof HTMLCanvasElement)) {
+          return { exists: false, width: 0, height: 0, nonBlankPixels: 0 };
+        }
+        const context = canvas.getContext('2d');
+        if (!context) {
+          return { exists: true, width: canvas.width, height: canvas.height, nonBlankPixels: 0 };
+        }
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let nonBlankPixels = 0;
+        for (let index = 3; index < pixels.length; index += 4) {
+          if (
+            pixels[index] !== 0 ||
+            pixels[index - 1] !== 0 ||
+            pixels[index - 2] !== 0 ||
+            pixels[index - 3] !== 0
+          ) {
+            nonBlankPixels += 1;
+          }
+        }
+        return { exists: true, width: canvas.width, height: canvas.height, nonBlankPixels };
+      };
       const pdfOpen = await phase(pdfTracker, async () => {
         await pdfBook.open(pdfContainer);
-        await waitFor(() => pdfBook.getCurrentIndex() === 1, 'PDF 首屏');
+        await waitFor(
+          () => pdfBook.getCurrentIndex() === 1 && pdfCanvasStats().nonBlankPixels > 0,
+          'PDF 首屏绘制',
+        );
       }, { firstVisible: true });
       const pdfNext = await phase(pdfTracker, async () => {
         await pdfBook.next();
-        await waitFor(() => pdfBook.getCurrentIndex() === 2, 'PDF 翻页');
+        await waitFor(
+          () => pdfBook.getCurrentIndex() === 2 && pdfCanvasStats().nonBlankPixels > 0,
+          'PDF 第二页绘制',
+        );
       });
       const pdfPageCount = pdfBook.getPageCount();
       if (pdfPageCount !== 640) throw new Error(`PDF 文档信息页数异常:${pdfPageCount}`);

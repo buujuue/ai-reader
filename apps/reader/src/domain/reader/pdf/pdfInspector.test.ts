@@ -50,6 +50,9 @@ describe('inspectPdf 错误 PDF 分类', () => {
     expect(result.pageCount).toBe(3);
     expect(result.metadata).toMatchObject({ title: '示例 PDF', author: '示例作者' });
     expect(result.sourceCover).toBeNull();
+    expect((lib.getDocument as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ wasmUrl: expect.stringMatching(/pdfjs\/wasm\/$/) }),
+    );
   });
 
   it('检查阶段渲染首页来源封面,不依赖文字层且在销毁文档前释放页面', async () => {

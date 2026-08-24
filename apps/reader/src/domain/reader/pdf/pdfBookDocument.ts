@@ -11,7 +11,7 @@ import type {
   PdfLoadingTask,
   PdfOutlineItem,
 } from './pdfLibrary';
-import { loadPdfLib } from './pdfLibrary';
+import { getPdfJsWasmUrl, loadPdfLib } from './pdfLibrary';
 import type { PdfPageRasterizer } from './pdfPageRenderer';
 import { renderPdfPageCover } from './pdfCover';
 import { PdfRenderer } from './pdfRenderer';
@@ -132,6 +132,7 @@ export class PdfBookDocument implements BookDocument {
       loadingTask = lib.getDocument({
         range: activeRange.transport,
         isEvalSupported: false,
+        wasmUrl: getPdfJsWasmUrl(),
         disableStream: true,
         disableAutoFetch: true,
       });

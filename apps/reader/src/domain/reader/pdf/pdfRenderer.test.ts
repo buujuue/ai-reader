@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PdfRenderer } from './pdfRenderer';
-import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from './pdfTestFakes';
+import type { PdfDocumentProxy, PdfPage } from './pdfLibrary';
+import {
+  makeFakeDocument,
+  makeFakeLib,
+  makeFakePage,
+  makeFakeRasterizer,
+  makeFakeRenderTask,
+} from './pdfTestFakes';
 
 function makeContainer(): HTMLElement {
   const container = document.createElement('div');
@@ -26,6 +33,41 @@ beforeEach(() => {
 });
 
 describe('PdfRenderer 分页模式', () => {
+  it('当前页完成后会提前取得并预渲染下一页', async () => {
+    const document = makeFakeDocument(3) as PdfDocumentProxy & { pages: PdfPage[] };
+    const renderedPages: PdfPage[] = [];
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      {
+        document,
+        container,
+        lib: makeFakeLib(document),
+        rasterize: makeFakeRasterizer((page) => renderedPages.push(page)),
+        devicePixelRatio: () => 1,
+      },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+
+    await renderer.mount();
+
+    await vi.waitFor(() => {
+      expect(document.getPage).toHaveBeenCalledWith(2);
+      expect(renderedPages).toContain(document.pages[1]);
+      expect(renderer.getPageRenderer(2)?.getBitmapArea()).toBeGreaterThan(0);
+    });
+    expect(mountedPageCount(renderer)).toBe(1);
+
+    const secondPageRenderCountBeforeTurn = renderedPages.filter(
+      (page) => page === document.pages[1],
+    ).length;
+    await renderer.goToPage(2);
+    expect(renderedPages.filter((page) => page === document.pages[1])).toHaveLength(
+      secondPageRenderCountBeforeTurn,
+    );
+    expect(renderer.getCurrentPage()).toBe(2);
+    renderer.dispose();
+  });
+
   it('挂载后渲染当前页,goToPage 切换页面并上报页码', async () => {
     const document = makeFakeDocument(5);
     const callbacks = { onPageChange: vi.fn(), onScroll: vi.fn() };
@@ -66,9 +108,97 @@ describe('PdfRenderer 分页模式', () => {
     await renderer.goToPage(6);
     expect(mountedPageCount(renderer)).toBe(1);
   });
+
+  it('并发重排时旧页的异步结果不会覆盖当前页内容', async () => {
+    const page1 = makeFakePage({ width: 595, height: 842 });
+    const page2 = makeFakePage({ width: 595, height: 842 });
+    let page1ReadCount = 0;
+    let releaseStalePage: () => void = () => undefined;
+    const stalePageGate = new Promise<void>((resolve) => {
+      releaseStalePage = resolve;
+    });
+    const document = makeFakeDocument(2);
+    (document.getPage as ReturnType<typeof vi.fn>).mockImplementation(
+      async (pageNumber: number) => {
+        if (pageNumber === 1 && page1ReadCount++ === 1) {
+          await stalePageGate;
+        }
+        return pageNumber === 1 ? page1 : page2;
+      },
+    );
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      {
+        document,
+        container,
+        lib: makeFakeLib(document),
+        rasterize: (page, canvas) => {
+          canvas.dataset.renderedPage = page === page1 ? '1' : '2';
+          return makeFakeRenderTask();
+        },
+        devicePixelRatio: () => 1,
+      },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    await renderer.mount();
+
+    // 模拟 ResizeObserver 已经开始重排旧页,随后用户翻到第二页。
+    const pageCache = (renderer as unknown as { pageCache: Map<number, Promise<unknown>> }).pageCache;
+    pageCache.delete(1);
+    const staleRelayout = renderer.relayout();
+    await Promise.resolve();
+    await renderer.goToPage(2);
+    releaseStalePage();
+    await staleRelayout;
+
+    expect(renderer.getCurrentPage()).toBe(2);
+    expect(container.querySelector<HTMLCanvasElement>('.pdf-page canvas')?.dataset.renderedPage).toBe(
+      '2',
+    );
+    renderer.dispose();
+  });
 });
 
 describe('PdfRenderer 滚动模式', () => {
+  it('初始布局会预渲染当前页与下一页,原生滚动事件也会重排窗口', async () => {
+    const document = makeFakeDocument(30);
+    const pages = (document as unknown as { pages: PdfPage[] }).pages;
+    const renderedPages: PdfPage[] = [];
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      {
+        document,
+        container,
+        lib: makeFakeLib(document),
+        rasterize: makeFakeRasterizer((page) => renderedPages.push(page)),
+        devicePixelRatio: () => 1,
+      },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+
+    expect(container.querySelector('[data-page="2"]')).not.toBeNull();
+    expect(renderer.getPageRenderer(2)?.getBitmapArea()).toBeGreaterThan(0);
+    const secondPageRenderCountBeforeScroll = renderedPages.filter(
+      (page) => page === pages[1],
+    ).length;
+
+    // 模拟用户直接拖动/滚轮滚动容器;这条路径不能依赖目录点击或 setScrollTop。
+    container.scrollTop = 1_200;
+    container.dispatchEvent(new Event('scroll'));
+
+    await vi.waitFor(() => {
+      expect(renderer.getCurrentPage()).toBe(2);
+      expect(container.querySelector('[data-page="2"]')).not.toBeNull();
+      expect(container.querySelector('[data-page="3"]')).not.toBeNull();
+    });
+    expect(renderedPages.filter(
+      (page) => page === pages[1],
+    )).toHaveLength(secondPageRenderCountBeforeScroll);
+    renderer.dispose();
+  });
+
   it('滚动后按各页布局位置确定当前页码', async () => {
     const document = makeFakeDocument(8);
     const scrollEvent = vi.fn();

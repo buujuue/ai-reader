@@ -96,10 +96,23 @@ body::-webkit-scrollbar-thumb:hover,
 .pdf-text-layer {
   z-index: 1;
   color: transparent;
+  /* 选中透明文字层时,浏览器不得用默认前景色把文字重新绘制到 Canvas 上。 */
+  forced-color-adjust: none;
 }
 
 .pdf-text-layer .pdf-text-span {
   user-select: text;
+}
+
+/*
+ * PDF 正文已经由 Canvas 绘制。文字层只负责命中、复制和生成选区,
+ * 选中态保留半透明背景作为反馈,但前景必须继续透明,避免出现一份
+ * 蓝色文字叠在 PDF 原图文字上。
+ */
+.pdf-text-layer ::selection {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background-color: rgb(59 130 246 / 28%);
 }
 
 /* PDF 高亮覆盖层:置于文本层之上,半透明表现批注/搜索命中。 */
@@ -110,16 +123,6 @@ body::-webkit-scrollbar-thumb:hover,
 /* 扫描页区域选择预览由页面渲染器动态绘制。 */
 .pdf-area-selection-layer {
   z-index: 3;
-}
-
-.pdf-scan-notice {
-  border: 1px solid rgb(82 82 91 / 0.9);
-  border-radius: 0.375rem;
-  background: rgb(24 24 27 / 0.82);
-  color: rgb(212 212 216);
-  padding: 0.25rem 0.5rem;
-  font-size: 0.6875rem;
-  line-height: 1.25rem;
 }
 
 .pdf-area-selecting {

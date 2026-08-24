@@ -6,11 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "pnpm typecheck && vite build",
+    "build": "pnpm typecheck && vite build && pnpm verify:pdfjs-wasm",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:real-render": "node scripts/verify-real-render.mjs",
+    "verify:pdfjs-wasm": "node scripts/verify-pdfjs-wasm-assets.mjs",
     "test:real-epub-p0": "node scripts/verify-epub-p0.mjs",
     "test:reading-performance": "node scripts/verify-reading-performance.mjs",
     "test:real-search": "node scripts/verify-search.mjs",

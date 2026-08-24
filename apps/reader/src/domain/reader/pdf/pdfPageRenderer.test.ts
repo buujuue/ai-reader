@@ -163,6 +163,7 @@ describe('PdfPageRenderer 画布内存预算', () => {
 
     // 文本层读取失败不阻塞页面图像渲染。
     expect(renderer.getBitmapArea()).toBeGreaterThan(0);
+    expect(renderer.element.querySelector('.pdf-scan-notice')).toBeNull();
   });
 
   it('兼容 PDF.js streamTextContent 返回 ReadableStream 的真实 API', async () => {

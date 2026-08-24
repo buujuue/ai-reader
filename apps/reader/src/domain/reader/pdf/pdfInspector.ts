@@ -1,7 +1,7 @@
 import { normalizeCoverBlob } from '../../library/cover';
 import type { CoverAsset, SourceMetadata } from '../../library/material';
 import type { PdfDocumentProxy, PdfFileSource, PdfJsLib, PdfLoadingTask } from './pdfLibrary';
-import { createPdfSourceFromBytes, loadPdfLib } from './pdfLibrary';
+import { createPdfSourceFromBytes, getPdfJsWasmUrl, loadPdfLib } from './pdfLibrary';
 import { renderPdfPageCover, type PdfCoverRenderFailure } from './pdfCover';
 import { createConcurrentRangeTransport, withRangeFailure } from './pdfRangeTransport';
 
@@ -100,6 +100,7 @@ export async function inspectPdf(
     loadingTask = pdfLib.getDocument({
       range: range.transport,
       isEvalSupported: false,
+      wasmUrl: getPdfJsWasmUrl(),
       disableStream: true,
       disableAutoFetch: true,
     });

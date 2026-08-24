@@ -3,6 +3,7 @@
 ## 功能
 
 - `foliate-js.d.ts`：`foliate-js` 的最小类型声明。foliate-js 无官方类型，这里只声明本项目用到的窄面（`View` 的 open/init/next/prev/goTo/close 与 `makeBook`），供 `domain/reader/foliateViewHost.ts` 使用。
+- `node-build-shims.d.ts`：Vite 配置中 PDF.js WASM 资源插件使用的最小 `node:fs` / `node:url` 类型声明；不进入应用运行时。
 
 ## 依赖其它文件夹（树）
 

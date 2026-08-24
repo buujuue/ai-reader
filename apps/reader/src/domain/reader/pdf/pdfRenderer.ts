@@ -45,6 +45,11 @@ interface PageLayout {
   top: number;
 }
 
+interface CachedPageRender {
+  key: string;
+  promise: Promise<void>;
+}
+
 /**
  * PDF 固定版式渲染器:在容器内以分页或滚动方式呈现页面,负责布局、缩放/适配、
  * 视口窗口化与画布内存预算。外部(BookDocument)只通过窄方法驱动它,不直接
@@ -67,10 +72,16 @@ export class PdfRenderer {
   private layouts: PageLayout[] = [];
   private pageRenderers = new Map<number, PdfPageRenderer>();
   private pageCache = new Map<number, Promise<PdfPage>>();
+  /** 分页模式的一页前瞻渲染缓存;滚动模式不使用它。 */
+  private paginatedRenders = new Map<number, CachedPageRender>();
+  /** 滚动模式的渲染结果缓存,窗口变化时复用仍在窗口内的页面。 */
+  private scrolledRenders = new Map<number, CachedPageRender>();
   private resizeObserver: ResizeObserver | null = null;
   private lastScrollWindowKey = '';
   /** 滚动布局对应的容器宽度;宽度变化时必须重新计算页面 top/height。 */
   private layoutWidth = 0;
+  /** 只允许最新一次异步重排提交 DOM,避免尺寸/翻页竞态写回过期页面。 */
+  private layoutGeneration = 0;
   private disposed = false;
 
   constructor(
@@ -136,6 +147,9 @@ export class PdfRenderer {
       void this.relayout();
     });
     this.resizeObserver.observe(this.container);
+    // 滚动模式依赖浏览器原生滚动;如果不监听 scroll,只有目录跳转等
+    // 显式调用 setScrollTop 的路径会触发窗口重排,用户直接上下滚动时就会露出空白。
+    this.container.addEventListener('scroll', this.handleScroll, { passive: true });
     await this.relayout();
   }
 
@@ -189,50 +203,150 @@ export class PdfRenderer {
     if (this.disposed) {
       return;
     }
+    const generation = ++this.layoutGeneration;
     const clientWidth = this.container.clientWidth || 1;
     const clientHeight = this.container.clientHeight || 1;
 
     if (this.flow === 'paginated') {
-      await this.renderPaginated(clientWidth, clientHeight);
+      await this.renderPaginated(clientWidth, clientHeight, generation);
     } else {
-      await this.renderScrolled(clientWidth);
+      await this.renderScrolled(clientWidth, generation);
     }
   }
 
-  private async renderPaginated(clientWidth: number, clientHeight: number): Promise<void> {
-    const page = await this.acquirePage(this.currentPage);
+  private async renderPaginated(
+    clientWidth: number,
+    clientHeight: number,
+    generation: number,
+  ): Promise<void> {
+    const pageNumber = this.currentPage;
+    const page = await this.acquirePage(pageNumber);
+    if (!this.isCurrentLayout(generation, pageNumber)) {
+      return;
+    }
     const scale = this.fitScale(page, clientWidth, clientHeight);
     const viewport = page.getViewport({ scale });
+    const renderKey = this.getPaginatedRenderKey(viewport);
 
     this.pages.style.height = '100%';
     this.pages.style.display = 'flex';
     this.pages.style.alignItems = 'center';
     this.pages.style.justifyContent = 'center';
 
-    const renderer = this.ensurePageRenderer(this.currentPage);
-    for (const [pageNumber, existing] of this.pageRenderers) {
-      if (pageNumber !== this.currentPage) {
-        existing.release();
-        this.pageRenderers.delete(pageNumber);
+    const renderer = this.ensurePageRenderer(pageNumber);
+    for (const [cachedPageNumber, existing] of this.pageRenderers) {
+      if (cachedPageNumber !== pageNumber && cachedPageNumber !== pageNumber + 1) {
+        this.releasePageRenderer(cachedPageNumber, existing);
       }
     }
-    this.pages.replaceChildren(renderer.element);
     renderer.element.style.width = `${viewport.width}px`;
     renderer.element.style.height = `${viewport.height}px`;
-    await renderer.render(page, viewport, this.getDpr());
-    this.callbacks.onPageRendered?.(this.currentPage);
+    await this.renderCachedPage(
+      this.paginatedRenders,
+      pageNumber,
+      renderer,
+      page,
+      viewport,
+      renderKey,
+    );
+    if (!this.isCurrentLayout(generation, pageNumber)) {
+      return;
+    }
+    this.pages.replaceChildren(renderer.element);
+    this.callbacks.onPageRendered?.(pageNumber);
+    this.preloadNextPaginatedPage(pageNumber, clientWidth, clientHeight, generation);
   }
 
-  private async renderScrolled(clientWidth: number): Promise<void> {
+  /** 分页模式只把当前页和下一页保留在 DOM/渲染缓存范围内,避免扩大画布预算。 */
+  private releasePageRenderer(pageNumber: number, renderer: PdfPageRenderer): void {
+    renderer.release();
+    this.pageRenderers.delete(pageNumber);
+    this.paginatedRenders.delete(pageNumber);
+    this.scrolledRenders.delete(pageNumber);
+  }
+
+  private getPaginatedRenderKey(viewport: { width: number; height: number }): string {
+    return `${viewport.width}:${viewport.height}:${this.getDpr()}`;
+  }
+
+  /** 返回可复用的页面渲染任务,同一页/同一尺寸不会因窗口变化再次光栅化。 */
+  private renderCachedPage(
+    cache: Map<number, CachedPageRender>,
+    pageNumber: number,
+    renderer: PdfPageRenderer,
+    page: PdfPage,
+    viewport: { width: number; height: number },
+    key: string,
+  ): Promise<void> {
+    const cached = cache.get(pageNumber);
+    if (cached?.key === key) {
+      return cached.promise;
+    }
+
+    let promise: Promise<void>;
+    promise = renderer.render(page, viewport, this.getDpr()).catch((error: unknown) => {
+      if (cache.get(pageNumber)?.promise === promise) {
+        cache.delete(pageNumber);
+      }
+      throw error;
+    });
+    cache.set(pageNumber, { key, promise });
+    return promise;
+  }
+
+  /** 当前页可见后尽早预渲染下一页;失败只影响下一页,不阻塞当前阅读。 */
+  private preloadNextPaginatedPage(
+    pageNumber: number,
+    clientWidth: number,
+    clientHeight: number,
+    generation: number,
+  ): void {
+    const nextPageNumber = pageNumber + 1;
+    if (nextPageNumber > this.pageCount) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const nextPage = await this.acquirePage(nextPageNumber);
+        if (!this.isCurrentLayout(generation, pageNumber)) {
+          return;
+        }
+        const nextScale = this.fitScale(nextPage, clientWidth, clientHeight);
+        const nextViewport = nextPage.getViewport({ scale: nextScale });
+        const nextRenderer = this.ensurePageRenderer(nextPageNumber);
+        nextRenderer.element.style.width = `${nextViewport.width}px`;
+        nextRenderer.element.style.height = `${nextViewport.height}px`;
+        await this.renderCachedPage(
+          this.paginatedRenders,
+          nextPageNumber,
+          nextRenderer,
+          nextPage,
+          nextViewport,
+          this.getPaginatedRenderKey(nextViewport),
+        );
+        if (this.isCurrentLayout(generation, pageNumber)) {
+          this.callbacks.onPageRendered?.(nextPageNumber);
+        }
+      } catch {
+        // 预加载是最佳努力路径;下一次真正翻到该页时会重新尝试渲染。
+      }
+    })();
+  }
+
+  private async renderScrolled(clientWidth: number, generation: number): Promise<void> {
     // 先构建全部页面的布局(仅需 getViewport,不实际光栅化),保证总高与偏移正确。
     if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
-      this.layouts = [];
+      const layouts: PageLayout[] = [];
       let top = 0;
       for (let i = 1; i <= this.pageCount; i += 1) {
         const page = await this.acquirePage(i);
+        if (!this.isCurrentLayout(generation)) {
+          return;
+        }
         const scale = this.scrollScale(page, clientWidth);
         const viewport = page.getViewport({ scale });
-        this.layouts.push({
+        layouts.push({
           pageNumber: i,
           width: viewport.width,
           height: viewport.height,
@@ -240,8 +354,16 @@ export class PdfRenderer {
         });
         top += viewport.height + PAGE_GAP;
       }
+      if (!this.isCurrentLayout(generation)) {
+        return;
+      }
+      this.layouts = layouts;
       this.layoutWidth = clientWidth;
       this.lastScrollWindowKey = '';
+    }
+
+    if (!this.isCurrentLayout(generation)) {
+      return;
     }
 
     this.pages.style.display = 'block';
@@ -249,10 +371,15 @@ export class PdfRenderer {
 
     const viewportTop = this.container.scrollTop;
     const viewportBottom = viewportTop + this.container.clientHeight;
+    // 以像素缓冲保持窗口化,但无论页面高度多大都额外保留当前页的下一页。
+    // 仅按 PAGE_GAP 计算会在常见的 842px 页面上只得到约 160px 缓冲,
+    // 导致用户滚到下一页时才开始创建 Canvas 和文字层。
+    const nextPageNumber = this.currentPage + 1;
     const visible = this.layouts.filter(
       (layout) =>
-        layout.top + layout.height >= viewportTop - this.renderWindow * PAGE_GAP &&
-        layout.top <= viewportBottom + this.renderWindow * PAGE_GAP,
+        (layout.top + layout.height >= viewportTop - this.renderWindow * PAGE_GAP &&
+          layout.top <= viewportBottom + this.renderWindow * PAGE_GAP) ||
+        layout.pageNumber === nextPageNumber,
     );
     const visibleSet = new Set(visible.map((layout) => layout.pageNumber));
 
@@ -261,7 +388,6 @@ export class PdfRenderer {
     if (windowKey === this.lastScrollWindowKey) {
       return;
     }
-    this.lastScrollWindowKey = windowKey;
 
     this.pages.replaceChildren();
 
@@ -275,28 +401,51 @@ export class PdfRenderer {
       renderer.element.style.height = `${layout.height}px`;
       this.pages.appendChild(renderer.element);
       const page = await this.acquirePage(layout.pageNumber);
+      if (!this.isCurrentLayout(generation)) {
+        return;
+      }
       const base = page.getViewport({ scale: 1 });
       const scale = layout.width / (base.width || 1);
       renderPromises.push(
-        renderer.render(page, page.getViewport({ scale }), this.getDpr()),
+        this.renderCachedPage(
+          this.scrolledRenders,
+          layout.pageNumber,
+          renderer,
+          page,
+          page.getViewport({ scale }),
+          `${layout.width}:${layout.height}:${this.getDpr()}`,
+        ),
       );
     }
 
     // 释放离开窗口的页面画布位图(内存预算)。
     for (const [pageNumber, existing] of this.pageRenderers) {
       if (!visibleSet.has(pageNumber)) {
-        existing.release();
-        this.pageRenderers.delete(pageNumber);
+        this.releasePageRenderer(pageNumber, existing);
       }
     }
 
     // 当前页码由调用方(setScrollTop / goToPage)在 handleScroll 中维护,这里不回调,
     // 避免 relayout → renderScrolled → handleScroll → relayout 的无限递归。
     await Promise.all(renderPromises);
+    if (!this.isCurrentLayout(generation)) {
+      return;
+    }
+    // 只有最新窗口的全部页面渲染成功后才记住 key;否则下一次重排不能
+    // 因为过期渲染提前写入的 key 而误跳过真正需要的绘制。
+    this.lastScrollWindowKey = windowKey;
     // 滚动窗口渲染完成后逐一重绘各页高亮,保证离开窗口再回来时批注/搜索高亮不丢失。
     for (const layout of visible) {
       this.callbacks.onPageRendered?.(layout.pageNumber);
     }
+  }
+
+  private isCurrentLayout(generation: number, pageNumber?: number): boolean {
+    return (
+      !this.disposed &&
+      generation === this.layoutGeneration &&
+      (pageNumber === undefined || pageNumber === this.currentPage)
+    );
   }
 
   private invalidateLayout(): void {
@@ -360,7 +509,7 @@ export class PdfRenderer {
     return promise;
   }
 
-  private handleScroll(): void {
+  private handleScroll = (): void => {
     if (this.flow !== 'scrolled') {
       return;
     }
@@ -380,16 +529,19 @@ export class PdfRenderer {
     this.callbacks.onScroll(scrollTop, this.currentPage);
     // 滚动位置变化时按需重排可见窗口(懒节流由调用方负责)。
     void this.relayout();
-  }
+  };
 
   dispose(): void {
     this.disposed = true;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.container.removeEventListener('scroll', this.handleScroll);
     for (const renderer of this.pageRenderers.values()) {
       renderer.release();
     }
     this.pageRenderers.clear();
+    this.paginatedRenders.clear();
+    this.scrolledRenders.clear();
     this.layoutWidth = 0;
     for (const promise of this.pageCache.values()) {
       void promise.then((page) => page.cleanup()).catch(() => undefined);

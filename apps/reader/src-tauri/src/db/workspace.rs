@@ -38,7 +38,7 @@ impl Default for ReadingTypography {
 ///
 /// EPUB 使用 `cfi`;PDF 使用 `page`/`scroll_top`/`zoom`/`fit`。字段均为可选,
 /// 以便同一结构兼容两种格式与旧数据(serde 缺失字段回退 None)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingLocation {
     pub kind: String,
@@ -47,9 +47,9 @@ pub struct ReadingLocation {
     /// 1 起始页码(PDF)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<i64>,
-    /// 滚动模式下的滚动位移像素(PDF)。
+    /// 滚动模式下的滚动位移像素(PDF),允许保留 CSS 像素的小数部分。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scroll_top: Option<i64>,
+    pub scroll_top: Option<f64>,
     /// 缩放百分比整数,如 100 表示 100%(PDF)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoom: Option<i64>,
@@ -59,7 +59,7 @@ pub struct ReadingLocation {
 }
 
 /// 导航历史节点结构。Rust 只原样存取,不理解导航语义。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NavigationHistory {
     pub positions: Vec<ReadingLocation>,
@@ -76,7 +76,7 @@ impl Default for NavigationHistory {
 }
 
 /// 一个编辑器组内的一次阅读视图(标签)的可序列化描述。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingViewState {
     pub id: String,
@@ -90,7 +90,7 @@ pub struct ReadingViewState {
 }
 
 /// 一个编辑器组的可序列化状态。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorGroupState {
     pub id: String,
@@ -323,6 +323,57 @@ mod tests {
         .unwrap();
 
         assert_eq!(state.activity_panel_width, 304);
+    }
+
+    #[test]
+    fn workspace_state_accepts_fractional_pdf_scroll_position() {
+        let state: WorkspaceState = serde_json::from_str(
+            r#"{
+                "schemaVersion":10,
+                "primarySidebarVisible":true,
+                "tocVisible":false,
+                "activityPanelWidth":304,
+                "primaryMaterialId":"mat-1",
+                "splitDirection":null,
+                "activeEditorGroupId":"group-1",
+                "editorGroups":[{
+                    "id":"group-1",
+                    "views":[{
+                        "id":"view-1",
+                        "materialId":"mat-1",
+                        "location":{
+                            "kind":"pdf",
+                            "page":3,
+                            "scrollTop":62304.66796875,
+                            "zoom":100,
+                            "fit":"width"
+                        },
+                        "history":{"positions":[],"index":-1},
+                        "sourceMode":false
+                    }],
+                    "activeViewId":"view-1"
+                }],
+                "globalReadingTypography":{
+                    "fontFamily":"sansSerif",
+                    "fontSize":18.0,
+                    "lineHeight":1.6,
+                    "margin":48.0,
+                    "gap":7.0,
+                    "flow":"paginated",
+                    "theme":"light"
+                },
+                "materialTypography":{}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            state.editor_groups[0].views[0]
+                .location
+                .as_ref()
+                .and_then(|location| location.scroll_top),
+            Some(62304.66796875),
+        );
     }
 
     #[test]
