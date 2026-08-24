@@ -5,6 +5,8 @@
  * 结果写入 scripts/artifacts/reading-performance.json（该目录已忽略）。
  * 夹具、阶段和阈值固定；脚本只在真实 Chrome 中执行，避免 jsdom 把
  * 分页/Canvas 性能伪装成通过。
+ * 浏览器降级只验证 ManagedFileSource 语义；Windows Tauri 的 managed-range
+ * 二进制协议还必须按 ADR-0032 的人工步骤记录网络栈证据。
  */
 import { execSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -213,7 +215,7 @@ async function main() {
       epubBook.close();
       epubContainer.remove();
 
-      const pdfBytes = buildLargePdfFixture({ pageCount: 640, paddingBytes: 10 * 1024 * 1024 });
+      const pdfBytes = buildLargePdfFixture({ pageCount: 640, paddingBytes: 80 * 1024 * 1024 });
       const pdfTracker = trackedSource(pdfBytes, 'large-range.pdf');
       const pdfContainer = makeContainer('large-pdf-performance');
       const loadedPdfLib = await loadPdfLib();

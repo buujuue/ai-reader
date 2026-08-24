@@ -3,6 +3,7 @@ mod db;
 mod epub;
 mod error;
 mod fs;
+mod managed_range;
 
 use db::{open_database, DatabaseHandle};
 use error::AppError;
@@ -40,6 +41,7 @@ pub fn run() {
 
             Ok(())
         })
+        .register_asynchronous_uri_scheme_protocol(managed_range::SCHEME, managed_range::handle)
         .invoke_handler(tauri::generate_handler![
             commands::epub::prefetch_managed_epub,
             commands::epub::read_epub_derived_toc_cache,

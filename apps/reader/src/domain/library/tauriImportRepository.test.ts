@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { importRepositoryContract, type ImportContractHarness } from './importRepository.contract';
 import { importBatchContract, type ImportBatchContractHarness } from './importBatch.contract';
@@ -546,6 +546,43 @@ describe('TauriImportRepository 边界映射', () => {
       args: { materialId: 'mat-1', offset: 0, length: 10 },
     });
     expect(received[1]?.args).not.toHaveProperty('path');
+  });
+
+  it('Windows PDF 使用二进制范围协议，不逐块调用通用读取 Command', async () => {
+    const invoke = vi.fn<TauriInvoke>(async (command) => {
+      if (command === IMPORT_COMMAND_NAMES.managedInfo) {
+        return { name: 'large.pdf', size: 10 };
+      }
+      throw new Error(`不应调用 Tauri 范围 Command:${command}`);
+    });
+    const fetchFn = vi.fn(async (input: string) => {
+      expect(input).toBe(
+        'http://managed-range.localhost/?materialId=mat-pdf&offset=0&length=10',
+      );
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new TextEncoder().encode('0123456789').buffer,
+      } as Response;
+    });
+
+    const repository = createTauriImportRepository(invoke, {
+      useManagedRangeProtocol: true,
+      fetchFn,
+    });
+    const source = await repository.openManagedFileSource('mat-pdf');
+
+    await expect(source.arrayBuffer()).resolves.toEqual(
+      new TextEncoder().encode('0123456789').buffer,
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith(IMPORT_COMMAND_NAMES.managedInfo, {
+      materialId: 'mat-pdf',
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      IMPORT_COMMAND_NAMES.readManagedRange,
+      expect.anything(),
+    );
   });
 
   it('Tauri Markdown Source 可通过多个受控范围读取超过 8 MiB 的完整文本', async () => {

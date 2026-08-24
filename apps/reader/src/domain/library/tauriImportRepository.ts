@@ -18,6 +18,11 @@ import type {
 } from './versionMigrationPersistence';
 import type { WorkspaceState } from '../workspace/workspaceState';
 import { ManagedFileSource, managedFileTypeFromName } from './managedFileSource';
+import {
+  createManagedRangeReader,
+  isWindowsTauriRuntime,
+  type ManagedRangeFetch,
+} from './managedRangeProtocol';
 
 export const IMPORT_COMMAND_NAMES = {
   stage: 'stage_import',
@@ -47,6 +52,12 @@ export const IMPORT_COMMAND_NAMES = {
   restoreVersionMigrationSnapshot: 'restore_version_migration_snapshot',
   clearVersionMigrationSnapshot: 'clear_version_migration_snapshot',
 } as const;
+
+export interface TauriImportRepositoryOptions {
+  /** 测试用覆盖；生产默认按当前 Tauri WebView 平台选择传输方式。 */
+  useManagedRangeProtocol?: boolean;
+  fetchFn?: ManagedRangeFetch;
+}
 
 function assertStagedShape(raw: unknown): StagedImport {
   const candidate = raw as Partial<StagedImport> | null;
@@ -234,7 +245,13 @@ function assertCoverPayload(raw: unknown): CoverAsset | null {
   return { bytes: base64ToBytes(candidate.bytes), mimeType: candidate.mimeType };
 }
 
-export function createTauriImportRepository(invokeFn: TauriInvoke): ImportRepository {
+export function createTauriImportRepository(
+  invokeFn: TauriInvoke,
+  options: TauriImportRepositoryOptions = {},
+): ImportRepository {
+  const useManagedRangeProtocol =
+    options.useManagedRangeProtocol ?? isWindowsTauriRuntime();
+
   return {
     async stageImport(sourcePath: string): Promise<StagedImport> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.stage, { sourcePath });
@@ -289,23 +306,28 @@ export function createTauriImportRepository(invokeFn: TauriInvoke): ImportReposi
       const info = assertManagedFileInfo(
         await invokeFn(IMPORT_COMMAND_NAMES.managedInfo, { materialId }),
       );
+      const readRange =
+        useManagedRangeProtocol && info.name.toLowerCase().endsWith('.pdf')
+          ? createManagedRangeReader(materialId, options.fetchFn)
+          : async (offset: number, length: number): Promise<Uint8Array> => {
+              const raw = await invokeFn(IMPORT_COMMAND_NAMES.readManagedRange, {
+                materialId,
+                offset,
+                length,
+              });
+              if (typeof raw !== 'string') {
+                throw new Error('managed file range bytes payload is not a string');
+              }
+              return base64ToBytes(raw);
+            };
+
       return new ManagedFileSource(
         {
           name: info.name,
           size: info.size,
           type: managedFileTypeFromName(info.name),
         },
-        async (offset, length) => {
-          const raw = await invokeFn(IMPORT_COMMAND_NAMES.readManagedRange, {
-            materialId,
-            offset,
-            length,
-          });
-          if (typeof raw !== 'string') {
-            throw new Error('managed file range bytes payload is not a string');
-          }
-          return base64ToBytes(raw);
-        },
+        readRange,
       );
     },
     async recoverImports(): Promise<void> {

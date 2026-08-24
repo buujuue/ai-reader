@@ -1,6 +1,6 @@
 /**
  * 只用于范围读取性能验收的确定性 PDF 生成器。
- * 文件包含可渲染的多页正文和一个未引用的 10 MiB 尾部流;第二页正文对象
+ * 文件包含可渲染的多页正文和一个未引用的 80 MiB 尾部流;第二页正文对象
  * 放在该流之后,用于检测文档信息/首屏/翻页阶段是否错误复制整本 PDF。
  */
 
@@ -81,11 +81,11 @@ export function buildLargePdfFixture(options: LargePdfFixtureOptions = {}): Uint
     firstContentObject,
     fontObject,
     prefixPaddingObject,
+    paddingObject,
     ...Array.from(
       { length: Math.max(0, pageCount - 1) },
       (_, index) => firstContentObject + index + 1,
     ),
-    paddingObject,
   ];
   for (const number of objectOrder) {
     const object = objects.get(number);
