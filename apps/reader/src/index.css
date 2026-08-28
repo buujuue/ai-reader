@@ -605,6 +605,214 @@ body::-webkit-scrollbar-thumb:hover,
   background: color-mix(in srgb, var(--prototype-danger) 20%, transparent);
 }
 
+.library-tree-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 8px 8px 12px;
+}
+
+.library-tree,
+.library-folder-group,
+.library-material-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-folder-group,
+.library-material-group {
+  padding-left: 16px;
+}
+
+.library-folder-row,
+.library-unfiled-row {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+  color: var(--prototype-text-secondary);
+  transition: color var(--prototype-motion), background var(--prototype-motion);
+}
+
+.library-folder-row:hover,
+.library-unfiled-row:hover {
+  color: var(--prototype-text);
+  background: var(--prototype-surface-hover);
+}
+
+.library-folder-toggle {
+  display: flex;
+  min-width: 0;
+  min-height: 34px;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.library-folder-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-folder-chevron {
+  flex: 0 0 auto;
+  color: var(--prototype-text-muted);
+  transition: transform var(--prototype-motion), color var(--prototype-motion);
+}
+
+.library-folder-chevron.expanded {
+  color: var(--prototype-accent-strong);
+  transform: rotate(90deg);
+}
+
+.library-folder-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.library-folder-actions button,
+.library-folder-editor-row button {
+  display: inline-flex;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--prototype-text-muted);
+  background: transparent;
+  transition: color var(--prototype-motion), background var(--prototype-motion), transform var(--prototype-motion);
+}
+
+.library-folder-actions button:hover:not(:disabled),
+.library-folder-editor-row button:hover {
+  color: var(--prototype-accent-strong);
+  background: var(--prototype-accent-soft);
+}
+
+.library-folder-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.library-folder-editor {
+  padding: 3px 0 4px;
+}
+
+.library-folder-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.library-folder-editor-row input {
+  min-width: 0;
+  height: 32px;
+  flex: 1;
+  padding: 0 8px;
+  border: 1px solid var(--prototype-focus);
+  border-radius: 6px;
+  outline: 0;
+  color: var(--prototype-text);
+  background: var(--prototype-surface-soft);
+  font-size: 12px;
+}
+
+.library-folder-error {
+  margin: 4px 34px 0 4px;
+  color: var(--prototype-danger);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.library-unfiled-tree-item {
+  margin-top: 8px;
+  border-top: 1px solid var(--prototype-border);
+  padding-top: 8px;
+}
+
+.library-unfiled-row {
+  padding: 0 8px;
+  color: var(--prototype-accent-strong);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.library-material-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 8px;
+  padding-top: 6px;
+}
+
+.library-material-tree-item {
+  padding: 5px;
+  border-radius: 8px;
+}
+
+.library-material-tree-item:hover {
+  background: var(--prototype-surface-hover);
+}
+
+.library-tree-empty {
+  padding: 14px 8px 10px;
+  color: var(--prototype-text-muted);
+  text-align: center;
+}
+
+.library-tree-empty p {
+  margin: 0;
+  color: var(--prototype-text-secondary);
+  font-size: 13px;
+}
+
+.library-tree-empty span {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+@media (pointer: coarse) {
+  .sidebar-panel-header-actions,
+  .library-folder-actions,
+  .library-folder-editor-row {
+    gap: 8px;
+  }
+
+  .library-folder-row,
+  .library-folder-toggle,
+  .library-unfiled-row {
+    min-height: 44px;
+  }
+
+  .library-folder-actions button,
+  .library-folder-editor-row button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .library-folder-editor-row input {
+    height: 44px;
+  }
+}
+
 .app-reading-view {
   display: flex;
   min-height: 0;

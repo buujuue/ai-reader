@@ -2,9 +2,9 @@
 
 ## 功能
 
-- 工作区状态当前为 schema 10，保存 `primaryMaterialId`（独立于焦点的主要阅读材料）、`primarySidebarVisible`、`tocVisible` 与 `activityPanelWidth` 三类侧栏偏好；加载与保存会归一化两者的互斥关系并为旧 DTO 回退默认宽度；材料批注覆盖面板属于运行时 UI，不进入 Workspace State；旧 DTO 的遗留批注侧栏字段会被忽略，缺失字段时回退到安全默认值。
+- 工作区状态当前为 schema 11，保存 `primaryMaterialId`（独立于焦点的主要阅读材料）、`primarySidebarVisible`、`tocVisible`、`activityPanelWidth` 与书库文件夹树展开状态 `expandedLibraryFolderIds`；加载与保存会归一化两者的互斥关系并为旧 DTO 回退默认宽度/空展开集合；材料批注覆盖面板属于运行时 UI，不进入 Workspace State；旧 DTO 的遗留批注侧栏字段会被忽略，缺失字段时回退到安全默认值。
 
-- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + 两类侧栏期望状态 + `activityPanelWidth` + `primaryMaterialId` + `splitDirection` + `activeEditorGroupId` + `editorGroups` + `globalReadingTypography` 全局阅读默认 + `materialTypography` 材料级排版覆盖）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history` + `sourceMode`），同一组内按 `materialId` 最多保留一个视图，跨组允许同材料视图，并含 `activeViewId`；第一版最多两个组。`ReadingLocation`、`NavigationHistory` 与 `ReadingTypography` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`（当前 10）。
+- `workspaceState.ts`：可序列化的 `WorkspaceState`（`schemaVersion` + 两类侧栏期望状态 + `activityPanelWidth` + `primaryMaterialId` + `splitDirection` + `activeEditorGroupId` + `editorGroups` + `globalReadingTypography` 全局阅读默认 + `materialTypography` 材料级排版覆盖 + `expandedLibraryFolderIds` 文件夹树展开集合）。`EditorGroupState` 含 `views`（`ReadingViewState`：`id` + `materialId` + `location` + `history` + `sourceMode`），同一组内按 `materialId` 最多保留一个视图，跨组允许同材料视图，并含 `activeViewId`；第一版最多两个组。`ReadingLocation`、`NavigationHistory` 与 `ReadingTypography` 类型来自 `domain/reader`。`DEFAULT_WORKSPACE_STATE` 默认值、`WORKSPACE_STATE_SCHEMA_VERSION`（当前 11）。
 - `workspaceRepository.ts`：typed Repository 接口（`loadState` / `saveState`），是前端调用 Rust 持久化能力的窄边界。
 - `tauriWorkspaceRepository.ts`：Tauri Adapter，经 `@tauri-apps/api/core` 的 `invoke` 调用 `load_workspace_state` / `save_workspace_state` 命令；注入伪 `TauriInvoke` 供测试，附 `assertWorkspaceStateShape` 载荷校验（含排版字段校验与旧数据回退到全局默认）。
 - `inMemoryWorkspaceRepository.ts`：内存 Adapter，浏览器降级开发用。

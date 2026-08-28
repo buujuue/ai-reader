@@ -120,6 +120,9 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   const materialOverrideEntries = Object.entries(materialTypography)
     .filter((entry): entry is [string, unknown] => isTypographyOverride(entry[1]))
     .map(([materialId, override]) => [materialId, override]);
+  const expandedLibraryFolderIds = Array.isArray(candidate.expandedLibraryFolderIds)
+    ? [...new Set(candidate.expandedLibraryFolderIds.filter((id): id is string => typeof id === 'string'))]
+    : [];
   const sidebarVisibility = normalizeSidebarVisibility(
     candidate.primarySidebarVisible,
     typeof candidate.tocVisible === 'boolean'
@@ -139,6 +142,7 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
     editorGroups,
     globalReadingTypography,
     materialTypography: Object.fromEntries(materialOverrideEntries),
+    expandedLibraryFolderIds,
   };
 }
 

@@ -7,6 +7,7 @@ import {
   type FoliateViewHostFactory,
 } from '../domain/reader/foliateViewHost';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
+import type { LibraryFolderRepository } from '../domain/library/libraryFolderRepository';
 import type { StagedImport } from '../domain/library/material';
 import { serializeWorkspaceState } from './workbenchCommands';
 import { useAnnotationStore } from './annotationStore';
@@ -37,6 +38,7 @@ export function registerLibraryCommands(
   dependencies: ImportBookDependencies & {
     annotationRepository?: AnnotationRepository;
     workspaceRepository?: WorkspaceRepository;
+    libraryFolderRepository?: LibraryFolderRepository;
     viewHostFactory?: FoliateViewHostFactory;
     /** 浏览器降级适配器没有 Rust 的跨仓储原子事务，需要在提交后同步状态。 */
     syncVersionMigrationState?: boolean;
@@ -47,12 +49,44 @@ export function registerLibraryCommands(
   },
 ): void {
   registry.register(COMMAND_IDS.libraryRefresh, async () => {
-    const [materials, trashedMaterials] = await Promise.all([
+    const [materials, trashedMaterials, folders] = await Promise.all([
       dependencies.importRepository.listMaterials(),
       dependencies.importRepository.listTrashed(),
+      dependencies.libraryFolderRepository?.listFolders() ?? Promise.resolve([]),
     ]);
     useLibraryStore.getState().setMaterials(materials);
     useLibraryStore.getState().setTrashedMaterials(trashedMaterials);
+    useLibraryStore.getState().setFolders(folders);
+  });
+
+  registry.register(COMMAND_IDS.libraryCreateFolder, async (...args: unknown[]) => {
+    const repository = dependencies.libraryFolderRepository;
+    if (!repository) throw new Error('书库文件夹 Repository 未配置');
+    const name = args[0];
+    const parentId = args[1];
+    if (typeof name !== 'string') throw new Error('新建文件夹命令缺少名称');
+    if (parentId !== null && typeof parentId !== 'string') {
+      throw new Error('新建文件夹命令的父级不合法');
+    }
+    const folder = await repository.createFolder(name, parentId as string | null);
+    useLibraryStore.getState().setFolders(await repository.listFolders());
+    useShellUiStore.getState().setStatusMessage(`已创建文件夹:${folder.name}`);
+    return folder;
+  });
+
+  registry.register(COMMAND_IDS.libraryRenameFolder, async (...args: unknown[]) => {
+    const repository = dependencies.libraryFolderRepository;
+    if (!repository) throw new Error('书库文件夹 Repository 未配置');
+    const folderId = args[0];
+    const name = args[1];
+    if (typeof folderId !== 'string' || folderId.length === 0) {
+      throw new Error('重命名文件夹命令缺少文件夹 ID');
+    }
+    if (typeof name !== 'string') throw new Error('重命名文件夹命令缺少名称');
+    const folder = await repository.renameFolder(folderId, name);
+    useLibraryStore.getState().setFolders(await repository.listFolders());
+    useShellUiStore.getState().setStatusMessage(`已重命名文件夹:${folder.name}`);
+    return folder;
   });
 
   registry.register(COMMAND_IDS.libraryUpdateMetadata, async (...args: unknown[]) => {

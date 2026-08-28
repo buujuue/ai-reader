@@ -1,5 +1,6 @@
 pub mod annotations;
 pub mod backup;
+pub mod folders;
 pub mod import;
 pub mod markdown_recovery;
 pub mod workspace;
@@ -27,6 +28,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         9,
         include_str!("migrations/0009_annotation_recovery_state.sql"),
     ),
+    (10, include_str!("migrations/0010_library_folders.sql")),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -316,6 +318,7 @@ mod tests {
         assert!(tables.contains(&"materials".to_string()));
         assert!(tables.contains(&"material_overrides".to_string()));
         assert!(tables.contains(&"annotations".to_string()));
+        assert!(tables.contains(&"library_folders".to_string()));
     }
 
     #[test]
@@ -329,7 +332,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]

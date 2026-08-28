@@ -7,7 +7,7 @@
 ## 子目录
 
 - `workspace/`：工作区状态模型（Editor Group、阅读视图、阅读位置）、Repository 接口及内存/Tauri 两个 Adapter。详见 `workspace/CODEMAP.md`。
-- `library/`：阅读材料领域模型、导入 Repository 接口、内建最小 `EpubInspector`（BookDocument 雏形）及内存/Tauri 两个 Adapter。详见 `library/CODEMAP.md`。
+- `library/`：阅读材料与书库文件夹领域模型、导入 Repository、独立 `LibraryFolderRepository`、内建最小 `EpubInspector`（BookDocument 雏形）及内存/Tauri 两个 Adapter。详见 `library/CODEMAP.md`。
 - `annotation/`：材料级批注、版本化文本锚点与 Annotation Repository；负责锚点恢复规则，不依赖具体阅读渲染器。详见 `annotation/CODEMAP.md`。
 - `reader/`：`BookDocument` 统一文档接口、`ReadingLocation`、`EpubBookDocument` 与 `PdfBookDocument` 实现、Foliate 视图宿主窄缝、EPUB 内容清洗器与 `pdf/` PDF 阅读子模块。详见 `reader/CODEMAP.md`。
 - `tauriInvoke.ts`：`TauriInvoke` 窄接口类型，供各 Tauri Adapter 复用。
@@ -27,13 +27,13 @@ domain/
 │   └── ReadingView.tsx   经 BookDocument/Reader Runtime 挂载阅读视图
 └── workbench/
     ├── workbenchCommands.ts  经 WorkspaceRepository 持久化状态
-    ├── libraryCommands.ts    经 ImportRepository 执行导入命令
+    ├── libraryCommands.ts    经 ImportRepository 与 LibraryFolderRepository 执行导入、文件夹命令
     ├── readerCommands.ts     经 ImportRepository + BookDocument 执行打开/翻页/关闭命令
     ├── annotationCommands.ts 经 AnnotationRepository + BookDocument 执行批注读写与锚点恢复
     ├── readerRuntime.ts      持有活 BookDocument 对象
     ├── importBook.ts         编排 stage → inspect → commit
     ├── workspaceStore.ts     引用 WorkspaceState 与默认状态
-    └── libraryStore.ts       引用 ReadingMaterial
+    └── libraryStore.ts       引用 ReadingMaterial 与 LibraryFolder
 ```
 
 ## 依赖方向

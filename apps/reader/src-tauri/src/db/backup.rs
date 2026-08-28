@@ -1578,6 +1578,47 @@ mod tests {
     }
 
     #[test]
+    fn export_snapshot_preserves_library_folder_structure() {
+        let (connection, paths, root) = setup();
+        let folder = crate::db::folders::LibraryFolderRepository::new(&connection)
+            .create("文史", None)
+            .unwrap();
+        crate::db::folders::LibraryFolderRepository::new(&connection)
+            .create("章节", Some(&folder.id))
+            .unwrap();
+        let destination = root.join("library.airbackup");
+
+        BackupRepository::new(&connection)
+            .export(&paths, &destination)
+            .unwrap();
+        let archive = std::fs::read(&destination).unwrap();
+        let database = read_tar_entries(&archive)
+            .into_iter()
+            .find(|(name, _)| name == "database/ai-reader.db")
+            .map(|(_, bytes)| bytes)
+            .unwrap();
+        let snapshot_path = root.join("exported.db");
+        std::fs::write(&snapshot_path, database).unwrap();
+        let snapshot = Connection::open(snapshot_path).unwrap();
+        let mut statement = snapshot
+            .prepare("SELECT name, parent_id FROM library_folders ORDER BY name_key")
+            .unwrap();
+        let rows: Vec<(String, Option<String>)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+
+        assert_eq!(rows.len(), 2);
+        expect_folder(&rows, "文史", None);
+        expect_folder(&rows, "章节", Some(folder.id));
+    }
+
+    fn expect_folder(rows: &[(String, Option<String>)], name: &str, parent_id: Option<String>) {
+        assert!(rows.iter().any(|row| row.0 == name && row.1 == parent_id));
+    }
+
+    #[test]
     fn export_preserves_existing_destination_when_destination_exists() {
         let (connection, paths, root) = setup();
         let destination = root.join("library.airbackup");

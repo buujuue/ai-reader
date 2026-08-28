@@ -34,6 +34,18 @@ pub enum AppError {
     DuplicateMaterial(String),
     #[error("阅读材料标识不合法:{0}")]
     InvalidMaterialId(String),
+    #[error("文件夹名称不合法:{0}")]
+    InvalidLibraryFolderName(String),
+    #[error("文件夹不存在:{0}")]
+    LibraryFolderNotFound(String),
+    #[error("父文件夹不存在:{0}")]
+    LibraryFolderParentNotFound(String),
+    #[error("同一父级下已有同名文件夹,请换一个名称:{0}")]
+    LibraryFolderNameConflict(String),
+    #[error("文件夹已达到最多五层")]
+    LibraryFolderDepthExceeded,
+    #[error("文件夹层级数据存在循环")]
+    LibraryFolderCycle,
     #[error("备份 manifest 无法写入:{0}")]
     BackupManifestSerialize(serde_json::Error),
     #[error("备份目标已存在:{0}")]

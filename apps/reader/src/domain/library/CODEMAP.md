@@ -8,6 +8,9 @@
 - `cover.ts`：来源封面安全边界；限制字节预算，清洗 SVG，并在需要时按原始宽高比缩放到长边 512、以 JPEG 质量 85 输出。
 - `materialFormat.ts`：`formatFromSourceFileName` 从源文件扩展名推断材料格式（epub/pdf/markdown/unknown），`formatLabel` 输出简体中文标签；不依赖跨 TS/Rust 契约新增字段。
 - `libraryFilter.ts`：`filterMaterialsByQuery` 基于有效元数据（title/author）即时筛选书库的纯函数。
+- `libraryFolder.ts`：书库文件夹稳定身份、显式父级、名称清理/校验、五层深度和稳定排序规则。
+- `libraryFolderRepository.ts` / `inMemoryLibraryFolderRepository.ts` / `tauriLibraryFolderRepository.ts`：独立的文件夹 typed Repository、浏览器内存 Adapter 与 Tauri Adapter；创建/改名不接触 UI、SQL 或数据库路径。
+- `libraryFolderRepository.contract.ts` 与对应测试：内存/Tauri Adapter 共用的文件夹新增、排序、重名、非法名称、改名和五层契约。
 - `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。Markdown、EPUB 与 PDF 打开统一使用 `openManagedFileSource`，生产阅读边界不提供通用全量读取；导入暂存、封面和明确的完整文本快照仍走各自专用协议。
 - `managedFileSource.ts`：只读、File/Blob 兼容的托管材料范围来源；维护 128 KiB 分块、128 块 LRU 和同分块并发 Promise，不知道 Tauri 或文件路径。
 - `managedRangeProtocol.ts`：Windows Tauri PDF 的 `MaterialId + 半开范围` 二进制 WebView fetch 适配；只负责协议 URL、平台选择和响应长度校验，不接触数据库或托管路径。
@@ -26,7 +29,7 @@
 
 ## 依赖其它文件夹（树）
 
-`domain/library/` 只依赖 `domain/reader/` 的 Foliate EPUB 语义入口和平台 API；`cover.ts` 的封面派生仍由本域拥有，`epub/` 复用平台 `DOMParser`、`DecompressionStream` 与本目录的预算契约。
+`domain/library/` 只依赖 `domain/reader/` 的 Foliate EPUB 语义入口和平台 API；`libraryFolder.ts` 与文件夹 Repository 不依赖阅读器运行时；`cover.ts` 的封面派生仍由本域拥有，`epub/` 复用平台 `DOMParser`、`DecompressionStream` 与本目录的预算契约。
 
 ## 被谁依赖（树）
 
@@ -38,7 +41,7 @@ domain/library/
 └── workbench/
     ├── importBook.ts     批量编排 importBooks(多选、顺序 stage → inspect → commit)
     ├── readerCommands.ts 打开托管材料前复用 EPUB 预检
-    └── libraryCommands.ts 经 ImportRepository 执行 `library.import` / `library.refresh` / 元数据覆盖与回收站命令
+    └── libraryCommands.ts 经 ImportRepository 与 LibraryFolderRepository 执行 `library.import` / `library.refresh` / 元数据覆盖、回收站和文件夹命令
 
 backupRepository ──► workbench/backupCommands.ts 经 typed 命令编排备份
 managedFileSource ──► tauriImportRepository.ts / inMemoryImportRepository.ts 提供惰性正文来源

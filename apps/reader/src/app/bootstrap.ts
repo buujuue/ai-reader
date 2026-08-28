@@ -2,6 +2,9 @@ import { CommandRegistry } from '../commands/commandRegistry';
 import { createInMemoryImportRepository, addInMemorySource } from '../domain/library/inMemoryImportRepository';
 import type { ImportRepository } from '../domain/library/importRepository';
 import { createDefaultTauriImportRepository } from '../domain/library/tauriImportRepository';
+import type { LibraryFolderRepository } from '../domain/library/libraryFolderRepository';
+import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
+import { createDefaultTauriLibraryFolderRepository } from '../domain/library/tauriLibraryFolderRepository';
 import { buildEpub } from '../domain/library/epub/zipWriter';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import { createLocalStorageAnnotationRepository } from '../domain/annotation/localStorageAnnotationRepository';
@@ -89,6 +92,7 @@ export interface AppServices {
   commands: CommandRegistry;
   workspaceRepository: WorkspaceRepository;
   importRepository: ImportRepository;
+  libraryFolderRepository: LibraryFolderRepository;
   annotationRepository: AnnotationRepository;
   annotationExportDestinationPicker: AnnotationExportDestinationPicker;
   annotationExportWriter: AnnotationExportWriter;
@@ -105,6 +109,7 @@ export interface AppServices {
 export interface AppServicesOptions {
   workspaceRepository?: WorkspaceRepository;
   importRepository?: ImportRepository;
+  libraryFolderRepository?: LibraryFolderRepository;
   annotationRepository?: AnnotationRepository;
   annotationExportDestinationPicker?: AnnotationExportDestinationPicker;
   annotationExportWriter?: AnnotationExportWriter;
@@ -188,8 +193,15 @@ export function createImportServices(): {
   };
 }
 
+export function createLibraryFolderRepository(): LibraryFolderRepository {
+  return isTauriRuntime()
+    ? createDefaultTauriLibraryFolderRepository()
+    : createInMemoryLibraryFolderRepository();
+}
+
 export function createAppServices(options: AppServicesOptions = {}): AppServices {
   const workspaceRepository = options.workspaceRepository ?? createWorkspaceRepository();
+  const libraryFolderRepository = options.libraryFolderRepository ?? createLibraryFolderRepository();
   const annotationRepository =
     options.annotationRepository ??
     (isTauriRuntime()
@@ -262,6 +274,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
   });
   registerLibraryCommands(commands, {
     ...importServices,
+    libraryFolderRepository,
     pdfLib: options.pdfLib,
     annotationRepository,
     workspaceRepository,
@@ -290,6 +303,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     commands,
     workspaceRepository,
     importRepository: importServices.importRepository,
+    libraryFolderRepository,
     annotationRepository,
     annotationExportDestinationPicker,
     annotationExportWriter,

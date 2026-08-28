@@ -153,7 +153,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 1 切片**：Windows 阅读工作区底座（Command Registry、Workspace Repository、typed Tauri 命令边界）。
 - **第 2 切片**：托管导入一份 EPUB（stage → inspect → commit、完整内容指纹、SQLite 落库）。
 - **第 3 切片**：安全打开 EPUB 并重启续读（`BookDocument`/`EpubBookDocument` + `foliate-js`、`ReadingLocation`、Editor Group 标签、位置节流写入与 flush、重启恢复、内容清洗）。
-- **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面网格、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。书库文件夹树与拖拽归类不属于本次原型迁移，另行切片。
+- **第 4 切片**：批导入并逐文件报告、严格查重并恢复中断导入、书库封面网格、元数据覆盖与回收站（`ImportRepository`、`ReadingMaterial`、指纹去重、`library.trash`/`restoreFromTrash`/`purge`）。
 - **第 5 切片**：当前资料目录、规范搜索、导航历史与基本排版（`TocSidebar`、按章节规范 DOM 增量搜索 `canonicalSearch.ts`/`searchStore`/`searchRunner`、文本/安全正则预算与取消、导航历史后退/前进、阅读排版 `typography.ts` 与 `ReaderSettingsDialog`、排版设置持久化）。
 - **第 6 切片**：PDF 固定版式阅读（`pdf/` 子模块：`PdfBookDocument` + `pdfjs-dist`、范围读取并发上限、过期渲染取消、Canvas 内存预算、缩放/页面适配与视口恢复、扫描页无文字层仍显示、`readerSetPdfViewport`/`readerSetPdfFlow` 命令）。对应工单 #14。
 - **第 7 切片**：Markdown 安全导入并阅读（`markdown/` 子模块：`marked` 渲染 + `sanitizeHtmlFragment` 清洗、按一级标题分段、内存 EPUB 组装、`MarkdownBookDocument` 复用 Foliate 宿主、标题/作者提取与文件名兜底、`library.openBook` 读取）。对应工单 #17。
@@ -171,6 +171,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 19 切片**：已导入 PDF 单次打开解析（阅读 Command 复用书库有效元数据，首屏挂载阶段每个新建活动 PDF Runtime 只调用一次 PDF.js `getDocument`；结构损坏、范围失败和初始化失败直接转换为中文诊断）。对应工单 #43，具体决策见 ADR-0030。
 - **第 20 切片**：Windows 大型 PDF 的 MaterialId 二进制范围协议（Tauri `managed-range` custom URI 由 Rust 校验活跃 ready 材料并返回二进制；Windows PDF 通过 WebView fetch 读取，非 Windows/EPUB/Markdown 保持现有 typed range fallback）。对应工单 #44，具体决策见 ADR-0032。
 - **第 21 切片**：窗口化 PDF 滚动布局（滚动模式全页占位、`IntersectionObserver` 视口调度、最近页面优先、最多 3 个在途、最多 12 个已渲染页面、混合尺寸增量修正与阅读位置锚点恢复）；分页模式与 PDF.js 的既有读取/取消/内存边界保持不变。对应工单 #45，具体决策见 ADR-0033。
+- **第 22 切片**：书库文件夹树（独立 `LibraryFolderRepository` 的内存/Tauri Adapter 与真实 SQLite 持久化、稳定文件夹 ID、显式父子关系、五层和名称规则、生产树 UI、创建/取消/改名 Command、树展开状态恢复）；当前材料统一显示在树底部“未归类”，材料移动与文件夹删除留待后续切片。对应工单 #47，具体决策见 ADR-0034、ADR-0035、ADR-0036、ADR-0037。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 - **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 导入检查和阅读均经 `PDFDataRangeTransport` 按需加载，但已导入阅读路径不再先检查后重建 PDF.js 文档；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。Windows Tauri 的 PDF Source 可通过 `managed-range.localhost` 以 MaterialId + 半开范围接收二进制响应；非 Windows、非 PDF 和浏览器降级继续使用现有受控范围回退，Windows 协议授权或读取失败则直接报告可诊断错误，禁止路径暴露或静默全量读取。具体决策见 ADR-0028、ADR-0029、ADR-0030、ADR-0031 与 ADR-0032。

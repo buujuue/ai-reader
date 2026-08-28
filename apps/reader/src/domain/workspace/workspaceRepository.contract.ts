@@ -46,6 +46,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       materialTypography: {
         'mat-1': { fontSize: 22, flow: 'scrolled' },
       },
+      expandedLibraryFolderIds: ['folder-1'],
     };
 
     await repository.saveState(state);
@@ -66,6 +67,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: {},
+      expandedLibraryFolderIds: [],
     });
 
     await repository.saveState({
@@ -79,6 +81,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: {},
+      expandedLibraryFolderIds: [],
     });
 
     await expect(repository.loadState()).resolves.toEqual({
@@ -92,6 +95,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       editorGroups: DEFAULT_WORKSPACE_STATE.editorGroups,
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: {},
+      expandedLibraryFolderIds: [],
     });
   });
 }

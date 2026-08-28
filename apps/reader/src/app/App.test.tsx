@@ -30,6 +30,8 @@ import { useLibraryStore } from '../workbench/libraryStore';
 import { useAnnotationStore } from '../workbench/annotationStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { createInMemoryAnnotationRepository } from '../domain/annotation/inMemoryAnnotationRepository';
+import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
+import type { LibraryFolder } from '../domain/library/libraryFolder';
 import type { Annotation } from '../domain/annotation/annotation';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
@@ -456,6 +458,92 @@ describe('阅读工作台外壳', () => {
 
     await user.click(screen.getByRole('button', { name: '关闭材料批注面板' }));
     await waitFor(() => expect(document.activeElement).toBe(materialMenuButton));
+  });
+
+  it('生产书库树支持创建、取消、改名、重名校验、五层限制并在重启后恢复', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+    });
+    const user = userEvent.setup();
+    const { unmount } = renderApp(services);
+
+    await waitFor(() => expect(screen.getByRole('tree', { name: '书库文件夹树' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
+    await user.type(screen.getByRole('textbox', { name: '新建文件夹名称' }), '取消的文件夹');
+    await user.keyboard('{Escape}');
+    await expect(folderRepository.listFolders()).resolves.toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
+    await user.type(screen.getByRole('textbox', { name: '新建文件夹名称' }), '  文史  ');
+    await user.keyboard('{Enter}');
+    const root = await waitFor(async () => {
+      const all = await folderRepository.listFolders();
+      expect(all).toHaveLength(1);
+      return all[0] as LibraryFolder;
+    });
+    expect(root.name).toBe('文史');
+
+    await user.click(screen.getByRole('button', { name: '在“文史”中新建子文件夹' }));
+    await user.type(screen.getByRole('textbox', { name: '新建子文件夹名称' }), '哲学');
+    await user.keyboard('{Enter}');
+    const child = await waitFor(async () => {
+      const all = await folderRepository.listFolders();
+      expect(all).toHaveLength(2);
+      return all.find((folder) => folder.parentId === root.id) as LibraryFolder;
+    });
+    expect(child.name).toBe('哲学');
+
+    await user.click(screen.getByRole('button', { name: '重命名 哲学' }));
+    const renameInput = screen.getByRole('textbox', { name: '重命名文件夹' });
+    await user.clear(renameInput);
+    await user.type(renameInput, '思想史');
+    await user.keyboard('{Enter}');
+    await waitFor(async () => expect((await folderRepository.listFolders()).find((folder) => folder.id === child.id)?.name).toBe('思想史'));
+
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
+    await user.type(screen.getByRole('textbox', { name: '新建文件夹名称' }), '文史');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('已有同名文件夹'));
+    await user.keyboard('{Escape}');
+
+    const chainIds = [root.id, child.id];
+    let parentId = child.id;
+    for (let depth = 3; depth <= 5; depth += 1) {
+      const created = await services.commands.execute(
+        COMMAND_IDS.libraryCreateFolder,
+        `第${depth}层`,
+        parentId,
+      ) as LibraryFolder;
+      parentId = created.id;
+      chainIds.push(parentId);
+    }
+    for (const folderId of chainIds) {
+      await services.commands.execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folderId, true);
+    }
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /新建子文件夹.*已达到最多五层/ })).toBeDisabled();
+    });
+    await expect(
+      services.commands.execute(COMMAND_IDS.libraryCreateFolder, '第六层', parentId),
+    ).rejects.toThrow('已达到最多五层');
+
+    const persistedFolders = await folderRepository.listFolders();
+    unmount();
+    useLibraryStore.getState().resetToDefault();
+    useWorkspaceStore.getState().resetToDefault();
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+    });
+    renderApp(services);
+    await waitFor(() => {
+      expect(screen.getByRole('treeitem', { name: /文史/ })).toBeInTheDocument();
+      expect(screen.getByText('未归类')).toBeInTheDocument();
+    });
+    await expect(folderRepository.listFolders()).resolves.toEqual(persistedFolders);
   });
 
   it('材料批注覆盖面板关闭后焦点归还且不写入工作区状态', async () => {

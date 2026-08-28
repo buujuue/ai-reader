@@ -37,6 +37,7 @@ export interface WorkspaceStoreState {
   globalReadingTypography: ReadingTypography;
   /** 阅读材料级排版覆盖;键为 BookId。 */
   materialTypography: Record<string, Partial<ReadingTypography>>;
+  expandedLibraryFolderIds: string[];
   setPrimarySidebarVisible: (visible: boolean) => void;
   setTocVisible: (visible: boolean) => void;
   setActivityPanelWidth: (width: number) => void;
@@ -48,6 +49,7 @@ export interface WorkspaceStoreState {
   setGlobalReadingTypography: (settings: ReadingTypography) => void;
   setMaterialTypography: (materialId: string, override: Partial<ReadingTypography>) => void;
   resetMaterialTypography: (materialId: string) => void;
+  setLibraryFolderExpanded: (folderId: string, expanded: boolean) => void;
   getEffectiveTypography: (materialId: string) => ReadingTypography;
   openView: (materialId: string) => string;
   closeView: (viewId: string) => void;
@@ -146,6 +148,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
   globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
   materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
+  expandedLibraryFolderIds: [...(DEFAULT_WORKSPACE_STATE.expandedLibraryFolderIds ?? [])],
 
   setPrimarySidebarVisible: (visible) =>
     set((state) => ({
@@ -222,6 +225,14 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       const next = { ...state.materialTypography };
       delete next[materialId];
       return { materialTypography: next };
+    }),
+
+  setLibraryFolderExpanded: (folderId, expanded) =>
+    set((state) => {
+      const current = new Set(state.expandedLibraryFolderIds);
+      if (expanded) current.add(folderId);
+      else current.delete(folderId);
+      return { expandedLibraryFolderIds: [...current] };
     }),
 
   getEffectiveTypography: (materialId) => {
@@ -416,6 +427,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       editorGroups: structuredClone(normalized.editorGroups),
       globalReadingTypography: state.globalReadingTypography,
       materialTypography: structuredClone(state.materialTypography),
+      expandedLibraryFolderIds: Array.isArray(state.expandedLibraryFolderIds)
+        ? [...new Set(state.expandedLibraryFolderIds.filter((id) => typeof id === 'string'))]
+        : [],
     });
   },
 
@@ -430,5 +444,6 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       editorGroups: structuredClone(DEFAULT_WORKSPACE_STATE.editorGroups),
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
+      expandedLibraryFolderIds: [...(DEFAULT_WORKSPACE_STATE.expandedLibraryFolderIds ?? [])],
     }),
 }));

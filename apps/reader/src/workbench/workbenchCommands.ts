@@ -41,6 +41,7 @@ export function serializeWorkspaceState(): WorkspaceState {
     editorGroups: store.editorGroups,
     globalReadingTypography: store.globalReadingTypography,
     materialTypography: store.materialTypography,
+    expandedLibraryFolderIds: store.expandedLibraryFolderIds,
   };
 }
 
@@ -187,6 +188,21 @@ export function registerWorkbenchCommands(
       });
     }
     useWorkspaceStore.getState().setActivityPanelWidth(nextWidth);
+  });
+
+  registry.register(COMMAND_IDS.workbenchSetLibraryFolderExpanded, async (...args: unknown[]) => {
+    const folderId = args[0];
+    const expanded = args[1];
+    if (typeof folderId !== 'string' || folderId.length === 0 || typeof expanded !== 'boolean') return;
+    const current = serializeWorkspaceState();
+    const folderIds = new Set(current.expandedLibraryFolderIds ?? []);
+    if (expanded) folderIds.add(folderId);
+    else folderIds.delete(folderId);
+    await dependencies.workspaceRepository.saveState({
+      ...current,
+      expandedLibraryFolderIds: [...folderIds],
+    });
+    useWorkspaceStore.getState().setLibraryFolderExpanded(folderId, expanded);
   });
 
   registry.register(COMMAND_IDS.workbenchOpenAnnotationPanel, async (...args: unknown[]) => {
