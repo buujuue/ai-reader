@@ -107,6 +107,7 @@ describe('阅读工作台外壳', () => {
     useReaderRuntime.getState().closeAll();
     useAnnotationStore.getState().resetToDefault();
     useShellUiStore.getState().closeAnnotationPanel();
+    useShellUiStore.getState().closeFolderDeleteConfirm();
     useShellUiStore.getState().restoreCompactActivityPanel();
   });
 
@@ -595,6 +596,154 @@ describe('阅读工作台外壳', () => {
     await user.click(screen.getByRole('button', { name: /回收站/ }));
     await user.click(screen.getByRole('button', { name: /恢复 示例书/ }));
     await waitFor(() => expect(useLibraryStore.getState().materials[0]?.folderId).toBe(folder.id));
+  });
+
+  it('删除文件夹前明确确认,取消不变更,确认后递归移除并保留打开材料', async () => {
+    services = createAppServices({
+      workspaceRepository: repository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
+    await user.type(screen.getByRole('textbox', { name: '新建文件夹名称' }), '待删除');
+    await user.keyboard('{Enter}');
+    const folder = await waitFor(async () => {
+      const folders = await services.libraryFolderRepository.listFolders();
+      expect(folders).toHaveLength(1);
+      return folders[0] as LibraryFolder;
+    });
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
+    await user.click(screen.getByRole('button', { name: '打开 示例书' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().editorGroups[0]?.views).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: '书库更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '移动到…' }));
+    await user.click(screen.getByRole('menuitem', { name: '移动到 待删除' }));
+    await waitFor(() => expect(useLibraryStore.getState().materials[0]?.folderId).toBe(folder.id));
+    await services.commands.execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folder.id, true);
+
+    await user.click(screen.getByRole('button', { name: '删除 待删除' }));
+    const dialog = screen.getByRole('dialog', { name: '删除书库文件夹' });
+    expect(dialog).toHaveTextContent('子文件夹结构将无法恢复');
+    expect(dialog).toHaveTextContent('书籍会转为未归类');
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    expect(await services.libraryFolderRepository.listFolders()).toHaveLength(1);
+    expect(useLibraryStore.getState().materials[0]?.folderId).toBe(folder.id);
+
+    await user.click(screen.getByRole('button', { name: '删除 待删除' }));
+    await user.click(screen.getByRole('button', { name: '删除文件夹' }));
+    await waitFor(async () => {
+      expect(await services.libraryFolderRepository.listFolders()).toEqual([]);
+      expect(useLibraryStore.getState().materials[0]?.folderId).toBeNull();
+    });
+    expect(screen.getByText('未归类')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开 示例书' })).toBeInTheDocument();
+    expect(useWorkspaceStore.getState().editorGroups[0]?.views).toHaveLength(1);
+    expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual([]);
+  });
+
+  it('应用级覆盖五层子树、回收站材料与重启恢复', async () => {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, 'active.md', new TextEncoder().encode('# 活跃材料'));
+    addInMemorySource(sources, 'trashed.md', new TextEncoder().encode('# 回收站材料'));
+    const importRepository = createInMemoryImportRepository(sources);
+    const folderRepository = createInMemoryLibraryFolderRepository([], {
+      prepareDeleteSubtree: (folderIds) =>
+        importRepository.prepareClearMaterialFolderAssignments(folderIds),
+    });
+    const root = await folderRepository.createFolder('五层删除根', null);
+    const folderIds = [root.id];
+    let parentId = root.id;
+    for (let depth = 2; depth <= 5; depth += 1) {
+      const folder = await folderRepository.createFolder(`第${depth}层`, parentId);
+      folderIds.push(folder.id);
+      parentId = folder.id;
+    }
+    const activeStaged = await importRepository.stageImport('active.md');
+    const active = await importRepository.commitImport(activeStaged, {
+      title: '活跃材料',
+      author: '作者甲',
+      language: 'zh',
+    });
+    const trashedStaged = await importRepository.stageImport('trashed.md');
+    const trashed = await importRepository.commitImport(trashedStaged, {
+      title: '回收站材料',
+      author: '作者乙',
+      language: 'zh',
+    });
+    await importRepository.moveMaterialToFolder(active.id, parentId);
+    await importRepository.moveMaterialToFolder(trashed.id, parentId);
+    const trashedMaterial = await importRepository.trashMaterial(trashed.id);
+
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository,
+      filePicker: createInMemoryFilePicker([]),
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const user = userEvent.setup();
+    const { unmount } = renderApp(services);
+    await waitFor(() => expect(screen.getByRole('tree', { name: '书库文件夹树' })).toBeInTheDocument());
+    for (const folderId of folderIds) {
+      await services.commands.execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folderId, true);
+    }
+    await user.click(screen.getByRole('button', { name: '打开 活跃材料' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().editorGroups[0]?.views).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: '删除 五层删除根' }));
+    await user.click(screen.getByRole('button', { name: '删除文件夹' }));
+    await waitFor(async () => expect(await folderRepository.listFolders()).toEqual([]));
+    expect((await importRepository.listMaterials())[0]?.folderId).toBeNull();
+    expect((await importRepository.listTrashed())[0]?.folderId).toBeNull();
+    expect(useWorkspaceStore.getState().editorGroups[0]?.views).toHaveLength(1);
+
+    unmount();
+    useLibraryStore.getState().resetToDefault();
+    useWorkspaceStore.getState().resetToDefault();
+    useReaderRuntime.getState().closeAll();
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository,
+      filePicker: createInMemoryFilePicker([]),
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    renderApp(services);
+    await waitFor(() => {
+      expect(screen.queryByRole('treeitem', { name: /五层删除根/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '打开 活跃材料' })).toBeInTheDocument();
+    });
+    expect((await importRepository.listTrashed())[0]).toMatchObject({
+      id: trashedMaterial.id,
+      folderId: null,
+    });
+    expect((await repository.loadState()).expandedLibraryFolderIds).toEqual([]);
+  });
+
+  it('应用级文件夹删除失败时保留结构并显示中文错误', async () => {
+    const folder: LibraryFolder = { id: 'failed-folder', name: '失败目标', parentId: null };
+    const folderRepository = createInMemoryLibraryFolderRepository([folder]);
+    vi.spyOn(folderRepository, 'deleteFolder').mockRejectedValue(
+      new Error('数据库约束失败,请重试'),
+    );
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: /失败目标/ })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '删除 失败目标' }));
+    await user.click(screen.getByRole('button', { name: '删除文件夹' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('数据库约束失败,请重试'));
+    expect(await folderRepository.listFolders()).toEqual([folder]);
+    expect(screen.getByRole('treeitem', { name: /失败目标/ })).toBeInTheDocument();
   });
 
   it('材料批注覆盖面板关闭后焦点归还且不写入工作区状态', async () => {

@@ -14,6 +14,7 @@ const baseState: AndroidBackState = {
   versionMigrationSnapshotDialogOpen: false,
   metadataDialogOpen: false,
   purgeDialogOpen: false,
+  folderDeleteDialogOpen: false,
   externalLinkDialogOpen: false,
   typographyDialogOpen: false,
   noteDialogOpen: false,
@@ -77,5 +78,11 @@ describe('resolveAndroidBackAction', () => {
 
   it('没有次级状态时把返回键交给 WebView，由平台决定历史后退或退出', () => {
     expect(resolveAndroidBackAction(baseState)).toEqual({ kind: 'delegateToWebView' });
+  });
+
+  it('文件夹删除确认框优先由返回键关闭', () => {
+    expect(
+      resolveAndroidBackAction({ ...baseState, folderDeleteDialogOpen: true }),
+    ).toEqual({ kind: 'dismissFolderDeleteDialog' });
   });
 });

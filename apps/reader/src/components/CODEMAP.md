@@ -10,7 +10,7 @@
 - `ActivityBar.tsx`：左侧活动栏只提供“书库”与“目录”两个互斥入口，分别执行 `workbench.togglePrimarySidebar` 与 `workbench.toggleToc`；导入动作位于真实书库面板与文件菜单。
 - `SidebarPanelHeader.tsx`：书库与目录共用的固定顶栏结构，统一标题、图标、右侧操作槽、行高和触控命中区，不承载具体业务行为。
 - `SidebarResizeHandle.tsx`：书库与目录共用的可拖动/可键盘调整宽度手柄；拖动过程更新活动面板宽度，结束时经 `workbench.setActivityPanelWidth` 持久化，不直接访问 Repository。
-- `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，阅读材料按唯一 `folderId` 作为叶子节点，未归类材料固定在树底部且可折叠；材料按有效标题稳定排序，文件夹名/材料标题/作者筛选会保留层级路径。材料更多菜单提供“移动到……”及所有已有文件夹/未归类目标，移动执行 `library.moveMaterial`；顶层/子文件夹新建和改名均执行稳定 Command，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。
+- `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，阅读材料按唯一 `folderId` 作为叶子节点，未归类材料固定在树底部且可折叠；材料按有效标题稳定排序，文件夹名/材料标题/作者筛选会保留层级路径。材料更多菜单提供“移动到……”及所有已有文件夹/未归类目标，移动执行 `library.moveMaterial`；顶层/子文件夹新建、改名和删除均执行稳定 Command，删除由 `FolderDeleteConfirmDialog` 一次明确确认，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。
 - `MaterialCover.tsx`：封面渲染，经 `importRepository.readCover` 读取托管封面字节并以对象 URL 渲染；默认 IntersectionObserver 懒加载（进入视口才解码）、卸载时 revoke 释放；无封面复用工作区底色和文字颜色显示书名占位，加载失败显示「封面加载失败」。
 - `EditorArea.tsx`：编辑器区，按持久化拆分方向渲染最多两个 Editor Group；每组直接承载活动 `ReadingView`，不再渲染标签栏。点击编辑器组和紧凑布局组切换按钮通过 Command 维护当前组与 Runtime；无活动视图时显示空状态占位。
 - `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；PDF 顶层文档的滚轮/左右点击/轻触只在该 ReadingView 正文容器内接入统一阅读输入，工具栏、搜索栏、对话框和其它 Editor Group 不会被劫持；托管副本缺失时由 Reader Runtime 显示明确的“正文当前不可用”错误并保留标签/用户数据；阅读工具栏提供阅读排版与 Markdown 源码模式，存在拆分组时在材料更多操作左侧提供关闭当前拆分区的 X；材料更多菜单提供向右/向下拆分、查看/导出批注与设置主要材料；导航历史仍由目录、搜索和 Reader Command 维护，不在常驻工具栏显示前进/后退按钮。Markdown 视图处于源码模式时渲染 `MarkdownSourceEditor` 而非阅读容器。Reader 外部不直接操作 Foliate View。
@@ -23,6 +23,7 @@
 - `TocSidebar.tsx`：目录侧栏，展示活动阅读视图的 `BookDocument.getTOC()` 分层目录；点击条目经 `reader.goToHref` 执行显式跳转（压入导航历史），并在 `getTOCSource()` 或条目标记表明为派生目录时提示“正文推导”及非权威说明；由 Workspace Store 的 `tocVisible` 控制显隐。
 - `MetadataEditorDialog.tsx`：元数据编辑器对话框。覆盖标题/作者/封面并一键恢复来源元数据；所有变更经 `library.updateMetadata` / `library.setCover` / `library.removeCover` / `library.restoreMetadata` 命令执行，封面预览经 `importRepository.readCover` 读取。
 - `PurgeConfirmDialog.tsx`：永久删除二次确认对话框。用户需输入书名才可执行 `library.purge`，取消或关闭不改变任何数据；由 `shellUiStore.purgeMaterialId` 控制开关。
+- `FolderDeleteConfirmDialog.tsx`：书库文件夹子树删除确认对话框。明确说明子树不可恢复但材料与阅读数据保留并转为未归类，确认后执行 `library.deleteFolder`，失败时保留对话框显示中文错误；由 `shellUiStore.folderDeleteId` 控制开关。
 - `ExternalLinkDialog.tsx`：外部链接确认对话框。书内点击的外部链接先展示目标，确认后经 `reader.openExternalUrl` 交给系统浏览器（ADR-0010）；由 `shellUiStore.externalLinkUrl` 控制开关。
 - `ReaderSettingsDialog.tsx`：阅读排版对话框。调整当前激活阅读视图所属材料的字体、字号、行距、页边距、主题与分页/滚动模式，并可将材料级覆盖恢复为全局默认；所有变更经 `reader.typography.apply` / `reader.typography.reset` 命令执行并由 Workspace Store 持久化；由 `shellUiStore.typographyEditorViewId` 控制开关。
 - `StatusBar.tsx`：底部状态栏，展示当前激活材料的 `AI Reader · 书名` 身份文案与 `shellUiStore.statusMessage`；批注软删除成功后提供一次性“撤销删除”入口，经 `annotation.restore` Command 恢复。
@@ -42,7 +43,7 @@ components/
     ├── markdownSessionStore.ts  MarkdownSourceEditor 读写共享会话缓冲区
     ├── searchStore.ts           SearchBar 读视图搜索状态
     ├── libraryStore.ts          PrimarySidebar 读 folders/materials/trashedMaterials;StatusBar 读当前材料元数据;ActivityBar 读 importing
-    ├── shellUiStore.ts          ApplicationBar/AnnotationPanel 读运行时面板状态;StatusBar 读 statusMessage;MarkdownDirtyCloseDialog 读脏关闭状态;MarkdownRecoveryDialog 读恢复队列
+    ├── shellUiStore.ts          ApplicationBar/AnnotationPanel 读运行时面板状态;StatusBar 读 statusMessage;MarkdownDirtyCloseDialog/FolderDeleteConfirmDialog 读对话框状态;MarkdownRecoveryDialog 读恢复队列
     └── workspaceStore.ts        StatusBar 读当前激活 Editor Group/ReadingView;ReadingView 读拆分与活动组
 ```
 
@@ -63,6 +64,7 @@ app/App.tsx  ──►  components/
                   ├── MarkdownDirtyCloseDialog
                   ├── MarkdownRecoveryDialog
                   ├── PurgeConfirmDialog
+                  ├── FolderDeleteConfirmDialog
                   ├── ExternalLinkDialog
                   ├── ReaderSettingsDialog
                   └── StatusBar

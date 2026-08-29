@@ -5,6 +5,7 @@ import { AnnotationPanel } from '../components/AnnotationSidebar';
 import { ApplicationBar } from '../components/ApplicationBar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
+import { FolderDeleteConfirmDialog } from '../components/FolderDeleteConfirmDialog';
 import { MarkdownDirtyCloseDialog } from '../components/MarkdownDirtyCloseDialog';
 import { MarkdownRecoveryDialog } from '../components/MarkdownRecoveryDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
@@ -61,6 +62,7 @@ export function App() {
   );
   const metadataDialogOpen = useShellUiStore((state) => state.metadataEditorMaterialId !== null);
   const purgeDialogOpen = useShellUiStore((state) => state.purgeMaterialId !== null);
+  const folderDeleteDialogOpen = useShellUiStore((state) => state.folderDeleteId !== null);
   const externalLinkDialogOpen = useShellUiStore((state) => state.externalLinkUrl !== null);
   const typographyDialogOpen = useShellUiStore((state) => state.typographyEditorViewId !== null);
   const noteDialogOpen = useShellUiStore((state) => state.noteEditorTarget !== null);
@@ -154,6 +156,7 @@ export function App() {
           versionMigrationSnapshotDialogOpen,
           metadataDialogOpen,
           purgeDialogOpen,
+          folderDeleteDialogOpen,
           externalLinkDialogOpen,
           typographyDialogOpen,
           noteDialogOpen,
@@ -177,6 +180,9 @@ export function App() {
             break;
           case 'dismissPurgeDialog':
             void commands.execute(COMMAND_IDS.shellDismissDialog, 'purge').catch(() => undefined);
+            break;
+          case 'dismissFolderDeleteDialog':
+            void commands.execute(COMMAND_IDS.shellDismissDialog, 'folderDelete').catch(() => undefined);
             break;
           case 'dismissExternalLinkDialog':
             void commands
@@ -234,6 +240,7 @@ export function App() {
     metadataDialogOpen,
     noteDialogOpen,
     purgeDialogOpen,
+    folderDeleteDialogOpen,
     recoveryDialogOpen,
     versionMigrationDialogOpen,
     versionMigrationSnapshotDialogOpen,
@@ -400,6 +407,7 @@ export function App() {
       <MarkdownRecoveryDialog />
       <VersionMigrationDialog />
       <PurgeConfirmDialog />
+      <FolderDeleteConfirmDialog />
       <ExternalLinkDialog />
       <ReaderSettingsDialog />
       <NoteEditorDialog />

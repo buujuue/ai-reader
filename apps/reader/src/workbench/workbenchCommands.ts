@@ -20,6 +20,7 @@ type DismissibleShellDialog =
   | 'markdownDirtyClose'
   | 'metadata'
   | 'purge'
+  | 'folderDelete'
   | 'externalLink'
   | 'typography'
   | 'note'
@@ -68,6 +69,9 @@ export function registerWorkbenchCommands(
         break;
       case 'purge':
         useShellUiStore.getState().closePurgeConfirm();
+        break;
+      case 'folderDelete':
+        useShellUiStore.getState().closeFolderDeleteConfirm();
         break;
       case 'externalLink':
         useShellUiStore.getState().closeExternalLinkConfirm();

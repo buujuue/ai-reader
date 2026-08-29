@@ -16,6 +16,12 @@ import { emptyMaterialOverride } from './material';
 import { formatFromSourceFileName } from './materialFormat';
 import { ManagedFileSource, managedFileTypeFromName } from './managedFileSource';
 import { sniffImageMimeType } from './cover';
+import type { InMemoryDeletionTransaction } from './libraryFolderRepository';
+
+export interface InMemoryImportRepository extends ImportRepository {
+  /** 与内存文件夹 Adapter 组合时,准备可提交/可回滚的材料归属清理。 */
+  prepareClearMaterialFolderAssignments(folderIds: readonly string[]): InMemoryDeletionTransaction;
+}
 
 /** 内部存储:材料身份与来源快照(不可编辑)分开保存,覆盖值独立保存。 */
 interface InternalMaterial {
@@ -35,7 +41,7 @@ interface InternalMaterial {
  */
 export function createInMemoryImportRepository(
   sources: Map<string, Uint8Array> = new Map(),
-): ImportRepository {
+): InMemoryImportRepository {
   const materials = new Map<string, InternalMaterial>();
   const byIdentity = new Map<string, InternalMaterial>();
   const managedBytes = new Map<string, Uint8Array>();
@@ -178,6 +184,32 @@ export function createInMemoryImportRepository(
       }
       internal.folderId = folderId;
       return toMaterial(internal);
+    },
+
+    prepareClearMaterialFolderAssignments(folderIds): InMemoryDeletionTransaction {
+      const deletedFolderIds = new Set(folderIds);
+      const previousFolderIds = new Map<string, string | null>();
+      for (const internal of materials.values()) {
+        if (internal.folderId !== null && deletedFolderIds.has(internal.folderId)) {
+          previousFolderIds.set(internal.id, internal.folderId);
+        }
+      }
+      let committed = false;
+      return {
+        commit() {
+          for (const internal of materials.values()) {
+            if (previousFolderIds.has(internal.id)) internal.folderId = null;
+          }
+          committed = true;
+        },
+        rollback() {
+          if (!committed) return;
+          for (const [materialId, folderId] of previousFolderIds) {
+            const internal = materials.get(materialId);
+            if (internal) internal.folderId = folderId;
+          }
+        },
+      };
     },
 
     async listTrashed(): Promise<ReadingMaterial[]> {

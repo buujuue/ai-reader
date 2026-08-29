@@ -79,6 +79,31 @@ export function libraryFolderRepositoryContract(makeRepository: LibraryFolderRep
     await expect(repository.createFolder('第六层', parentId)).rejects.toThrow('已达到最多五层');
   });
 
+  it('删除空文件夹并递归删除深层子树,不影响同级文件夹', async () => {
+    const repository = makeRepository();
+    const root = await repository.createFolder('目标', null);
+    const child = await repository.createFolder('子级', root.id);
+    const grandchild = await repository.createFolder('孙级', child.id);
+    const sibling = await repository.createFolder('保留', null);
+
+    await expect(repository.deleteFolder(root.id)).resolves.toEqual({
+      deletedFolderIds: expect.arrayContaining([root.id, child.id, grandchild.id]),
+    });
+    await expect(repository.listFolders()).resolves.toEqual([sibling]);
+    await expect(repository.deleteFolder(sibling.id)).resolves.toEqual({
+      deletedFolderIds: [sibling.id],
+    });
+    await expect(repository.listFolders()).resolves.toEqual([]);
+  });
+
+  it('删除不存在的文件夹失败且不改变已有结构', async () => {
+    const repository = makeRepository();
+    const folder = await repository.createFolder('保留', null);
+
+    await expect(repository.deleteFolder('missing-folder')).rejects.toThrow('文件夹不存在');
+    await expect(repository.listFolders()).resolves.toEqual([folder]);
+  });
+
   it.each([
     ['', '文件夹名称不能为空'],
     ['a/b', '文件夹名称不能包含路径分隔符'],

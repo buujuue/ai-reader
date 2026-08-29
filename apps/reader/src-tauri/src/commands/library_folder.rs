@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::db::folders::{LibraryFolder, LibraryFolderRepository};
+use crate::db::folders::{LibraryFolder, LibraryFolderDeletionResult, LibraryFolderRepository};
 use crate::db::DatabaseHandle;
 use crate::error::AppError;
 
@@ -31,4 +31,13 @@ pub fn rename_library_folder(
     database.with_connection(|connection| {
         LibraryFolderRepository::new(connection).rename(&folder_id, &name)
     })
+}
+
+#[tauri::command]
+pub fn delete_library_folder(
+    database: State<'_, DatabaseHandle>,
+    folder_id: String,
+) -> Result<LibraryFolderDeletionResult, AppError> {
+    database
+        .with_connection(|connection| LibraryFolderRepository::new(connection).delete(&folder_id))
 }

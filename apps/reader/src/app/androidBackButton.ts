@@ -12,6 +12,7 @@ export interface AndroidBackState {
   versionMigrationSnapshotDialogOpen: boolean;
   metadataDialogOpen: boolean;
   purgeDialogOpen: boolean;
+  folderDeleteDialogOpen: boolean;
   externalLinkDialogOpen: boolean;
   typographyDialogOpen: boolean;
   noteDialogOpen: boolean;
@@ -26,6 +27,7 @@ export type AndroidBackAction =
   | { kind: 'dismissVersionMigrationSnapshots' }
   | { kind: 'dismissMetadataDialog' }
   | { kind: 'dismissPurgeDialog' }
+  | { kind: 'dismissFolderDeleteDialog' }
   | { kind: 'dismissExternalLinkDialog' }
   | { kind: 'dismissTypographyDialog' }
   | { kind: 'dismissNoteDialog' }
@@ -50,6 +52,7 @@ export function resolveAndroidBackAction(state: AndroidBackState): AndroidBackAc
   }
   if (state.metadataDialogOpen) return { kind: 'dismissMetadataDialog' };
   if (state.purgeDialogOpen) return { kind: 'dismissPurgeDialog' };
+  if (state.folderDeleteDialogOpen) return { kind: 'dismissFolderDeleteDialog' };
   if (state.externalLinkDialogOpen) return { kind: 'dismissExternalLinkDialog' };
   if (state.typographyDialogOpen) return { kind: 'dismissTypographyDialog' };
   if (state.noteDialogOpen) return { kind: 'dismissNoteDialog' };

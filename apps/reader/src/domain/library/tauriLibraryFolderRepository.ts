@@ -2,12 +2,14 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type { TauriInvoke } from '../tauriInvoke';
 import type { LibraryFolderRepository } from './libraryFolderRepository';
+import type { LibraryFolderDeletionResult } from './libraryFolderRepository';
 import type { LibraryFolder } from './libraryFolder';
 
 export const LIBRARY_FOLDER_COMMAND_NAMES = {
   list: 'list_library_folders',
   create: 'create_library_folder',
   rename: 'rename_library_folder',
+  delete: 'delete_library_folder',
 } as const;
 
 function assertFolderShape(raw: unknown): LibraryFolder {
@@ -35,6 +37,19 @@ function assertFolderList(raw: unknown): LibraryFolder[] {
   return raw.map(assertFolderShape);
 }
 
+function assertDeletionResult(raw: unknown): LibraryFolderDeletionResult {
+  const candidate = raw as Partial<LibraryFolderDeletionResult> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    !Array.isArray(candidate.deletedFolderIds) ||
+    candidate.deletedFolderIds.some((id) => typeof id !== 'string')
+  ) {
+    throw new Error('文件夹删除载荷格式错误');
+  }
+  return { deletedFolderIds: [...candidate.deletedFolderIds] };
+}
+
 export function createTauriLibraryFolderRepository(invokeFn: TauriInvoke): LibraryFolderRepository {
   return {
     async listFolders(): Promise<LibraryFolder[]> {
@@ -48,6 +63,11 @@ export function createTauriLibraryFolderRepository(invokeFn: TauriInvoke): Libra
     async renameFolder(folderId: string, name: string): Promise<LibraryFolder> {
       return assertFolderShape(
         await invokeFn(LIBRARY_FOLDER_COMMAND_NAMES.rename, { folderId, name }),
+      );
+    },
+    async deleteFolder(folderId: string): Promise<LibraryFolderDeletionResult> {
+      return assertDeletionResult(
+        await invokeFn(LIBRARY_FOLDER_COMMAND_NAMES.delete, { folderId }),
       );
     },
   };

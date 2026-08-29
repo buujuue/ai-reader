@@ -22,6 +22,10 @@ function createFakeTauriBackend(): TauriInvoke {
         const payload = args as { folderId: string; name: string };
         return backend.renameFolder(payload.folderId, payload.name);
       }
+      case LIBRARY_FOLDER_COMMAND_NAMES.delete: {
+        const payload = args as { folderId: string };
+        return backend.deleteFolder(payload.folderId);
+      }
       default:
         throw new Error(`unknown tauri command: ${command}`);
     }
@@ -38,17 +42,20 @@ describe('TauriLibraryFolderRepository 边界映射', () => {
     const repository = createTauriLibraryFolderRepository(async (command, args) => {
       calls.push({ command, args });
       if (command === LIBRARY_FOLDER_COMMAND_NAMES.list) return [];
+      if (command === LIBRARY_FOLDER_COMMAND_NAMES.delete) return { deletedFolderIds: ['folder-1'] };
       return { id: 'folder-1', name: '阅读', parentId: null };
     });
 
     await repository.listFolders();
     await repository.createFolder('阅读', null);
     await repository.renameFolder('folder-1', '新名');
+    await repository.deleteFolder('folder-1');
 
     expect(calls).toEqual([
       { command: 'list_library_folders', args: undefined },
       { command: 'create_library_folder', args: { name: '阅读', parentId: null } },
       { command: 'rename_library_folder', args: { folderId: 'folder-1', name: '新名' } },
+      { command: 'delete_library_folder', args: { folderId: 'folder-1' } },
     ]);
   });
 

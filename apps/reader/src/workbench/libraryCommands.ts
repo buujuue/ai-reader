@@ -8,6 +8,7 @@ import {
 } from '../domain/reader/foliateViewHost';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import type { LibraryFolderRepository } from '../domain/library/libraryFolderRepository';
+import { collectLibraryFolderSubtreeIds } from '../domain/library/libraryFolder';
 import type { StagedImport } from '../domain/library/material';
 import { serializeWorkspaceState } from './workbenchCommands';
 import { useAnnotationStore } from './annotationStore';
@@ -30,6 +31,12 @@ function normalizeOverrideValue(value: string | null): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+function commandErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error.length > 0) return error;
+  return fallback;
 }
 
 /** 书库相关的稳定 Command 唯一实现入口。TS 只经 typed ImportRepository 调用平台能力。 */
@@ -87,6 +94,82 @@ export function registerLibraryCommands(
     useLibraryStore.getState().setFolders(await repository.listFolders());
     useShellUiStore.getState().setStatusMessage(`已重命名文件夹:${folder.name}`);
     return folder;
+  });
+
+  registry.register(COMMAND_IDS.libraryDeleteFolder, async (...args: unknown[]) => {
+    const repository = dependencies.libraryFolderRepository;
+    if (!repository) throw new Error('书库文件夹 Repository 未配置');
+    const folderId = args[0];
+    if (typeof folderId !== 'string' || folderId.length === 0) {
+      throw new Error('删除文件夹命令缺少文件夹 ID');
+    }
+
+    const folder = useLibraryStore.getState().folders.find((item) => item.id === folderId);
+    const previousExpandedFolderIds = [...useWorkspaceStore.getState().expandedLibraryFolderIds];
+    const subtreeIds = collectLibraryFolderSubtreeIds(
+      folderId,
+      useLibraryStore.getState().folders,
+    );
+    const subtreeIdSet = new Set(subtreeIds);
+    const knownFolderIds = new Set(useLibraryStore.getState().folders.map((item) => item.id));
+    const nextExpandedFolderIds = previousExpandedFolderIds.filter(
+      (id) => knownFolderIds.has(id) && !subtreeIdSet.has(id),
+    );
+    const workspaceNeedsSave =
+      dependencies.workspaceRepository !== undefined &&
+      nextExpandedFolderIds.length !== previousExpandedFolderIds.length;
+    let workspacePrepared = false;
+
+    try {
+      if (workspaceNeedsSave) {
+        await dependencies.workspaceRepository!.saveState({
+          ...serializeWorkspaceState(),
+          expandedLibraryFolderIds: nextExpandedFolderIds,
+        });
+        workspacePrepared = true;
+      }
+
+      const result = await repository.deleteFolder(folderId);
+      if (!result.deletedFolderIds.includes(folderId)) {
+        throw new Error('文件夹删除结果无效,请刷新书库后重试');
+      }
+
+      const deletedFolderIds = new Set(result.deletedFolderIds);
+      useLibraryStore.setState((state) => ({
+        folders: state.folders.filter((item) => !deletedFolderIds.has(item.id)),
+        materials: state.materials.map((material) =>
+          material.folderId !== null && deletedFolderIds.has(material.folderId)
+            ? { ...material, folderId: null }
+            : material,
+        ),
+        trashedMaterials: state.trashedMaterials.map((material) =>
+          material.folderId !== null && deletedFolderIds.has(material.folderId)
+            ? { ...material, folderId: null }
+            : material,
+        ),
+      }));
+      useWorkspaceStore.getState().removeLibraryFolderIds(result.deletedFolderIds);
+
+      const folderLabel = folder?.name ?? '目标文件夹';
+      useShellUiStore.getState().setStatusMessage(
+        `已删除文件夹“${folderLabel}”,其中材料已转为未归类`,
+      );
+      return result;
+    } catch (error: unknown) {
+      if (workspacePrepared) {
+        try {
+          await dependencies.workspaceRepository!.saveState({
+            ...serializeWorkspaceState(),
+            expandedLibraryFolderIds: previousExpandedFolderIds,
+          });
+        } catch (rollbackError: unknown) {
+          throw new Error(
+            `删除文件夹失败:${commandErrorMessage(error, '请重试')}; 工作区状态回滚失败:${commandErrorMessage(rollbackError, '请重启应用后重试')}`,
+          );
+        }
+      }
+      throw error;
+    }
   });
 
   registry.register(COMMAND_IDS.libraryMoveMaterial, async (...args: unknown[]) => {

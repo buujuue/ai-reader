@@ -1,8 +1,13 @@
 import { CommandRegistry } from '../commands/commandRegistry';
-import { createInMemoryImportRepository, addInMemorySource } from '../domain/library/inMemoryImportRepository';
+import {
+  addInMemorySource,
+  createInMemoryImportRepository,
+  type InMemoryImportRepository,
+} from '../domain/library/inMemoryImportRepository';
 import type { ImportRepository } from '../domain/library/importRepository';
 import { createDefaultTauriImportRepository } from '../domain/library/tauriImportRepository';
 import type { LibraryFolderRepository } from '../domain/library/libraryFolderRepository';
+import type { InMemoryDeletionTransaction } from '../domain/library/libraryFolderRepository';
 import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
 import { createDefaultTauriLibraryFolderRepository } from '../domain/library/tauriLibraryFolderRepository';
 import { buildEpub } from '../domain/library/epub/zipWriter';
@@ -193,15 +198,28 @@ export function createImportServices(): {
   };
 }
 
-export function createLibraryFolderRepository(): LibraryFolderRepository {
+export function createLibraryFolderRepository(
+  prepareDeleteSubtree?: (folderIds: readonly string[]) => InMemoryDeletionTransaction,
+): LibraryFolderRepository {
   return isTauriRuntime()
     ? createDefaultTauriLibraryFolderRepository()
-    : createInMemoryLibraryFolderRepository();
+    : createInMemoryLibraryFolderRepository(
+        [],
+        prepareDeleteSubtree ? { prepareDeleteSubtree } : {},
+      );
 }
 
 export function createAppServices(options: AppServicesOptions = {}): AppServices {
   const workspaceRepository = options.workspaceRepository ?? createWorkspaceRepository();
-  const libraryFolderRepository = options.libraryFolderRepository ?? createLibraryFolderRepository();
+  const importServices =
+    options.importRepository && options.filePicker
+      ? { importRepository: options.importRepository, filePicker: options.filePicker }
+      : createImportServices();
+  const inMemoryImportRepository = importServices.importRepository as Partial<InMemoryImportRepository>;
+  const prepareDeleteSubtree = typeof inMemoryImportRepository.prepareClearMaterialFolderAssignments === 'function'
+    ? inMemoryImportRepository.prepareClearMaterialFolderAssignments.bind(inMemoryImportRepository)
+    : undefined;
+  const libraryFolderRepository = options.libraryFolderRepository ?? createLibraryFolderRepository(prepareDeleteSubtree);
   const annotationRepository =
     options.annotationRepository ??
     (isTauriRuntime()
@@ -217,10 +235,6 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     (isTauriRuntime()
       ? createDefaultTauriAnnotationExportWriter()
       : createInMemoryAnnotationExportWriter());
-  const importServices =
-    options.importRepository && options.filePicker
-      ? { importRepository: options.importRepository, filePicker: options.filePicker }
-      : createImportServices();
   const externalUrlOpener = options.externalUrlOpener ?? createDefaultExternalUrlOpener();
   const backupRepository =
     options.backupRepository ??

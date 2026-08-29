@@ -24,6 +24,17 @@ describe('Workspace Store', () => {
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
   });
 
+  it('删除文件夹子树后只清理对应展开状态', () => {
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      expandedLibraryFolderIds: ['folder-root', 'folder-child', 'folder-keep'],
+    });
+
+    useWorkspaceStore.getState().removeLibraryFolderIds(['folder-root', 'folder-child']);
+
+    expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual(['folder-keep']);
+  });
+
   it('用已持久化的工作区状态还原 Store', () => {
     useWorkspaceStore.getState().hydrate({
       ...DEFAULT_WORKSPACE_STATE,

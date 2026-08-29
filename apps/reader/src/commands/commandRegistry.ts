@@ -24,6 +24,7 @@ export const COMMAND_IDS = {
   libraryMoveMaterial: 'library.moveMaterial',
   libraryCreateFolder: 'library.createFolder',
   libraryRenameFolder: 'library.renameFolder',
+  libraryDeleteFolder: 'library.deleteFolder',
   libraryOpenBook: 'library.openBook',
   libraryUpdateMetadata: 'library.updateMetadata',
   librarySetCover: 'library.setCover',

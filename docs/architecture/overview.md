@@ -92,7 +92,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Library
 
-通过 typed Repository 管理 Reading Material、来源元数据、覆盖值、唯一文件夹归属、回收站和封面。EPUB 来源封面由 foliate-js 在导入检查阶段选择，PDF 来源封面由 PDF.js 渲染首页，再由 TypeScript 生成受控缩略图；自定义封面与来源封面分目录、分字段托管，读取时遵循“自定义优先、来源兜底”。新导入材料的 `folderId` 默认为 null，材料移动只更新唯一归属，不复制或改写材料；回收站与恢复保留归属。受管理正文缺失时仍保留领域对象与用户数据，并通过完整指纹重新关联；读取端只接触领域对象，不接触表结构。`ManagedFileSource` 通过稳定 MaterialId 提供只读、File/Blob 兼容的惰性范围来源，格式层不接触 Tauri 协议或托管路径；EPUB、PDF、Markdown 的生产打开边界不再暴露通用完整托管文件读取。PDF 导入检查负责格式/来源元数据/首页封面，已导入 PDF 的阅读 Command 复用有效元数据，首屏挂载时每个 Runtime 只创建一次 PDF.js 文档。
+通过 typed Repository 管理 Reading Material、来源元数据、覆盖值、唯一文件夹归属、回收站和封面。EPUB 来源封面由 foliate-js 在导入检查阶段选择，PDF 来源封面由 PDF.js 渲染首页，再由 TypeScript 生成受控缩略图；自定义封面与来源封面分目录、分字段托管，读取时遵循“自定义优先、来源兜底”。新导入材料的 `folderId` 默认为 null，材料移动只更新唯一归属，不复制或改写材料；回收站与恢复保留归属。文件夹删除经 `library.deleteFolder` 进入 typed Repository，在 Tauri 的同一 SQLite 事务中递归移除文件夹并将活跃/回收站材料置为未归类。受管理正文缺失时仍保留领域对象与用户数据，并通过完整指纹重新关联；读取端只接触领域对象，不接触表结构。`ManagedFileSource` 通过稳定 MaterialId 提供只读、File/Blob 兼容的惰性范围来源，格式层不接触 Tauri 协议或托管路径；EPUB、PDF、Markdown 的生产打开边界不再暴露通用完整托管文件读取。PDF 导入检查负责格式/来源元数据/首页封面，已导入 PDF 的阅读 Command 复用有效元数据，首屏挂载时每个 Runtime 只创建一次 PDF.js 文档。
 
 ### Import
 
@@ -173,6 +173,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 21 切片**：窗口化 PDF 滚动布局（滚动模式全页占位、`IntersectionObserver` 视口调度、最近页面优先、最多 3 个在途、最多 12 个已渲染页面、混合尺寸增量修正与阅读位置锚点恢复）；分页模式与 PDF.js 的既有读取/取消/内存边界保持不变。对应工单 #45，具体决策见 ADR-0033。
 - **第 22 切片**：书库文件夹树（独立 `LibraryFolderRepository` 的内存/Tauri Adapter 与真实 SQLite 持久化、稳定文件夹 ID、显式父子关系、五层和名称规则、生产树 UI、创建/取消/改名 Command、树展开状态恢复）。对应工单 #47，具体决策见 ADR-0034、ADR-0035、ADR-0036、ADR-0037。
 - **第 23 切片**：单本材料归类（`ReadingMaterial.folderId` 与 nullable SQLite 外键、导入默认未归类、文件夹叶子节点与稳定标题排序、“移动到……”菜单、移回未归类、内存/Tauri Repository 契约、回收站恢复保留归属）；完整备份随 SQLite 快照保留归属，文件夹删除继续由既有规则将材料转为未归类。对应工单 #48，具体决策见 ADR-0038。
+- **第 24 切片**：安全删除书库文件夹子树（一次明确确认、内存/Tauri `LibraryFolderRepository.deleteFolder` 契约、SQLite 事务内递归删除与活跃/回收站材料转未归类、展开状态清理、失败回滚和打开 ReadingView/用户数据保留）。对应工单 #49，具体决策见 ADR-0035、ADR-0038。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 - **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 导入检查和阅读均经 `PDFDataRangeTransport` 按需加载，但已导入阅读路径不再先检查后重建 PDF.js 文档；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。Windows Tauri 的 PDF Source 可通过 `managed-range.localhost` 以 MaterialId + 半开范围接收二进制响应；非 Windows、非 PDF 和浏览器降级继续使用现有受控范围回退，Windows 协议授权或读取失败则直接报告可诊断错误，禁止路径暴露或静默全量读取。具体决策见 ADR-0028、ADR-0029、ADR-0030、ADR-0031 与 ADR-0032。

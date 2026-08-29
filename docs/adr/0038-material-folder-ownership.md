@@ -29,7 +29,9 @@ status: accepted
 ## 取舍
 
 单本菜单移动覆盖首版需求，但暂不提供拖拽、多选和批量移动。文件夹删除继续沿用
-ADR-0035 的“转为未归类”语义，由 SQLite `ON DELETE SET NULL` 保证归属不会悬空。
+ADR-0035 的“转为未归类”语义，由 `LibraryFolderRepository.deleteFolder` 在同一 SQLite
+事务中显式清除活跃与回收站材料归属，再按后序删除文件夹子树；`ON DELETE SET NULL`
+作为数据库层兜底，保证归属不会悬空。
 
 ## 相关 ADR
 

@@ -111,6 +111,7 @@ export function PrimarySidebar() {
   const trashedMaterials = useLibraryStore((state) => state.trashedMaterials);
   const openMetadataEditor = useShellUiStore((state) => state.openMetadataEditor);
   const openPurgeConfirm = useShellUiStore((state) => state.openPurgeConfirm);
+  const openFolderDeleteConfirm = useShellUiStore((state) => state.openFolderDeleteConfirm);
   const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
   const expandedFolderIds = useWorkspaceStore((state) => state.expandedLibraryFolderIds);
   const importing = useLibraryStore((state) => state.importing);
@@ -376,6 +377,15 @@ export function PrimarySidebar() {
     setFolderEditor({ kind: 'rename', folderId: folder.id, value: folder.name, error: null });
   };
 
+  const startDeleteFolder = (folder: LibraryFolder) => {
+    openFolderDeleteConfirm(
+      folder.id,
+      typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null,
+    );
+  };
+
   const cancelFolderEdit = () => setFolderEditor(null);
 
   const saveFolderEdit = async () => {
@@ -553,6 +563,14 @@ export function PrimarySidebar() {
             </button>
             <button type="button" aria-label={`重命名 ${folder.name}`} title="重命名文件夹" onClick={() => startRenameFolder(folder)}>
               <Pencil size={13} aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label={`删除 ${folder.name}`}
+              title="删除文件夹及其子文件夹"
+              onClick={() => startDeleteFolder(folder)}
+            >
+              <Trash2 size={13} aria-hidden />
             </button>
           </div>
         </div>

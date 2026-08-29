@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -13,6 +13,12 @@ pub struct LibraryFolder {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryFolderDeletionResult {
+    pub deleted_folder_ids: Vec<String>,
 }
 
 pub struct LibraryFolderRepository<'a> {
@@ -85,6 +91,92 @@ impl<'a> LibraryFolderRepository<'a> {
             name: normalized,
             parent_id: current.parent_id,
         })
+    }
+
+    /// 递归删除文件夹子树,并在同一 SQLite 事务中清除活跃及回收站材料归属。
+    /// 文件夹先按后序删除,以满足父级外键的 RESTRICT 约束;事务失败时两部分一起回滚。
+    pub fn delete(&self, folder_id: &str) -> Result<LibraryFolderDeletionResult, AppError> {
+        let transaction =
+            rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)?;
+        let deleted_folder_ids = Self::subtree_postorder(&transaction, folder_id)?;
+        let placeholders = std::iter::repeat_n("?", deleted_folder_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        transaction.execute(
+            &format!("UPDATE materials SET folder_id = NULL WHERE folder_id IN ({placeholders})"),
+            params_from_iter(deleted_folder_ids.iter()),
+        )?;
+        for folder_id in &deleted_folder_ids {
+            transaction.execute("DELETE FROM library_folders WHERE id = ?1", [folder_id])?;
+        }
+        transaction.commit()?;
+        Ok(LibraryFolderDeletionResult { deleted_folder_ids })
+    }
+
+    fn subtree_postorder(
+        connection: &Connection,
+        folder_id: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let mut statement = connection.prepare(
+            "WITH RECURSIVE subtree(id, parent_id) AS (
+                 SELECT id, parent_id FROM library_folders WHERE id = ?1
+                 UNION
+                 SELECT child.id, child.parent_id
+                 FROM library_folders child
+                 JOIN subtree parent ON child.parent_id = parent.id
+             )
+             SELECT id, parent_id FROM subtree",
+        )?;
+        let rows = statement
+            .query_map([folder_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        if rows.is_empty() {
+            return Err(AppError::LibraryFolderNotFound(folder_id.to_string()));
+        }
+
+        let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
+        for (id, parent_id) in rows {
+            if let Some(parent_id) = parent_id {
+                children_by_parent.entry(parent_id).or_default().push(id);
+            }
+        }
+
+        let mut ordered = Vec::new();
+        let mut visited = HashSet::new();
+        let mut visiting = HashSet::new();
+        fn visit(
+            folder_id: &str,
+            children_by_parent: &HashMap<String, Vec<String>>,
+            visiting: &mut HashSet<String>,
+            visited: &mut HashSet<String>,
+            ordered: &mut Vec<String>,
+        ) -> Result<(), AppError> {
+            if visited.contains(folder_id) {
+                return Ok(());
+            }
+            if !visiting.insert(folder_id.to_string()) {
+                return Err(AppError::LibraryFolderCycle);
+            }
+            if let Some(children) = children_by_parent.get(folder_id) {
+                for child_id in children {
+                    visit(child_id, children_by_parent, visiting, visited, ordered)?;
+                }
+            }
+            visiting.remove(folder_id);
+            visited.insert(folder_id.to_string());
+            ordered.push(folder_id.to_string());
+            Ok(())
+        }
+        visit(
+            folder_id,
+            &children_by_parent,
+            &mut visiting,
+            &mut visited,
+            &mut ordered,
+        )?;
+        Ok(ordered)
     }
 
     fn find(&self, folder_id: &str) -> Result<LibraryFolder, AppError> {
@@ -194,6 +286,20 @@ mod tests {
         connection
     }
 
+    fn migrated_connection_with_materials() -> Connection {
+        let connection = migrated_connection();
+        connection
+            .execute_batch(
+                "CREATE TABLE materials (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    folder_id TEXT REFERENCES library_folders(id) ON DELETE SET NULL,
+                    deleted_at TEXT
+                );",
+            )
+            .unwrap();
+        connection
+    }
+
     #[test]
     fn creates_and_lists_stable_folder_tree() {
         let connection = migrated_connection();
@@ -276,5 +382,115 @@ mod tests {
             repository.rename(&child.id, "已占用"),
             Err(AppError::LibraryFolderNameConflict(_))
         ));
+    }
+
+    #[test]
+    fn deletes_deep_subtree_unfiles_active_and_trashed_materials_atomically() {
+        let connection = migrated_connection_with_materials();
+        let repository = LibraryFolderRepository::new(&connection);
+        let root = repository.create("目标", None).unwrap();
+        let child = repository.create("子级", Some(&root.id)).unwrap();
+        let grandchild = repository.create("孙级", Some(&child.id)).unwrap();
+        let sibling = repository.create("保留", None).unwrap();
+        connection
+            .execute(
+                "INSERT INTO materials (id, folder_id, deleted_at)
+                 VALUES ('active', ?1, NULL), ('trashed', ?2, 'now'), ('keep', ?3, NULL)",
+                params![root.id, grandchild.id, sibling.id],
+            )
+            .unwrap();
+
+        let result = repository.delete(&root.id).unwrap();
+
+        assert_eq!(
+            result.deleted_folder_ids,
+            vec![grandchild.id.clone(), child.id.clone(), root.id.clone()]
+        );
+        assert_eq!(repository.list().unwrap(), vec![sibling.clone()]);
+        let active_folder: Option<String> = connection
+            .query_row(
+                "SELECT folder_id FROM materials WHERE id = 'active'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let trashed_folder: Option<String> = connection
+            .query_row(
+                "SELECT folder_id FROM materials WHERE id = 'trashed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let kept_folder: Option<String> = connection
+            .query_row(
+                "SELECT folder_id FROM materials WHERE id = 'keep'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_folder, None);
+        assert_eq!(trashed_folder, None);
+        assert_eq!(kept_folder, Some(sibling.id));
+    }
+
+    #[test]
+    fn deleting_missing_folder_does_not_mutate_materials_or_folders() {
+        let connection = migrated_connection_with_materials();
+        let repository = LibraryFolderRepository::new(&connection);
+        let folder = repository.create("保留", None).unwrap();
+        connection
+            .execute(
+                "INSERT INTO materials (id, folder_id) VALUES ('material', ?1)",
+                [&folder.id],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            repository.delete("missing"),
+            Err(AppError::LibraryFolderNotFound(_))
+        ));
+        assert_eq!(repository.list().unwrap(), vec![folder.clone()]);
+        let stored_folder: Option<String> = connection
+            .query_row(
+                "SELECT folder_id FROM materials WHERE id = 'material'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_folder, Some(folder.id));
+    }
+
+    #[test]
+    fn delete_rolls_back_material_unfiling_when_folder_constraint_fails() {
+        let connection = migrated_connection_with_materials();
+        let repository = LibraryFolderRepository::new(&connection);
+        let root = repository.create("目标", None).unwrap();
+        let child = repository.create("子级", Some(&root.id)).unwrap();
+        connection
+            .execute(
+                "INSERT INTO materials (id, folder_id) VALUES ('material', ?1)",
+                [&root.id],
+            )
+            .unwrap();
+        connection
+            .execute_batch(&format!(
+                "CREATE TRIGGER prevent_child_delete
+                 BEFORE DELETE ON library_folders
+                 WHEN OLD.id = '{}'
+                 BEGIN SELECT RAISE(ABORT, 'folder delete blocked'); END;",
+                child.id
+            ))
+            .unwrap();
+
+        assert!(repository.delete(&root.id).is_err());
+        assert_eq!(repository.list().unwrap().len(), 2);
+        let stored_folder: Option<String> = connection
+            .query_row(
+                "SELECT folder_id FROM materials WHERE id = 'material'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_folder, Some(root.id));
     }
 }

@@ -84,6 +84,7 @@ pub fn run() {
             commands::library_folder::list_library_folders,
             commands::library_folder::create_library_folder,
             commands::library_folder::rename_library_folder,
+            commands::library_folder::delete_library_folder,
             commands::markdown_recovery::write_markdown_recovery,
             commands::markdown_recovery::list_markdown_recoveries,
             commands::markdown_recovery::discard_markdown_recovery,

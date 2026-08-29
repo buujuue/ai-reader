@@ -11,6 +11,9 @@ export interface ShellUiStoreState {
   metadataEditorMaterialId: string | null;
   /** 等待确认永久删除的材料 ID;null 表示未打开永久删除确认对话框。 */
   purgeMaterialId: string | null;
+  /** 等待确认删除的书库文件夹 ID;null 表示未打开文件夹删除确认对话框。 */
+  folderDeleteId: string | null;
+  folderDeleteReturnFocus: HTMLElement | null;
   /** 等待确认打开的外部链接目标;null 表示未打开外部链接确认对话框。 */
   externalLinkUrl: string | null;
   /** 正在编辑排版的阅读视图 id;null 表示未打开排版设置对话框。 */
@@ -44,6 +47,8 @@ export interface ShellUiStoreState {
   closeMetadataEditor: () => void;
   openPurgeConfirm: (materialId: string) => void;
   closePurgeConfirm: () => void;
+  openFolderDeleteConfirm: (folderId: string, returnFocusTarget?: HTMLElement | null) => void;
+  closeFolderDeleteConfirm: () => void;
   openExternalLinkConfirm: (url: string) => void;
   closeExternalLinkConfirm: () => void;
   openTypographyEditor: (viewId: string) => void;
@@ -72,6 +77,8 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   statusMessage: '',
   metadataEditorMaterialId: null,
   purgeMaterialId: null,
+  folderDeleteId: null,
+  folderDeleteReturnFocus: null,
   externalLinkUrl: null,
   typographyEditorViewId: null,
   noteEditorTarget: null,
@@ -94,6 +101,9 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   closeMetadataEditor: () => set({ metadataEditorMaterialId: null }),
   openPurgeConfirm: (materialId) => set({ purgeMaterialId: materialId }),
   closePurgeConfirm: () => set({ purgeMaterialId: null }),
+  openFolderDeleteConfirm: (folderId, returnFocusTarget) =>
+    set({ folderDeleteId: folderId, folderDeleteReturnFocus: returnFocusTarget ?? null }),
+  closeFolderDeleteConfirm: () => set({ folderDeleteId: null, folderDeleteReturnFocus: null }),
   openExternalLinkConfirm: (url) => set({ externalLinkUrl: url }),
   closeExternalLinkConfirm: () => set({ externalLinkUrl: null }),
   openTypographyEditor: (viewId) => set({ typographyEditorViewId: viewId }),

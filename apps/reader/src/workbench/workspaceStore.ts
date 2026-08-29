@@ -50,6 +50,7 @@ export interface WorkspaceStoreState {
   setMaterialTypography: (materialId: string, override: Partial<ReadingTypography>) => void;
   resetMaterialTypography: (materialId: string) => void;
   setLibraryFolderExpanded: (folderId: string, expanded: boolean) => void;
+  removeLibraryFolderIds: (folderIds: readonly string[]) => void;
   getEffectiveTypography: (materialId: string) => ReadingTypography;
   openView: (materialId: string) => string;
   closeView: (viewId: string) => void;
@@ -233,6 +234,14 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       if (expanded) current.add(folderId);
       else current.delete(folderId);
       return { expandedLibraryFolderIds: [...current] };
+    }),
+
+  removeLibraryFolderIds: (folderIds) =>
+    set((state) => {
+      const deleted = new Set(folderIds);
+      return {
+        expandedLibraryFolderIds: state.expandedLibraryFolderIds.filter((id) => !deleted.has(id)),
+      };
     }),
 
   getEffectiveTypography: (materialId) => {

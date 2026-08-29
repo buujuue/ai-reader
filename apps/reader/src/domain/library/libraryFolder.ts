@@ -124,3 +124,30 @@ function compareStrings(left: string, right: string): number {
 export function sortLibraryFolders(folders: readonly LibraryFolder[]): LibraryFolder[] {
   return [...folders].sort((left, right) => compareStrings(left.name, right.name) || left.id.localeCompare(right.id));
 }
+
+/** 根据当前权威文件夹快照收集目标及其后代,用于清理工作区展开状态。 */
+export function collectLibraryFolderSubtreeIds(
+  folderId: string,
+  folders: readonly LibraryFolder[],
+): string[] {
+  if (!folders.some((folder) => folder.id === folderId)) return [folderId];
+  const childrenByParent = new Map<string, string[]>();
+  for (const folder of folders) {
+    if (folder.parentId === null) continue;
+    const children = childrenByParent.get(folder.parentId) ?? [];
+    children.push(folder.id);
+    childrenByParent.set(folder.parentId, children);
+  }
+
+  const subtree: string[] = [];
+  const visit = (currentId: string, ancestors: Set<string>) => {
+    if (ancestors.has(currentId)) throw new Error('文件夹层级数据存在循环,请刷新书库后重试');
+    subtree.push(currentId);
+    const nextAncestors = new Set(ancestors).add(currentId);
+    for (const childId of childrenByParent.get(currentId) ?? []) {
+      visit(childId, nextAncestors);
+    }
+  };
+  visit(folderId, new Set());
+  return subtree;
+}
