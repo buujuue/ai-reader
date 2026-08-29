@@ -82,7 +82,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Command Registry
 
-所有按钮、菜单、键盘和手势执行稳定 Command ID。快捷键只负责按键到 Command 的映射，Event 只表达已经发生的事实。PDF 分页模式的正文左右点击/轻触也通过同一组翻页 Command；由于 PDF 内容位于应用顶层文档，监听必须限定在当前 ReadingView 正文容器内，选择、批注区域拖选和交互控件优先。
+所有按钮、菜单、键盘、触摸和拖放适配器执行稳定 Command ID。快捷键只负责按键到 Command 的映射，Event 只表达已经发生的事实。书库材料拖放只接受单个 `MaterialId` 并与“移动到……”菜单共用 `library.moveMaterial`；拖放不直接修改 Store 或 Repository，目标由 Command 再次按权威文件夹列表校验。PDF 分页模式的正文左右点击/轻触也通过同一组翻页 Command；由于 PDF 内容位于应用顶层文档，监听必须限定在当前 ReadingView 正文容器内，选择、批注区域拖选和交互控件优先。
 
 工作台外壳第一阶段固定使用 C 深色视觉；阅读材料主题仍由 `ReadingTypography` 按全局默认/材料覆盖管理，避免引入第二套外壳主题状态。
 
@@ -91,6 +91,8 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 应用顶栏只注册文件、编辑、视图三组真实菜单 Command，分别覆盖导入/备份/恢复/关闭标签、书库筛选/当前材料搜索、书库/目录/拆分编辑器/阅读排版；不把原型占位动作迁移到生产。
 
 ### Library
+
+书库材料可从“移动到……”菜单或桌面拖放快捷方式移动；拖放只传递单个稳定 `MaterialId`，无效载荷、无效 FolderId、当前归属、回收站材料和平台失败均不做乐观 Store 更新。
 
 通过 typed Repository 管理 Reading Material、来源元数据、覆盖值、唯一文件夹归属、回收站和封面。EPUB 来源封面由 foliate-js 在导入检查阶段选择，PDF 来源封面由 PDF.js 渲染首页，再由 TypeScript 生成受控缩略图；自定义封面与来源封面分目录、分字段托管，读取时遵循“自定义优先、来源兜底”。新导入材料的 `folderId` 默认为 null，材料移动只更新唯一归属，不复制或改写材料；回收站与恢复保留归属。文件夹删除经 `library.deleteFolder` 进入 typed Repository，在 Tauri 的同一 SQLite 事务中递归移除文件夹并将活跃/回收站材料置为未归类。书库筛选由 TypeScript 在有效标题、作者和文件夹名称上生成树投影，材料命中保留从未归类/根文件夹到当前归属的完整路径，且临时展开不回写 Workspace State；书库刷新后以权威 FolderId 集合清理恢复载荷中的失效展开 ID，清理持久化失败也不阻塞标签和阅读位置恢复。受管理正文缺失时仍保留领域对象与用户数据，并通过完整指纹重新关联；读取端只接触领域对象，不接触表结构。`ManagedFileSource` 通过稳定 MaterialId 提供只读、File/Blob 兼容的惰性范围来源，格式层不接触 Tauri 协议或托管路径；EPUB、PDF、Markdown 的生产打开边界不再暴露通用完整托管文件读取。PDF 导入检查负责格式/来源元数据/首页封面，已导入 PDF 的阅读 Command 复用有效元数据，首屏挂载时每个 Runtime 只创建一次 PDF.js 文档。
 
@@ -175,6 +177,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 23 切片**：单本材料归类（`ReadingMaterial.folderId` 与 nullable SQLite 外键、导入默认未归类、文件夹叶子节点与稳定标题排序、“移动到……”菜单、移回未归类、内存/Tauri Repository 契约、回收站恢复保留归属）；完整备份随 SQLite 快照保留归属，文件夹删除继续由既有规则将材料转为未归类。对应工单 #48，具体决策见 ADR-0038。
 - **第 24 切片**：安全删除书库文件夹子树（一次明确确认、内存/Tauri `LibraryFolderRepository.deleteFolder` 契约、SQLite 事务内递归删除与活跃/回收站材料转未归类、展开状态清理、失败回滚和打开 ReadingView/用户数据保留）。对应工单 #49，具体决策见 ADR-0035、ADR-0038。
 - **第 25 切片**：书库文件夹树搜索与展开状态恢复（同时匹配文件夹/有效标题/作者、命中材料完整路径、祖先自动展开、搜索临时展开隔离与清空恢复；未归类折叠状态持久化；启动清理失效 FolderId；tree 键盘与触控语义）。对应工单 #50，具体决策见 ADR-0039。
+- **第 26 切片**：单本材料拖放归类快捷方式（桌面精确指针下从材料叶子节点拖到已有文件夹或未归类；与“移动到……”共用 `library.moveMaterial` Command；单材料载荷、无效目标、失败回滚、非拖放输入和重启归属测试）。对应工单 #51，具体决策见 ADR-0038。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 - **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 导入检查和阅读均经 `PDFDataRangeTransport` 按需加载，但已导入阅读路径不再先检查后重建 PDF.js 文档；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。Windows Tauri 的 PDF Source 可通过 `managed-range.localhost` 以 MaterialId + 半开范围接收二进制响应；非 Windows、非 PDF 和浏览器降级继续使用现有受控范围回退，Windows 协议授权或读取失败则直接报告可诊断错误，禁止路径暴露或静默全量读取。具体决策见 ADR-0028、ADR-0029、ADR-0030、ADR-0031 与 ADR-0032。

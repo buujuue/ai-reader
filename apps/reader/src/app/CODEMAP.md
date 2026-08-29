@@ -14,7 +14,7 @@
 - `annotationExportDestinationPicker.ts`：单本批注 Markdown 的系统保存位置选择器；Tauri 端经 `save` 选择 `.md` 文件，取消返回 `null`，浏览器降级不写任意本地文件。
 - `AppServicesContext.tsx`：React 上下文，向组件树提供 `AppServices`；`useAppServices()` 供任意组件取用。
 - `App.tsx`：工作台顶层外壳，默认接入 `ApplicationBar`、两入口 `ActivityBar`、真实书库/目录侧栏与材料批注覆盖层；启动时恢复工作区与书库、经 `reader.restoreView` 重建持久化标签，再执行 `markdown.recovery.check` 展示 Recovery Snapshot；组合工作台组件与各类对话框，包括 EPUB 版本迁移确认与恢复快照。Tauri 关闭请求会先阻止默认关闭，等待阅读位置与 Markdown 恢复快照 flush 后销毁窗口；页面隐藏/卸载保留尽力 flush。
-- `App.test.tsx`：应用级测试，含“打开 EPUB 并重启续读”验收路径、“关闭请求等待恢复快照落盘”、“回收站:安全删除资料”流程与“目录与外部链接”流程。
+- `App.test.tsx`：应用级测试，含“打开 EPUB 并重启续读”验收路径、“关闭请求等待恢复快照落盘”、“回收站:安全删除资料”流程、“目录与外部链接”流程，以及单本材料拖放到文件夹/未归类、同归属无操作、非法载荷、失败回滚和重启归属验收。
 
 ## 依赖其它文件夹（树）
 

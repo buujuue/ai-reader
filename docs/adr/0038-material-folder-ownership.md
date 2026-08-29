@@ -15,7 +15,8 @@ status: accepted
   用于移回未归类。Command 层再次根据权威文件夹列表校验目标，Tauri/Rust 侧用 SQLite
   外键和活动材料校验兜底。
 - 文件夹树仍由 `LibraryFolderRepository` 管理；书库侧栏把材料渲染为对应文件夹的叶子节点，
-  未归类材料固定在树底部。单本移动入口使用材料操作菜单，不引入多选或批量移动。
+  未归类材料固定在树底部。单本移动入口包括材料操作菜单和桌面精确指针下的拖放快捷方式，
+  二者都执行同一个 `library.moveMaterial` Command；不引入文件夹拖放、多选或批量移动。
 - 普通移入回收站、恢复、Markdown 正式保存和 EPUB 版本迁移只更新各自已有字段，必须保留
   `folder_id`。永久删除随材料记录级联清理归属。
 - 完整备份直接保存 SQLite 一致快照，因此材料归属和文件夹结构与既有备份协议一同恢复。
@@ -28,10 +29,12 @@ status: accepted
 
 ## 取舍
 
-单本菜单移动覆盖首版需求，但暂不提供拖拽、多选和批量移动。文件夹删除继续沿用
-ADR-0035 的“转为未归类”语义，由 `LibraryFolderRepository.deleteFolder` 在同一 SQLite
-事务中显式清除活跃与回收站材料归属，再按后序删除文件夹子树；`ON DELETE SET NULL`
-作为数据库层兜底，保证归属不会悬空。
+单本菜单移动覆盖键盘和平板操作，桌面拖放只是快捷方式；拖放仅携带单个稳定
+`MaterialId`，不改变多选、批量移动或文件夹移动的范围。拖放目标在前端只作即时反馈，
+`library.moveMaterial` 仍按权威文件夹列表和 Repository 结果更新 Store，平台失败时不做乐观
+回写。文件夹删除继续沿用 ADR-0035 的“转为未归类”语义，由
+`LibraryFolderRepository.deleteFolder` 在同一 SQLite 事务中显式清除活跃与回收站材料归属，
+再按后序删除文件夹子树；`ON DELETE SET NULL` 作为数据库层兜底，保证归属不会悬空。
 
 ## 相关 ADR
 

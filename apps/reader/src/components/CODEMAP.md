@@ -10,7 +10,8 @@
 - `ActivityBar.tsx`：左侧活动栏只提供“书库”与“目录”两个互斥入口，分别执行 `workbench.togglePrimarySidebar` 与 `workbench.toggleToc`；导入动作位于真实书库面板与文件菜单。
 - `SidebarPanelHeader.tsx`：书库与目录共用的固定顶栏结构，统一标题、图标、右侧操作槽、行高和触控命中区，不承载具体业务行为。
 - `SidebarResizeHandle.tsx`：书库与目录共用的可拖动/可键盘调整宽度手柄；拖动过程更新活动面板宽度，结束时经 `workbench.setActivityPanelWidth` 持久化，不直接访问 Repository。
-- `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，阅读材料按唯一 `folderId` 作为叶子节点，未归类材料固定在树底部且可折叠；材料按有效标题稳定排序，文件夹名/材料标题/作者筛选由 `libraryFilter.ts` 生成树投影，命中材料显示完整路径并只在搜索会话内临时展开祖先，清空后恢复 Workspace State 原值。树使用 `tree/treeitem/group` 语义和 roving focus，支持方向键、Home/End、Enter/Space、Escape；未归类折叠经 `workbench.setUnfiledMaterialsExpanded` 持久化。材料更多菜单提供“移动到……”及所有已有文件夹/未归类目标，移动执行 `library.moveMaterial`；顶层/子文件夹新建、改名和删除均执行稳定 Command，删除由 `FolderDeleteConfirmDialog` 一次明确确认，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。
+- `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，阅读材料按唯一 `folderId` 作为叶子节点，未归类材料固定在树底部且可折叠；材料按有效标题稳定排序，文件夹名/材料标题/作者筛选由 `libraryFilter.ts` 生成树投影，命中材料显示完整路径并只在搜索会话内临时展开祖先，清空后恢复 Workspace State 原值。树使用 `tree/treeitem/group` 语义和 roving focus，支持方向键、Home/End、Enter/Space、Escape；未归类折叠经 `workbench.setUnfiledMaterialsExpanded` 持久化。材料更多菜单和桌面精确指针下的单本材料拖放都执行同一个 `library.moveMaterial` Command；文件夹与未归类目标以虚线轮廓和文字反馈区分有效、同归属和无效状态，拖放失败不乐观改写 Store，粗指针环境禁用 draggable 以保护触控滚动。顶层/子文件夹新建、改名和删除均执行稳定 Command，删除由 `FolderDeleteConfirmDialog` 一次明确确认，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。
+- `libraryDragDrop.ts`：书库材料拖放的窄载荷边界；以私有 MIME JSON 编码/解析单个 `MaterialId`，拒绝文件、多材料、空载荷和非法 JSON，不触碰 Store、Repository 或 Tauri。
 - `MaterialCover.tsx`：封面渲染，经 `importRepository.readCover` 读取托管封面字节并以对象 URL 渲染；默认 IntersectionObserver 懒加载（进入视口才解码）、卸载时 revoke 释放；无封面复用工作区底色和文字颜色显示书名占位，加载失败显示「封面加载失败」。
 - `EditorArea.tsx`：编辑器区，按持久化拆分方向渲染最多两个 Editor Group；每组直接承载活动 `ReadingView`，不再渲染标签栏。点击编辑器组和紧凑布局组切换按钮通过 Command 维护当前组与 Runtime；无活动视图时显示空状态占位。
 - `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；PDF 顶层文档的滚轮/左右点击/轻触只在该 ReadingView 正文容器内接入统一阅读输入，工具栏、搜索栏、对话框和其它 Editor Group 不会被劫持；托管副本缺失时由 Reader Runtime 显示明确的“正文当前不可用”错误并保留标签/用户数据；阅读工具栏提供阅读排版与 Markdown 源码模式，存在拆分组时在材料更多操作左侧提供关闭当前拆分区的 X；材料更多菜单提供向右/向下拆分、查看/导出批注与设置主要材料；导航历史仍由目录、搜索和 Reader Command 维护，不在常驻工具栏显示前进/后退按钮。Markdown 视图处于源码模式时渲染 `MarkdownSourceEditor` 而非阅读容器。Reader 外部不直接操作 Foliate View。
@@ -36,6 +37,7 @@ components/
 ├── commands/                    COMMAND_IDS 用于执行命令
 ├── domain/reader/               viewHost 类型(测试用伪宿主)
 ├── domain/library/              materialFormat / libraryFilter 纯函数(书库格式推断与树搜索投影)
+├── libraryDragDrop.ts            单本材料拖放载荷编码与校验
 └── workbench/
     ├── workspaceStore.ts        ActivityBar 读 primarySidebarVisible;EditorArea 读 editorGroups;ReadingView 读 sourceMode
     ├── readerRuntime.ts         ReadingView 读 documents

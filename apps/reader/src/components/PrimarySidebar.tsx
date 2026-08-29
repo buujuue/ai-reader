@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
 import {
   Archive,
   BookOpenCheck,
@@ -36,6 +44,10 @@ import { formatFromSourceFileName, formatLabel } from '../domain/library/materia
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import {
+  readLibraryMaterialDragMaterialId,
+  writeLibraryMaterialDragPayload,
+} from './libraryDragDrop';
 import { MaterialCover } from './MaterialCover';
 import { SidebarPanelHeader } from './SidebarPanelHeader';
 
@@ -50,6 +62,11 @@ interface MoveFolderOption {
 }
 
 type LibraryTreeItemKind = 'folder' | 'material' | 'unfiled';
+type LibraryDropState = 'valid' | 'same' | 'invalid';
+type LibraryDropDestination =
+  | { kind: 'folder'; folderId: string }
+  | { kind: 'unfiled' }
+  | { kind: 'invalid' };
 
 interface LibraryTreeItem {
   key: string;
@@ -72,6 +89,17 @@ function sortMaterialsByTitle(materials: readonly ReadingMaterial[]): ReadingMat
     (left, right) =>
       left.title.localeCompare(right.title, 'zh-CN') || left.id.localeCompare(right.id),
   );
+}
+
+function libraryDropStateLabel(state: LibraryDropState): string {
+  if (state === 'valid') return '放置到这里';
+  if (state === 'same') return '已在此处';
+  return '仅支持单本材料';
+}
+
+function canDragLibraryMaterials(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  return !window.matchMedia('(pointer: coarse)').matches;
 }
 
 function flattenMoveFolderOptions(folders: readonly LibraryFolder[]): MoveFolderOption[] {
@@ -143,8 +171,15 @@ export function PrimarySidebar() {
   const [unfiledSearchOverride, setUnfiledSearchOverride] = useState<boolean | null>(null);
   const [focusedTreeItemKey, setFocusedTreeItemKey] = useState<string | null>(null);
   const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null);
+  const [draggedMaterialId, setDraggedMaterialId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    key: string;
+    state: LibraryDropState;
+  } | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const treeItemRefs = useRef(new Map<string, HTMLLIElement>());
+  const draggedMaterialIdRef = useRef<string | null>(null);
+  const materialDraggingEnabled = canDragLibraryMaterials();
 
   const searchResult: LibraryTreeSearchResult = useMemo(
     () => buildLibraryTreeSearch(folders, materials, query),
@@ -270,6 +305,7 @@ export function PrimarySidebar() {
   const activeTreeItemKey = visibleTreeItems.some((item) => item.key === focusedTreeItemKey)
     ? focusedTreeItemKey
     : visibleTreeItems[0]?.key ?? null;
+  const unfiledDropState = dropTarget?.key === 'unfiled' ? dropTarget.state : undefined;
 
   const focusTreeItem = (key: string) => {
     if (!visibleTreeItems.some((item) => item.key === key)) return;
@@ -471,6 +507,97 @@ export function PrimarySidebar() {
     }
   };
 
+  const clearMaterialDrag = () => {
+    draggedMaterialIdRef.current = null;
+    setDraggedMaterialId(null);
+    setDropTarget(null);
+  };
+
+  const getDraggedMaterialId = (dataTransfer: DataTransfer | null | undefined): string | null =>
+    draggedMaterialIdRef.current ?? readLibraryMaterialDragMaterialId(dataTransfer);
+
+  const resolveDropState = (
+    materialId: string | null,
+    destination: LibraryDropDestination,
+  ): LibraryDropState => {
+    if (destination.kind === 'invalid') return 'invalid';
+    const folderId = destination.kind === 'folder' ? destination.folderId : null;
+    const material = materialId ? materials.find((item) => item.id === materialId) : undefined;
+    if (!material || (folderId !== null && !folders.some((folder) => folder.id === folderId))) {
+      return 'invalid';
+    }
+    return material.folderId === folderId ? 'same' : 'valid';
+  };
+
+  const updateDropTarget = (
+    event: ReactDragEvent<HTMLLIElement>,
+    key: string,
+    destination: LibraryDropDestination,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const state = resolveDropState(getDraggedMaterialId(event.dataTransfer), destination);
+    setDropTarget({ key, state });
+    event.dataTransfer.dropEffect = state === 'valid' ? 'move' : 'none';
+  };
+
+  const handleDropLeave = (event: ReactDragEvent<HTMLLIElement>, key: string) => {
+    event.stopPropagation();
+    const relatedTarget = event.relatedTarget;
+    if (
+      relatedTarget &&
+      typeof relatedTarget === 'object' &&
+      'nodeType' in relatedTarget &&
+      event.currentTarget.contains(relatedTarget as Node)
+    ) {
+      return;
+    }
+    setDropTarget((current) => (current?.key === key ? null : current));
+  };
+
+  const handleLibraryDrop = async (
+    event: ReactDragEvent<HTMLLIElement>,
+    destination: LibraryDropDestination,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const materialId = getDraggedMaterialId(event.dataTransfer);
+    if (destination.kind === 'invalid') {
+      clearMaterialDrag();
+      return;
+    }
+    const folderId = destination.kind === 'folder' ? destination.folderId : null;
+    const state = resolveDropState(materialId, destination);
+    if (state !== 'valid' || !materialId) {
+      clearMaterialDrag();
+      return;
+    }
+    try {
+      await handleMoveMaterial(materialId, folderId);
+    } finally {
+      clearMaterialDrag();
+    }
+  };
+
+  const handleMaterialDragStart = (
+    event: ReactDragEvent<HTMLLIElement>,
+    material: ReadingMaterial,
+  ) => {
+    if (!materialDraggingEnabled) {
+      event.preventDefault();
+      return;
+    }
+    draggedMaterialIdRef.current = material.id;
+    setDraggedMaterialId(material.id);
+    setDropTarget(null);
+    writeLibraryMaterialDragPayload(event.dataTransfer, material.id);
+  };
+
+  const handleMaterialDragEnd = (event: ReactDragEvent<HTMLLIElement>) => {
+    event.stopPropagation();
+    clearMaterialDrag();
+  };
+
   const startCreateFolder = (parentId: string | null) => {
     if (parentId !== null) {
       const parent = folders.find((folder) => folder.id === parentId);
@@ -588,6 +715,7 @@ export function PrimarySidebar() {
   ): ReactNode => {
     const format = formatFromSourceFileName(material.sourceFileName);
     const treeKey = `material:${material.id}`;
+    const dropState = dropTarget?.key === treeKey ? dropTarget.state : undefined;
     const materialPath = searchResult.materialFolderPaths.get(material.id) ?? ['未归类'];
     const showSearchPath = queryKey !== '' && searchResult.matchingMaterialIds.has(material.id);
     const accessiblePath = materialPath.join(' / ');
@@ -603,7 +731,16 @@ export function PrimarySidebar() {
         aria-level={level}
         aria-label={`${material.title}${showSearchPath ? `, 路径 ${accessiblePath}` : ''}`}
         tabIndex={activeTreeItemKey === treeKey ? 0 : -1}
+        data-drop-state={dropState}
+        draggable={materialDraggingEnabled}
+        data-dragging={draggedMaterialId === material.id ? 'true' : undefined}
         onFocus={() => setFocusedTreeItemKey(treeKey)}
+        onDragStart={(event) => handleMaterialDragStart(event, material)}
+        onDragEnd={handleMaterialDragEnd}
+        onDragEnter={(event) => updateDropTarget(event, treeKey, { kind: 'invalid' })}
+        onDragOver={(event) => updateDropTarget(event, treeKey, { kind: 'invalid' })}
+        onDragLeave={(event) => handleDropLeave(event, treeKey)}
+        onDrop={(event) => void handleLibraryDrop(event, { kind: 'invalid' })}
         onKeyDown={(event) => handleTreeItemKeyDown(event, {
           key: treeKey,
           kind: 'material',
@@ -677,6 +814,11 @@ export function PrimarySidebar() {
               </p>
             </div>
           </button>
+          {dropState ? (
+            <span className="library-drop-feedback" role="status" aria-live="polite">
+              {libraryDropStateLabel(dropState)}
+            </span>
+          ) : null}
         </div>
       </li>
     );
@@ -699,6 +841,7 @@ export function PrimarySidebar() {
     const treeKey = `folder:${folder.id}`;
     const expanded = isFolderExpanded(folder.id) || editingChild || editingSelf;
     const canCreateChild = getLibraryFolderDepth(folder.id, folders) < MAX_LIBRARY_FOLDER_DEPTH;
+    const dropState = dropTarget?.key === treeKey ? dropTarget.state : undefined;
     return (
       <li
         key={folder.id}
@@ -712,7 +855,12 @@ export function PrimarySidebar() {
         aria-label={`文件夹 ${folder.name}`}
         aria-expanded={expanded}
         tabIndex={activeTreeItemKey === treeKey ? 0 : -1}
+        data-drop-state={dropState}
         onFocus={() => setFocusedTreeItemKey(treeKey)}
+        onDragEnter={(event) => updateDropTarget(event, treeKey, { kind: 'folder', folderId: folder.id })}
+        onDragOver={(event) => updateDropTarget(event, treeKey, { kind: 'folder', folderId: folder.id })}
+        onDragLeave={(event) => handleDropLeave(event, treeKey)}
+        onDrop={(event) => void handleLibraryDrop(event, { kind: 'folder', folderId: folder.id })}
         onKeyDown={(event) => handleTreeItemKeyDown(event, {
           key: treeKey,
           kind: 'folder',
@@ -763,6 +911,11 @@ export function PrimarySidebar() {
               <Trash2 size={13} aria-hidden />
             </button>
           </div>
+          {dropState ? (
+            <span className="library-drop-feedback" role="status" aria-live="polite">
+              {libraryDropStateLabel(dropState)}
+            </span>
+          ) : null}
         </div>
         {expanded ? (
           <ul className="library-folder-group" role="group">
@@ -974,11 +1127,16 @@ export function PrimarySidebar() {
               aria-label="未归类材料"
               aria-expanded={unfiledExpanded}
               tabIndex={activeTreeItemKey === 'unfiled' ? 0 : -1}
+              data-drop-state={unfiledDropState}
               ref={(element) => {
                 if (element) treeItemRefs.current.set('unfiled', element);
                 else treeItemRefs.current.delete('unfiled');
               }}
               onFocus={() => setFocusedTreeItemKey('unfiled')}
+              onDragEnter={(event) => updateDropTarget(event, 'unfiled', { kind: 'unfiled' })}
+              onDragOver={(event) => updateDropTarget(event, 'unfiled', { kind: 'unfiled' })}
+              onDragLeave={(event) => handleDropLeave(event, 'unfiled')}
+              onDrop={(event) => void handleLibraryDrop(event, { kind: 'unfiled' })}
               onKeyDown={(event) => handleTreeItemKeyDown(event, {
                 key: 'unfiled',
                 kind: 'unfiled',
@@ -1002,6 +1160,11 @@ export function PrimarySidebar() {
                 <ChevronRight className={unfiledExpanded ? 'library-folder-chevron expanded' : 'library-folder-chevron'} size={14} aria-hidden />
                 {unfiledExpanded ? <FolderOpen size={16} aria-hidden /> : <Folder size={16} aria-hidden />}
                 <span>未归类</span>
+                {unfiledDropState ? (
+                  <span className="library-drop-feedback" role="status" aria-live="polite">
+                    {libraryDropStateLabel(unfiledDropState)}
+                  </span>
+                ) : null}
               </button>
               {unfiledExpanded && (unfiledMaterials.length > 0 || materials.length === 0) ? (
                 <ul className="library-material-group" role="group">

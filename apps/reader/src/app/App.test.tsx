@@ -36,6 +36,10 @@ import type { Annotation } from '../domain/annotation/annotation';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import {
+  LIBRARY_MATERIAL_DRAG_TYPE,
+  writeLibraryMaterialDragPayload,
+} from '../components/libraryDragDrop';
 
 function renderApp(services: AppServices) {
   return render(
@@ -43,6 +47,23 @@ function renderApp(services: AppServices) {
       <App />
     </AppServicesProvider>,
   );
+}
+
+function createDataTransfer(): DataTransfer {
+  const values = new Map<string, string>();
+  return {
+    dropEffect: 'none',
+    effectAllowed: 'none',
+    files: [],
+    items: [],
+    types: [],
+    clearData: () => values.clear(),
+    getData: (format: string) => values.get(format) ?? '',
+    setData: (format: string, data: string) => {
+      values.set(format, data);
+    },
+    setDragImage: () => undefined,
+  } as unknown as DataTransfer;
 }
 
 function createFakeViewHost(): FoliateViewHost {
@@ -716,6 +737,230 @@ describe('阅读工作台外壳', () => {
     await user.click(screen.getByRole('button', { name: /回收站/ }));
     await user.click(screen.getByRole('button', { name: /恢复 示例书/ }));
     await waitFor(() => expect(useLibraryStore.getState().materials[0]?.folderId).toBe(folder.id));
+  });
+
+  it('桌面用户可拖动单本材料到文件夹,同归属放置无操作且重启后恢复', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const folder = await folderRepository.createFolder('文史', null);
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const execute = vi.spyOn(services.commands, 'execute');
+    const { unmount } = renderApp(services);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+    const source = screen.getByRole('treeitem', { name: '示例书' });
+    expect(source).toHaveAttribute('draggable', 'true');
+    const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
+    expect(folderTarget).not.toHaveAttribute('draggable', 'true');
+    const materialId = (await services.importRepository.listMaterials())[0]!.id;
+    const transfer = createDataTransfer();
+    writeLibraryMaterialDragPayload(transfer, materialId);
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    fireEvent.dragOver(folderTarget, { dataTransfer: transfer });
+    expect(folderTarget).toHaveAttribute('data-drop-state', 'valid');
+    expect(folderTarget).toHaveTextContent('放置到这里');
+    fireEvent.drop(folderTarget, { dataTransfer: transfer });
+
+    await waitFor(async () => {
+      expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
+    });
+    expect(execute).toHaveBeenCalledWith(
+      COMMAND_IDS.libraryMoveMaterial,
+      materialId,
+      folder.id,
+    );
+    await waitFor(() => expect(folderTarget).not.toHaveAttribute('data-drop-state'));
+
+    const movedSource = screen.getByRole('treeitem', { name: '示例书' });
+    const callsBeforeSameTarget = execute.mock.calls.filter(
+      ([commandId]) => commandId === COMMAND_IDS.libraryMoveMaterial,
+    ).length;
+    const sameTargetTransfer = createDataTransfer();
+    writeLibraryMaterialDragPayload(sameTargetTransfer, materialId);
+    fireEvent.dragStart(movedSource, { dataTransfer: sameTargetTransfer });
+    fireEvent.dragOver(folderTarget, { dataTransfer: sameTargetTransfer });
+    expect(folderTarget).toHaveAttribute('data-drop-state', 'same');
+    expect(folderTarget).toHaveTextContent('已在此处');
+    fireEvent.drop(folderTarget, { dataTransfer: sameTargetTransfer });
+    await waitFor(() => expect(folderTarget).not.toHaveAttribute('data-drop-state'));
+    expect(
+      execute.mock.calls.filter(([commandId]) => commandId === COMMAND_IDS.libraryMoveMaterial),
+    ).toHaveLength(callsBeforeSameTarget);
+
+    const importRepository = services.importRepository;
+    const filePicker = services.filePicker;
+    unmount();
+    useLibraryStore.getState().resetToDefault();
+    useWorkspaceStore.getState().resetToDefault();
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository,
+      filePicker,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    renderApp(services);
+
+    await waitFor(() => {
+      expect(screen.getByRole('treeitem', { name: '文件夹 文史' })).toHaveTextContent('示例书');
+    });
+    expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
+  });
+
+  it('拖到未归类复用移动 Command,非法拖拽不产生副作用', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const folder = await folderRepository.createFolder('文史', null);
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const execute = vi.spyOn(services.commands, 'execute');
+    const { unmount } = renderApp(services);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+
+    const materialId = (await services.importRepository.listMaterials())[0]!.id;
+    const source = screen.getByRole('treeitem', { name: '示例书' });
+    const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
+    const toFolder = createDataTransfer();
+    writeLibraryMaterialDragPayload(toFolder, materialId);
+    fireEvent.dragStart(source, { dataTransfer: toFolder });
+    fireEvent.drop(folderTarget, { dataTransfer: toFolder });
+    await waitFor(async () => {
+      expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
+    });
+
+    const unfiledTarget = screen.getByRole('treeitem', { name: '未归类材料' });
+    const movedSource = screen.getByRole('treeitem', { name: '示例书' });
+    const toUnfiled = createDataTransfer();
+    writeLibraryMaterialDragPayload(toUnfiled, materialId);
+    fireEvent.dragStart(movedSource, { dataTransfer: toUnfiled });
+    fireEvent.dragOver(unfiledTarget, { dataTransfer: toUnfiled });
+    expect(unfiledTarget).toHaveAttribute('data-drop-state', 'valid');
+    fireEvent.drop(unfiledTarget, { dataTransfer: toUnfiled });
+    await waitFor(async () => {
+      expect((await services.importRepository.listMaterials())[0]?.folderId).toBeNull();
+    });
+    expect(execute).toHaveBeenCalledWith(COMMAND_IDS.libraryMoveMaterial, materialId, null);
+
+    const invalidTransfer = createDataTransfer();
+    invalidTransfer.setData(
+      LIBRARY_MATERIAL_DRAG_TYPE,
+      JSON.stringify({ materialIds: [materialId, 'another-material'] }),
+    );
+    fireEvent.dragEnter(folderTarget, { dataTransfer: invalidTransfer });
+    fireEvent.dragOver(folderTarget, { dataTransfer: invalidTransfer });
+    expect(folderTarget).toHaveAttribute('data-drop-state', 'invalid');
+    expect(folderTarget).toHaveTextContent('仅支持单本材料');
+    const moveCalls = execute.mock.calls.filter(
+      ([commandId]) => commandId === COMMAND_IDS.libraryMoveMaterial,
+    ).length;
+    fireEvent.drop(folderTarget, { dataTransfer: invalidTransfer });
+    await waitFor(() => expect(folderTarget).not.toHaveAttribute('data-drop-state'));
+    expect(
+      execute.mock.calls.filter(([commandId]) => commandId === COMMAND_IDS.libraryMoveMaterial),
+    ).toHaveLength(moveCalls);
+    expect((await services.importRepository.listMaterials())[0]?.folderId).toBeNull();
+
+    const nonTargetMaterial = screen.getByRole('treeitem', { name: '示例书' });
+    fireEvent.dragEnter(nonTargetMaterial, { dataTransfer: invalidTransfer });
+    fireEvent.dragOver(nonTargetMaterial, { dataTransfer: invalidTransfer });
+    expect(nonTargetMaterial).toHaveAttribute('data-drop-state', 'invalid');
+    expect(nonTargetMaterial).toHaveTextContent('仅支持单本材料');
+    fireEvent.drop(nonTargetMaterial, { dataTransfer: invalidTransfer });
+    expect(nonTargetMaterial).not.toHaveAttribute('data-drop-state');
+
+    const mixedFileTransfer = createDataTransfer();
+    writeLibraryMaterialDragPayload(mixedFileTransfer, materialId);
+    Object.defineProperty(mixedFileTransfer, 'files', {
+      configurable: true,
+      value: [new File(['外部文件'], '外部文件.txt')],
+    });
+    fireEvent.dragOver(folderTarget, { dataTransfer: mixedFileTransfer });
+    expect(folderTarget).toHaveAttribute('data-drop-state', 'invalid');
+    fireEvent.drop(folderTarget, { dataTransfer: mixedFileTransfer });
+    expect(folderTarget).not.toHaveAttribute('data-drop-state');
+
+    const cancelTransfer = createDataTransfer();
+    writeLibraryMaterialDragPayload(cancelTransfer, materialId);
+    const currentSource = screen.getByRole('treeitem', { name: '示例书' });
+    fireEvent.dragStart(currentSource, { dataTransfer: cancelTransfer });
+    fireEvent.dragOver(folderTarget, { dataTransfer: cancelTransfer });
+    expect(folderTarget).toHaveAttribute('data-drop-state', 'valid');
+    fireEvent.dragEnd(currentSource);
+    expect(folderTarget).not.toHaveAttribute('data-drop-state');
+
+    unmount();
+  });
+
+  it('拖拽移动的平台失败时保留原归属并清理放置反馈', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    await folderRepository.createFolder('文史', null);
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    vi.spyOn(services.importRepository, 'moveMaterialToFolder').mockRejectedValueOnce(
+      new Error('模拟平台写入失败'),
+    );
+    renderApp(services);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+
+    const materialId = (await services.importRepository.listMaterials())[0]!.id;
+    const source = screen.getByRole('treeitem', { name: '示例书' });
+    const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
+    const transfer = createDataTransfer();
+    writeLibraryMaterialDragPayload(transfer, materialId);
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    fireEvent.drop(folderTarget, { dataTransfer: transfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent('移动材料失败:模拟平台写入失败');
+    });
+    expect((await services.importRepository.listMaterials())[0]?.folderId).toBeNull();
+    expect(folderTarget).not.toHaveAttribute('data-drop-state');
+  });
+
+  it('拖动期间文件夹失效时拒绝放置并保留原归属', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const folder = await folderRepository.createFolder('文史', null);
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    renderApp(services);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+
+    const materialId = (await services.importRepository.listMaterials())[0]!.id;
+    const source = screen.getByRole('treeitem', { name: '示例书' });
+    const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
+    const transfer = createDataTransfer();
+    writeLibraryMaterialDragPayload(transfer, materialId);
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    await folderRepository.deleteFolder(folder.id);
+    fireEvent.drop(folderTarget, { dataTransfer: transfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(
+        '移动材料失败:目标文件夹不存在,请刷新书库后重试',
+      );
+    });
+    expect((await services.importRepository.listMaterials())[0]?.folderId).toBeNull();
+    expect(folderTarget).not.toHaveAttribute('data-drop-state');
   });
 
   it('删除文件夹前明确确认,取消不变更,确认后递归移除并保留打开材料', async () => {
