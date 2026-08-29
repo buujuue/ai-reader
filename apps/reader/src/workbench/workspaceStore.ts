@@ -38,6 +38,7 @@ export interface WorkspaceStoreState {
   /** 阅读材料级排版覆盖;键为 BookId。 */
   materialTypography: Record<string, Partial<ReadingTypography>>;
   expandedLibraryFolderIds: string[];
+  unfiledMaterialsExpanded: boolean;
   setPrimarySidebarVisible: (visible: boolean) => void;
   setTocVisible: (visible: boolean) => void;
   setActivityPanelWidth: (width: number) => void;
@@ -50,6 +51,8 @@ export interface WorkspaceStoreState {
   setMaterialTypography: (materialId: string, override: Partial<ReadingTypography>) => void;
   resetMaterialTypography: (materialId: string) => void;
   setLibraryFolderExpanded: (folderId: string, expanded: boolean) => void;
+  setUnfiledMaterialsExpanded: (expanded: boolean) => void;
+  pruneLibraryFolderExpansion: (validFolderIds: readonly string[]) => void;
   removeLibraryFolderIds: (folderIds: readonly string[]) => void;
   getEffectiveTypography: (materialId: string) => ReadingTypography;
   openView: (materialId: string) => string;
@@ -150,6 +153,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
   materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
   expandedLibraryFolderIds: [...(DEFAULT_WORKSPACE_STATE.expandedLibraryFolderIds ?? [])],
+  unfiledMaterialsExpanded: DEFAULT_WORKSPACE_STATE.unfiledMaterialsExpanded ?? true,
 
   setPrimarySidebarVisible: (visible) =>
     set((state) => ({
@@ -234,6 +238,18 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       if (expanded) current.add(folderId);
       else current.delete(folderId);
       return { expandedLibraryFolderIds: [...current] };
+    }),
+
+  setUnfiledMaterialsExpanded: (expanded) => set({ unfiledMaterialsExpanded: expanded }),
+
+  pruneLibraryFolderExpansion: (validFolderIds) =>
+    set((state) => {
+      const valid = new Set(validFolderIds);
+      const expandedLibraryFolderIds = [...new Set(
+        state.expandedLibraryFolderIds.filter((id) => valid.has(id)),
+      )];
+      if (expandedLibraryFolderIds.length === state.expandedLibraryFolderIds.length) return state;
+      return { expandedLibraryFolderIds };
     }),
 
   removeLibraryFolderIds: (folderIds) =>
@@ -439,6 +455,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       expandedLibraryFolderIds: Array.isArray(state.expandedLibraryFolderIds)
         ? [...new Set(state.expandedLibraryFolderIds.filter((id) => typeof id === 'string'))]
         : [],
+      unfiledMaterialsExpanded: state.unfiledMaterialsExpanded ?? true,
     });
   },
 
@@ -454,5 +471,6 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: structuredClone(DEFAULT_WORKSPACE_STATE.materialTypography),
       expandedLibraryFolderIds: [...(DEFAULT_WORKSPACE_STATE.expandedLibraryFolderIds ?? [])],
+      unfiledMaterialsExpanded: DEFAULT_WORKSPACE_STATE.unfiledMaterialsExpanded ?? true,
     }),
 }));

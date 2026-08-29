@@ -385,14 +385,20 @@ export function App() {
               aria-label="紧凑布局侧栏抽屉"
               className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
             >
-              {effectiveVisibleSidebars.includes('toc') ? (
-                <div className="app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50">
+              {visibleSidebars.includes('toc') ? (
+                <div
+                  aria-hidden={compactActivityPanelDismissed ? 'true' : undefined}
+                  className={`app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50 ${compactActivityPanelDismissed ? 'hidden' : ''}`}
+                >
                   <TocSidebar />
                   <SidebarResizeHandle />
                 </div>
               ) : null}
-              {effectiveVisibleSidebars.includes('primary') ? (
-                <div className="app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50">
+              {visibleSidebars.includes('primary') ? (
+                <div
+                  aria-hidden={compactActivityPanelDismissed ? 'true' : undefined}
+                  className={`app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50 ${compactActivityPanelDismissed ? 'hidden' : ''}`}
+                >
                   <PrimarySidebar />
                   <SidebarResizeHandle />
                 </div>

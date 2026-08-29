@@ -83,6 +83,20 @@ describe('工作台命令处理', () => {
     expect(useWorkspaceStore.getState().activityPanelWidth).toBe(240);
   });
 
+  it('切换未归类展开状态会持久化并可在重启后恢复', async () => {
+    await registry.execute(COMMAND_IDS.workbenchSetUnfiledMaterialsExpanded, false);
+
+    expect(useWorkspaceStore.getState().unfiledMaterialsExpanded).toBe(false);
+    await expect(repository.loadState()).resolves.toMatchObject({
+      unfiledMaterialsExpanded: false,
+    });
+
+    useWorkspaceStore.getState().resetToDefault();
+    useWorkspaceStore.getState().hydrate(await repository.loadState());
+
+    expect(useWorkspaceStore.getState().unfiledMaterialsExpanded).toBe(false);
+  });
+
   it('返回键关闭对话框与 WebView 后退都经稳定命令执行', async () => {
     useShellUiStore.getState().openMetadataEditor('material-1');
     await registry.execute(COMMAND_IDS.shellDismissDialog, 'metadata');

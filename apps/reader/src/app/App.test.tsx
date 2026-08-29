@@ -212,6 +212,8 @@ describe('阅读工作台外壳', () => {
 
       await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
       await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
+      const search = screen.getByRole('searchbox', { name: '筛选书库' });
+      await user.type(search, '示例');
       await user.click(screen.getByRole('button', { name: '打开 示例书' }));
 
       await waitFor(() =>
@@ -223,6 +225,7 @@ describe('阅读工作台外壳', () => {
       await waitFor(() =>
         expect(screen.getByRole('complementary', { name: '书库侧栏' })).toBeInTheDocument(),
       );
+      expect(screen.getByRole('searchbox', { name: '筛选书库' })).toHaveValue('示例');
       await user.click(screen.getByRole('button', { name: '目录' }));
       await waitFor(() =>
         expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument(),
@@ -323,6 +326,123 @@ describe('阅读工作台外壳', () => {
 
     expect(screen.getByText('没有匹配的材料')).toBeInTheDocument();
     expect(screen.queryByText('示例书')).not.toBeInTheDocument();
+  });
+
+  it('搜索文件夹树时展示完整路径并只临时展开命中路径,清空后恢复原状态', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const importRepository = services.importRepository;
+    const root = await folderRepository.createFolder('历史', null);
+    const child = await folderRepository.createFolder('欧洲', root.id);
+    const staged = await importRepository.stageImport('演示书/示例书.epub');
+    const material = await importRepository.commitImport(staged, {
+      title: '法国史',
+      author: '作者甲',
+      language: 'zh',
+    });
+    await importRepository.moveMaterialToFolder(material.id, child.id);
+    await repository.saveState({
+      ...DEFAULT_WORKSPACE_STATE,
+      expandedLibraryFolderIds: [],
+    });
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository,
+      filePicker: services.filePicker,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    const user = userEvent.setup();
+    renderApp(services);
+    await waitFor(() => expect(screen.getByRole('tree', { name: '书库文件夹树' })).toBeInTheDocument());
+
+    const search = screen.getByRole('searchbox', { name: '筛选书库' });
+    await user.type(search, '作者甲');
+
+    expect(screen.getByText('路径：历史 / 欧洲')).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: '文件夹 历史' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('treeitem', { name: '文件夹 欧洲' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(repository.loadState()).resolves.toMatchObject({ expandedLibraryFolderIds: [] });
+
+    await user.clear(search);
+
+    expect(screen.getByRole('treeitem', { name: '文件夹 历史' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('treeitem', { name: '文件夹 欧洲' })).not.toBeInTheDocument();
+    await expect(repository.loadState()).resolves.toMatchObject({ expandedLibraryFolderIds: [] });
+  });
+
+  it('重启恢复书库时忽略失效 FolderId,不阻塞书库显示', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const validFolder = await folderRepository.createFolder('仍存在', null);
+    await repository.saveState({
+      ...DEFAULT_WORKSPACE_STATE,
+      expandedLibraryFolderIds: ['folder-deleted', validFolder.id],
+    });
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+    });
+
+    renderApp(services);
+
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '文件夹 仍存在' })).toBeInTheDocument());
+    expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual([validFolder.id]);
+    await expect(repository.loadState()).resolves.toMatchObject({
+      expandedLibraryFolderIds: [validFolder.id],
+    });
+  });
+
+  it('未归类折叠状态进入工作区并在重启后恢复', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole('button', { name: '收起未归类材料' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().unfiledMaterialsExpanded).toBe(false));
+    await expect(repository.loadState()).resolves.toMatchObject({ unfiledMaterialsExpanded: false });
+
+    unmount();
+    useLibraryStore.getState().resetToDefault();
+    useWorkspaceStore.getState().resetToDefault();
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository: services.importRepository,
+      filePicker: services.filePicker,
+      libraryFolderRepository: services.libraryFolderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    renderApp(services);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '展开未归类材料' })).toBeInTheDocument());
+    expect(useWorkspaceStore.getState().unfiledMaterialsExpanded).toBe(false);
+  });
+
+  it('书库树支持方向键、Home/End、Enter/Space 与 Escape,且搜索不会改写持久展开状态', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '未归类材料' })).toBeInTheDocument());
+
+    const unfiled = screen.getByRole('treeitem', { name: '未归类材料' });
+    const material = screen.getByRole('treeitem', { name: '示例书' });
+    unfiled.focus();
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(material);
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(unfiled);
+    await user.keyboard('{ArrowRight}');
+    expect(document.activeElement).toBe(material);
+    await user.keyboard('{ArrowLeft}');
+    expect(document.activeElement).toBe(unfiled);
+    await user.keyboard('{Space}');
+    await waitFor(() => expect(screen.getByRole('button', { name: '展开未归类材料' })).toBeInTheDocument());
+
+    const search = screen.getByRole('searchbox', { name: '筛选书库' });
+    await user.type(search, '示例书');
+    await user.keyboard('{Escape}');
+    expect(search).toHaveValue('');
+    await expect(repository.loadState()).resolves.toMatchObject({ unfiledMaterialsExpanded: false });
   });
 
   it('材料更多菜单打开批注覆盖面板并按批注文本筛选', async () => {

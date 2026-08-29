@@ -47,6 +47,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
         'mat-1': { fontSize: 22, flow: 'scrolled' },
       },
       expandedLibraryFolderIds: ['folder-1'],
+      unfiledMaterialsExpanded: false,
     };
 
     await repository.saveState(state);
@@ -68,6 +69,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: {},
       expandedLibraryFolderIds: [],
+      unfiledMaterialsExpanded: true,
     });
 
     await repository.saveState({
@@ -82,6 +84,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: {},
       expandedLibraryFolderIds: [],
+      unfiledMaterialsExpanded: true,
     });
 
     await expect(repository.loadState()).resolves.toEqual({
@@ -96,6 +99,7 @@ export function workspaceRepositoryContract(makeRepository: WorkspaceRepositoryF
       globalReadingTypography: DEFAULT_WORKSPACE_STATE.globalReadingTypography,
       materialTypography: {},
       expandedLibraryFolderIds: [],
+      unfiledMaterialsExpanded: true,
     });
   });
 }

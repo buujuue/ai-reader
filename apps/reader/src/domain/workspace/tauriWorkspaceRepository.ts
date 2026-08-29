@@ -123,6 +123,9 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   const expandedLibraryFolderIds = Array.isArray(candidate.expandedLibraryFolderIds)
     ? [...new Set(candidate.expandedLibraryFolderIds.filter((id): id is string => typeof id === 'string'))]
     : [];
+  const unfiledMaterialsExpanded = typeof candidate.unfiledMaterialsExpanded === 'boolean'
+    ? candidate.unfiledMaterialsExpanded
+    : (DEFAULT_WORKSPACE_STATE.unfiledMaterialsExpanded ?? true);
   const sidebarVisibility = normalizeSidebarVisibility(
     candidate.primarySidebarVisible,
     typeof candidate.tocVisible === 'boolean'
@@ -143,6 +146,7 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
     globalReadingTypography,
     materialTypography: Object.fromEntries(materialOverrideEntries),
     expandedLibraryFolderIds,
+    unfiledMaterialsExpanded,
   };
 }
 

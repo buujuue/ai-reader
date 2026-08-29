@@ -3,7 +3,7 @@ import type { NavigationHistory } from '../reader/navigationHistory';
 import type { ReadingTypography } from '../reader/typography';
 import { DEFAULT_READING_TYPOGRAPHY } from '../reader/typography';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 11;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 12;
 
 export const DEFAULT_ACTIVITY_PANEL_WIDTH = 304;
 export const MIN_ACTIVITY_PANEL_WIDTH = 240;
@@ -65,6 +65,8 @@ export interface WorkspaceState {
   materialTypography: Record<string, Partial<ReadingTypography>>;
   /** 书库文件夹树的展开状态;旧工作区缺失时为空。 */
   expandedLibraryFolderIds?: string[];
+  /** 未归类材料区域的展开状态;旧工作区缺失时默认展开。 */
+  unfiledMaterialsExpanded?: boolean;
 }
 
 export const DEFAULT_EDITOR_GROUP_ID = 'group-1';
@@ -98,4 +100,5 @@ export const DEFAULT_WORKSPACE_STATE: WorkspaceState = Object.freeze({
   globalReadingTypography: DEFAULT_READING_TYPOGRAPHY,
   materialTypography: Object.freeze({}),
   expandedLibraryFolderIds: [] as string[],
+  unfiledMaterialsExpanded: true,
 });

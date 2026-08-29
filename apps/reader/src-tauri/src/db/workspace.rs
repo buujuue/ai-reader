@@ -130,6 +130,13 @@ pub struct WorkspaceState {
     /// 书库文件夹树的展开状态。旧工作区缺失时为空。
     #[serde(default)]
     pub expanded_library_folder_ids: Vec<String>,
+    /// 未归类材料区域的展开状态。旧工作区缺失时默认展开。
+    #[serde(default = "default_unfiled_materials_expanded")]
+    pub unfiled_materials_expanded: bool,
+}
+
+fn default_unfiled_materials_expanded() -> bool {
+    true
 }
 
 /// 材料级排版覆盖:允许只覆盖部分字段,未覆盖字段沿用全局默认。
@@ -155,7 +162,7 @@ pub struct PartialTypography {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            schema_version: 11,
+            schema_version: 12,
             primary_sidebar_visible: true,
             toc_visible: false,
             activity_panel_width: 304,
@@ -170,6 +177,7 @@ impl Default for WorkspaceState {
             global_reading_typography: ReadingTypography::default(),
             material_typography: HashMap::new(),
             expanded_library_folder_ids: Vec::new(),
+            unfiled_materials_expanded: true,
         }
     }
 }
@@ -242,7 +250,7 @@ mod tests {
             },
         );
         WorkspaceState {
-            schema_version: 11,
+            schema_version: 12,
             primary_sidebar_visible: false,
             toc_visible: true,
             activity_panel_width: 336,
@@ -288,6 +296,7 @@ mod tests {
             },
             material_typography,
             expanded_library_folder_ids: vec!["folder-1".to_string()],
+            unfiled_materials_expanded: false,
         }
     }
 
@@ -316,7 +325,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"schemaVersion":11,"primarySidebarVisible":true,"tocVisible":false,"activityPanelWidth":304,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{},"expandedLibraryFolderIds":[]}"#
+            r#"{"schemaVersion":12,"primarySidebarVisible":true,"tocVisible":false,"activityPanelWidth":304,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"},"materialTypography":{},"expandedLibraryFolderIds":[],"unfiledMaterialsExpanded":true}"#
         );
     }
 
@@ -328,6 +337,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(state.activity_panel_width, 304);
+        assert!(state.unfiled_materials_expanded);
     }
 
     #[test]

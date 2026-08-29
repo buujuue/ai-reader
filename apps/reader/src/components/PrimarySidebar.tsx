@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   Archive,
   BookOpenCheck,
@@ -27,7 +27,10 @@ import {
   sortLibraryFolders,
   type LibraryFolder,
 } from '../domain/library/libraryFolder';
-import { filterMaterialsByQuery } from '../domain/library/libraryFilter';
+import {
+  buildLibraryTreeSearch,
+  type LibraryTreeSearchResult,
+} from '../domain/library/libraryFilter';
 import type { ReadingMaterial } from '../domain/library/material';
 import { formatFromSourceFileName, formatLabel } from '../domain/library/materialFormat';
 import { useLibraryStore } from '../workbench/libraryStore';
@@ -44,6 +47,18 @@ interface MoveFolderOption {
   id: string;
   label: string;
   depth: number;
+}
+
+type LibraryTreeItemKind = 'folder' | 'material' | 'unfiled';
+
+interface LibraryTreeItem {
+  key: string;
+  kind: LibraryTreeItemKind;
+  folderId?: string;
+  materialId?: string;
+  parentKey: string | null;
+  expandable: boolean;
+  expanded: boolean;
 }
 
 function folderErrorMessage(error: unknown, fallback = '文件夹操作失败,请重试'): string {
@@ -114,6 +129,7 @@ export function PrimarySidebar() {
   const openFolderDeleteConfirm = useShellUiStore((state) => state.openFolderDeleteConfirm);
   const primaryMaterialId = useWorkspaceStore((state) => state.primaryMaterialId);
   const expandedFolderIds = useWorkspaceStore((state) => state.expandedLibraryFolderIds);
+  const storedUnfiledExpanded = useWorkspaceStore((state) => state.unfiledMaterialsExpanded);
   const importing = useLibraryStore((state) => state.importing);
   const libraryFilterFocusToken = useShellUiStore((state) => state.libraryFilterFocusToken);
   const filterRef = useRef<HTMLInputElement | null>(null);
@@ -123,19 +139,20 @@ export function PrimarySidebar() {
   const [focusedMaterialId, setFocusedMaterialId] = useState<string | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
-  const [unfiledExpanded, setUnfiledExpanded] = useState(true);
+  const [searchExpansionOverrides, setSearchExpansionOverrides] = useState<Record<string, boolean>>({});
+  const [unfiledSearchOverride, setUnfiledSearchOverride] = useState<boolean | null>(null);
+  const [focusedTreeItemKey, setFocusedTreeItemKey] = useState<string | null>(null);
   const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const treeItemRefs = useRef(new Map<string, HTMLLIElement>());
 
-  const filtered = useMemo(
-    () => filterMaterialsByQuery(materials, query),
-    [materials, query],
+  const searchResult: LibraryTreeSearchResult = useMemo(
+    () => buildLibraryTreeSearch(folders, materials, query),
+    [folders, materials, query],
   );
-  const queryKey = query.trim().toLocaleLowerCase('zh-CN');
-  const filteredMaterialIds = useMemo(
-    () => new Set(filtered.map((material) => material.id)),
-    [filtered],
-  );
+  const queryKey = searchResult.query;
+  const visibleMaterialIds = searchResult.visibleMaterialIds;
+  const visibleFolderIds = searchResult.visibleFolderIds;
 
   const folderChildren = useMemo(() => {
     const children = new Map<string, LibraryFolder[]>();
@@ -153,68 +170,6 @@ export function PrimarySidebar() {
     [folders],
   );
 
-  const folderNameMatches = useMemo(() => {
-    if (!queryKey) return new Set<string>();
-    return new Set(
-      folders
-        .filter((folder) => folder.name.toLocaleLowerCase('zh-CN').includes(queryKey))
-        .map((folder) => folder.id),
-    );
-  }, [folders, queryKey]);
-
-  const folderSearchScope = useMemo(() => {
-    const scope = new Set<string>();
-    if (!queryKey) return scope;
-    const children = new Map<string, LibraryFolder[]>();
-    for (const folder of folders) {
-      if (folder.parentId === null) continue;
-      const siblings = children.get(folder.parentId) ?? [];
-      siblings.push(folder);
-      children.set(folder.parentId, siblings);
-    }
-    const includeDescendants = (folderId: string) => {
-      if (scope.has(folderId)) return;
-      scope.add(folderId);
-      for (const child of children.get(folderId) ?? []) includeDescendants(child.id);
-    };
-    for (const folderId of folderNameMatches) includeDescendants(folderId);
-    return scope;
-  }, [folders, folderNameMatches, queryKey]);
-
-  const visibleMaterialIds = useMemo(() => {
-    if (!queryKey) return new Set(materials.map((material) => material.id));
-    return new Set(
-      materials
-        .filter(
-          (material) =>
-            filteredMaterialIds.has(material.id) ||
-            (material.folderId !== null && folderSearchScope.has(material.folderId)),
-        )
-        .map((material) => material.id),
-    );
-  }, [filteredMaterialIds, folderSearchScope, materials, queryKey]);
-
-  const visibleFolderIds = useMemo(() => {
-    if (!queryKey) return new Set(folders.map((folder) => folder.id));
-    const byId = new Map(folders.map((folder) => [folder.id, folder]));
-    const visible = new Set<string>();
-    const includeAncestors = (folderId: string) => {
-      let current: LibraryFolder | undefined = byId.get(folderId);
-      while (current) {
-        if (visible.has(current.id)) break;
-        visible.add(current.id);
-        current = current.parentId === null ? undefined : byId.get(current.parentId);
-      }
-    };
-    for (const folderId of folderSearchScope) includeAncestors(folderId);
-    for (const material of materials) {
-      if (visibleMaterialIds.has(material.id) && material.folderId !== null) {
-        includeAncestors(material.folderId);
-      }
-    }
-    return visible;
-  }, [folders, folderSearchScope, materials, queryKey, visibleMaterialIds]);
-
   const moveFolderOptions = useMemo(() => flattenMoveFolderOptions(folders), [folders]);
   const unfiledMaterials = useMemo(
     () =>
@@ -225,10 +180,168 @@ export function PrimarySidebar() {
       ),
     [materials, visibleMaterialIds],
   );
-  const unfiledMaterialCount = useMemo(
-    () => materials.filter((material) => material.folderId === null).length,
-    [materials],
-  );
+  const unfiledExpanded = queryKey
+    ? (unfiledSearchOverride ?? (storedUnfiledExpanded || unfiledMaterials.length > 0))
+    : storedUnfiledExpanded;
+
+  const isFolderExpanded = (folderId: string): boolean => {
+    const override = queryKey ? searchExpansionOverrides[folderId] : undefined;
+    if (override !== undefined) return override;
+    return expandedFolderIds.includes(folderId) || searchResult.autoExpandedFolderIds.has(folderId);
+  };
+
+  useEffect(() => {
+    if (!queryKey) {
+      setSearchExpansionOverrides({});
+      setUnfiledSearchOverride(null);
+    }
+  }, [queryKey]);
+
+  const visibleTreeItems = useMemo(() => {
+    const items: LibraryTreeItem[] = [];
+    const addFolder = (folder: LibraryFolder, parentKey: string | null) => {
+      if (!searchResult.visibleFolderIds.has(folder.id)) return;
+      const key = `folder:${folder.id}`;
+      const children = (folderChildren.get(folder.id) ?? []).filter((child) =>
+        searchResult.visibleFolderIds.has(child.id),
+      );
+      const folderMaterials = materials.filter(
+        (material) => material.folderId === folder.id && visibleMaterialIds.has(material.id),
+      );
+      const expanded = isFolderExpanded(folder.id);
+      items.push({
+        key,
+        kind: 'folder',
+        folderId: folder.id,
+        parentKey,
+        expandable: children.length > 0 || folderMaterials.length > 0,
+        expanded,
+      });
+      if (!expanded) return;
+      for (const child of children) addFolder(child, key);
+      for (const material of sortMaterialsByTitle(folderMaterials)) {
+        items.push({
+          key: `material:${material.id}`,
+          kind: 'material',
+          materialId: material.id,
+          parentKey: key,
+          expandable: false,
+          expanded: false,
+        });
+      }
+    };
+    for (const folder of rootFolders) addFolder(folder, null);
+    if (queryKey === '' || unfiledMaterials.length > 0) {
+      items.push({
+        key: 'unfiled',
+        kind: 'unfiled',
+        parentKey: null,
+        expandable: unfiledMaterials.length > 0,
+        expanded: unfiledExpanded,
+      });
+      if (unfiledExpanded) {
+        for (const material of unfiledMaterials) {
+          items.push({
+            key: `material:${material.id}`,
+            kind: 'material',
+            materialId: material.id,
+            parentKey: 'unfiled',
+            expandable: false,
+            expanded: false,
+          });
+        }
+      }
+    }
+    return items;
+  }, [
+    expandedFolderIds,
+    folderChildren,
+    folders,
+    materials,
+    queryKey,
+    rootFolders,
+    searchExpansionOverrides,
+    searchResult,
+    unfiledExpanded,
+    unfiledMaterials,
+    visibleMaterialIds,
+  ]);
+
+  const activeTreeItemKey = visibleTreeItems.some((item) => item.key === focusedTreeItemKey)
+    ? focusedTreeItemKey
+    : visibleTreeItems[0]?.key ?? null;
+
+  const focusTreeItem = (key: string) => {
+    if (!visibleTreeItems.some((item) => item.key === key)) return;
+    setFocusedTreeItemKey(key);
+    treeItemRefs.current.get(key)?.focus();
+  };
+
+  const toggleUnfiled = (expanded: boolean) => {
+    if (queryKey) {
+      setUnfiledSearchOverride(expanded);
+      return;
+    }
+    void commands
+      .execute(COMMAND_IDS.workbenchSetUnfiledMaterialsExpanded, expanded)
+      .catch((error: unknown) => {
+        useShellUiStore.getState().setStatusMessage(
+          `保存未归类展开状态失败:${folderErrorMessage(error, '请重试')}`,
+        );
+      });
+  };
+
+  const handleTreeItemKeyDown = (event: ReactKeyboardEvent<HTMLLIElement>, item: LibraryTreeItem) => {
+    const index = visibleTreeItems.findIndex((candidate) => candidate.key === item.key);
+    if (index < 0) return;
+    const activationKey = event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar';
+    if (activationKey) {
+      event.preventDefault();
+      if (item.kind === 'material' && item.materialId) handleOpen(item.materialId);
+      else if (item.kind === 'folder' && item.folderId) toggleFolder(item.folderId, !item.expanded);
+      else if (item.kind === 'unfiled') toggleUnfiled(!item.expanded);
+      return;
+    }
+    if (event.key === 'Escape') {
+      if (queryKey) {
+        event.preventDefault();
+        setQuery('');
+      }
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const nextIndex = event.key === 'ArrowDown' ? index + 1 : index - 1;
+      const next = visibleTreeItems[nextIndex];
+      if (next) focusTreeItem(next.key);
+      return;
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      focusTreeItem(event.key === 'Home' ? visibleTreeItems[0]!.key : visibleTreeItems.at(-1)!.key);
+      return;
+    }
+    if (event.key === 'ArrowRight' && item.expandable) {
+      event.preventDefault();
+      if (!item.expanded) {
+        if (item.kind === 'folder' && item.folderId) toggleFolder(item.folderId, true);
+        else if (item.kind === 'unfiled') toggleUnfiled(true);
+      } else {
+        const child = visibleTreeItems[index + 1];
+        if (child?.parentKey === item.key) focusTreeItem(child.key);
+      }
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      if (item.expandable && item.expanded) {
+        if (item.kind === 'folder' && item.folderId) toggleFolder(item.folderId, false);
+        else if (item.kind === 'unfiled') toggleUnfiled(false);
+      } else if (item.parentKey) {
+        focusTreeItem(item.parentKey);
+      }
+    }
+  };
 
   useEffect(() => {
     if (libraryFilterFocusToken > 0) filterRef.current?.focus();
@@ -284,14 +397,6 @@ export function PrimarySidebar() {
     folderEditor?.kind === 'create' ? folderEditor.parentId : null,
   ]);
 
-  const previousUnfiledCount = useRef(0);
-  useEffect(() => {
-    if (previousUnfiledCount.current === 0 && unfiledMaterialCount > 0) {
-      setUnfiledExpanded(true);
-    }
-    previousUnfiledCount.current = unfiledMaterialCount;
-  }, [unfiledMaterialCount]);
-
   const handleOpen = (materialId: string) => {
     const material = materials.find((item) => item.id === materialId);
     if (!material) return;
@@ -346,13 +451,17 @@ export function PrimarySidebar() {
     try {
       await commands.execute(COMMAND_IDS.libraryMoveMaterial, materialId, folderId);
       if (folderId !== null) {
-        void commands
-          .execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folderId, true)
-          .catch((error: unknown) => {
-            useShellUiStore.getState().setStatusMessage(
-              `保存文件夹展开状态失败:${folderErrorMessage(error, '请重试')}`,
-            );
-          });
+        if (queryKey) {
+          setSearchExpansionOverrides((current) => ({ ...current, [folderId]: true }));
+        } else {
+          void commands
+            .execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folderId, true)
+            .catch((error: unknown) => {
+              useShellUiStore.getState().setStatusMessage(
+                `保存文件夹展开状态失败:${folderErrorMessage(error, '请重试')}`,
+              );
+            });
+        }
       }
       closeMoreMenu();
     } catch (error: unknown) {
@@ -366,9 +475,13 @@ export function PrimarySidebar() {
     if (parentId !== null) {
       const parent = folders.find((folder) => folder.id === parentId);
       if (!parent || getLibraryFolderDepth(parent.id, folders) >= MAX_LIBRARY_FOLDER_DEPTH) return;
-      void commands
-        .execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, parentId, true)
-        .catch(() => undefined);
+      if (queryKey) {
+        setSearchExpansionOverrides((current) => ({ ...current, [parentId]: true }));
+      } else {
+        void commands
+          .execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, parentId, true)
+          .catch(() => undefined);
+      }
     }
     setFolderEditor({ kind: 'create', parentId, value: '', error: null });
   };
@@ -392,7 +505,15 @@ export function PrimarySidebar() {
     if (!folderEditor) return;
     try {
       if (folderEditor.kind === 'create') {
-        await commands.execute(COMMAND_IDS.libraryCreateFolder, folderEditor.value, folderEditor.parentId);
+        const parentId = folderEditor.parentId;
+        await commands.execute(COMMAND_IDS.libraryCreateFolder, folderEditor.value, parentId);
+        if (parentId !== null) {
+          if (queryKey) {
+            setSearchExpansionOverrides((current) => ({ ...current, [parentId]: true }));
+          } else {
+            await commands.execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, parentId, true);
+          }
+        }
       } else {
         await commands.execute(COMMAND_IDS.libraryRenameFolder, folderEditor.folderId, folderEditor.value);
       }
@@ -406,6 +527,10 @@ export function PrimarySidebar() {
   };
 
   const toggleFolder = (folderId: string, expanded: boolean) => {
+    if (queryKey) {
+      setSearchExpansionOverrides((current) => ({ ...current, [folderId]: expanded }));
+      return;
+    }
     void commands
       .execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folderId, expanded)
       .catch((error: unknown) => {
@@ -434,6 +559,7 @@ export function PrimarySidebar() {
               error: null,
             } : current)}
             onKeyDown={(event) => {
+              event.stopPropagation();
               if (event.key === 'Escape') {
                 event.preventDefault();
                 cancelFolderEdit();
@@ -455,10 +581,38 @@ export function PrimarySidebar() {
     );
   };
 
-  const renderMaterialNode = (material: ReadingMaterial, level: number): ReactNode => {
+  const renderMaterialNode = (
+    material: ReadingMaterial,
+    level: number,
+    parentKey: string | null,
+  ): ReactNode => {
     const format = formatFromSourceFileName(material.sourceFileName);
+    const treeKey = `material:${material.id}`;
+    const materialPath = searchResult.materialFolderPaths.get(material.id) ?? ['未归类'];
+    const showSearchPath = queryKey !== '' && searchResult.matchingMaterialIds.has(material.id);
+    const accessiblePath = materialPath.join(' / ');
     return (
-      <li key={material.id} role="treeitem" aria-level={level}>
+      <li
+        key={material.id}
+        ref={(element) => {
+          if (element) treeItemRefs.current.set(treeKey, element);
+          else treeItemRefs.current.delete(treeKey);
+        }}
+        className="library-material-tree-node"
+        role="treeitem"
+        aria-level={level}
+        aria-label={`${material.title}${showSearchPath ? `, 路径 ${accessiblePath}` : ''}`}
+        tabIndex={activeTreeItemKey === treeKey ? 0 : -1}
+        onFocus={() => setFocusedTreeItemKey(treeKey)}
+        onKeyDown={(event) => handleTreeItemKeyDown(event, {
+          key: treeKey,
+          kind: 'material',
+          materialId: material.id,
+          parentKey,
+          expandable: false,
+          expanded: false,
+        })}
+      >
         <div
           className="group relative library-material-tree-item"
           onPointerEnter={() => {
@@ -475,6 +629,10 @@ export function PrimarySidebar() {
             }}
             onFocus={() => focusMaterial(material.id)}
             onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+                event.stopPropagation();
+                return;
+              }
               if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                 event.preventDefault();
                 openMoreMenuForMaterial(material.id);
@@ -496,6 +654,11 @@ export function PrimarySidebar() {
               <p className="truncate text-[10px] text-zinc-500">
                 {material.author ?? '未知作者'}
               </p>
+              {showSearchPath ? (
+                <p className="library-material-path truncate" title={`路径：${accessiblePath}`}>
+                  路径：{accessiblePath}
+                </p>
+              ) : null}
               <p
                 className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium tracking-wide ${
                   material.managedFileAvailable === false
@@ -519,7 +682,11 @@ export function PrimarySidebar() {
     );
   };
 
-  const renderFolderNode = (folder: LibraryFolder, level: number): ReactNode => {
+  const renderFolderNode = (
+    folder: LibraryFolder,
+    level: number,
+    parentKey: string | null,
+  ): ReactNode => {
     if (!visibleFolderIds.has(folder.id)) return null;
     const children = (folderChildren.get(folder.id) ?? []).filter((child) => visibleFolderIds.has(child.id));
     const folderMaterials = sortMaterialsByTitle(
@@ -527,24 +694,45 @@ export function PrimarySidebar() {
         (material) => material.folderId === folder.id && visibleMaterialIds.has(material.id),
       ),
     );
-    const queryIsActive = queryKey.length > 0;
     const editingChild = folderEditor?.kind === 'create' && folderEditor.parentId === folder.id;
-    const expanded = expandedFolderIds.includes(folder.id) ||
-      editingChild ||
-      (queryIsActive && (
-        folderNameMatches.has(folder.id) ||
-        children.some((child) => visibleFolderIds.has(child.id)) ||
-        folderMaterials.length > 0
-      ));
+    const editingSelf = folderEditor?.kind === 'rename' && folderEditor.folderId === folder.id;
+    const treeKey = `folder:${folder.id}`;
+    const expanded = isFolderExpanded(folder.id) || editingChild || editingSelf;
     const canCreateChild = getLibraryFolderDepth(folder.id, folders) < MAX_LIBRARY_FOLDER_DEPTH;
     return (
-      <li key={folder.id} className="library-folder-tree-item" role="treeitem" aria-level={level} aria-expanded={expanded}>
+      <li
+        key={folder.id}
+        ref={(element) => {
+          if (element) treeItemRefs.current.set(treeKey, element);
+          else treeItemRefs.current.delete(treeKey);
+        }}
+        className="library-folder-tree-item"
+        role="treeitem"
+        aria-level={level}
+        aria-label={`文件夹 ${folder.name}`}
+        aria-expanded={expanded}
+        tabIndex={activeTreeItemKey === treeKey ? 0 : -1}
+        onFocus={() => setFocusedTreeItemKey(treeKey)}
+        onKeyDown={(event) => handleTreeItemKeyDown(event, {
+          key: treeKey,
+          kind: 'folder',
+          folderId: folder.id,
+          parentKey,
+          expandable: children.length > 0 || folderMaterials.length > 0,
+          expanded,
+        })}
+      >
         <div className="library-folder-row">
           <button
             type="button"
             className="library-folder-toggle"
             aria-label={`${expanded ? '收起' : '展开'}文件夹 ${folder.name}`}
             aria-expanded={expanded}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+                event.stopPropagation();
+              }
+            }}
             onClick={() => toggleFolder(folder.id, !expanded)}
           >
             <ChevronRight className={expanded ? 'library-folder-chevron expanded' : 'library-folder-chevron'} size={14} aria-hidden />
@@ -557,30 +745,30 @@ export function PrimarySidebar() {
               aria-label={canCreateChild ? `在“${folder.name}”中新建子文件夹` : `新建子文件夹（${folder.name}）已达到最多五层`}
               title={canCreateChild ? '新建子文件夹' : '已达到最多五层'}
               disabled={!canCreateChild}
+              onKeyDown={(event) => event.stopPropagation()}
               onClick={() => startCreateFolder(folder.id)}
             >
               <FolderPlus size={14} aria-hidden />
             </button>
-            <button type="button" aria-label={`重命名 ${folder.name}`} title="重命名文件夹" onClick={() => startRenameFolder(folder)}>
+            <button type="button" aria-label={`重命名 ${folder.name}`} title="重命名文件夹" onKeyDown={(event) => event.stopPropagation()} onClick={() => startRenameFolder(folder)}>
               <Pencil size={13} aria-hidden />
             </button>
             <button
               type="button"
               aria-label={`删除 ${folder.name}`}
               title="删除文件夹及其子文件夹"
+              onKeyDown={(event) => event.stopPropagation()}
               onClick={() => startDeleteFolder(folder)}
             >
               <Trash2 size={13} aria-hidden />
             </button>
           </div>
         </div>
-        {folderEditor?.kind === 'rename' && folderEditor.folderId === folder.id
-          ? renderFolderEditor(level)
-          : null}
         {expanded ? (
           <ul className="library-folder-group" role="group">
-            {children.map((child) => renderFolderNode(child, level + 1))}
-            {folderMaterials.map((material) => renderMaterialNode(material, level + 1))}
+            {editingSelf ? renderFolderEditor(level + 1) : null}
+            {children.map((child) => renderFolderNode(child, level + 1, treeKey))}
+            {folderMaterials.map((material) => renderMaterialNode(material, level + 1, treeKey))}
             {editingChild ? renderFolderEditor(level + 1) : null}
             {children.length === 0 && folderMaterials.length === 0 ? (
               <li className="library-tree-empty">文件夹为空</li>
@@ -760,9 +948,15 @@ export function PrimarySidebar() {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && query.length > 0) {
+                  event.preventDefault();
+                  setQuery('');
+                }
+              }}
               placeholder="按文件夹、标题或作者筛选…"
               aria-label="筛选书库"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:outline-none"
+              className="library-filter-input w-full rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:outline-none"
             />
           </div>
         </div>
@@ -771,26 +965,45 @@ export function PrimarySidebar() {
       <div className="library-tree-scroll">
         <ul className="library-tree" role="tree" aria-label="书库文件夹树">
           {folderEditor?.kind === 'create' && folderEditor.parentId === null ? renderFolderEditor(1) : null}
-          {rootFolders.map((folder) => renderFolderNode(folder, 1))}
+          {rootFolders.map((folder) => renderFolderNode(folder, 1, null))}
           {queryKey === '' || unfiledMaterials.length > 0 ? (
             <li
               className="library-unfiled-tree-item"
               role="treeitem"
               aria-level={1}
+              aria-label="未归类材料"
               aria-expanded={unfiledExpanded}
+              tabIndex={activeTreeItemKey === 'unfiled' ? 0 : -1}
+              ref={(element) => {
+                if (element) treeItemRefs.current.set('unfiled', element);
+                else treeItemRefs.current.delete('unfiled');
+              }}
+              onFocus={() => setFocusedTreeItemKey('unfiled')}
+              onKeyDown={(event) => handleTreeItemKeyDown(event, {
+                key: 'unfiled',
+                kind: 'unfiled',
+                parentKey: null,
+                expandable: unfiledMaterials.length > 0,
+                expanded: unfiledExpanded,
+              })}
             >
               <button
                 type="button"
                 className="library-unfiled-row"
                 aria-label={`${unfiledExpanded ? '收起' : '展开'}未归类材料`}
                 aria-expanded={unfiledExpanded}
-                onClick={() => setUnfiledExpanded((expanded) => !expanded)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+                    event.stopPropagation();
+                  }
+                }}
+                onClick={() => toggleUnfiled(!unfiledExpanded)}
               >
                 <ChevronRight className={unfiledExpanded ? 'library-folder-chevron expanded' : 'library-folder-chevron'} size={14} aria-hidden />
                 {unfiledExpanded ? <FolderOpen size={16} aria-hidden /> : <Folder size={16} aria-hidden />}
                 <span>未归类</span>
               </button>
-              {unfiledExpanded && (unfiledMaterialCount > 0 || materials.length === 0) ? (
+              {unfiledExpanded && (unfiledMaterials.length > 0 || materials.length === 0) ? (
                 <ul className="library-material-group" role="group">
                   {materials.length === 0 ? (
                     <li className="library-tree-empty">
@@ -803,7 +1016,7 @@ export function PrimarySidebar() {
                       <span>换个文件夹、标题或作者试试。</span>
                     </li>
                   ) : (
-                    unfiledMaterials.map((material) => renderMaterialNode(material, 2))
+                    unfiledMaterials.map((material) => renderMaterialNode(material, 2, 'unfiled'))
                   )}
                 </ul>
               ) : null}

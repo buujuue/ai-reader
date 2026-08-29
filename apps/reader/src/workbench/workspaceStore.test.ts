@@ -35,6 +35,19 @@ describe('Workspace Store', () => {
     expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual(['folder-keep']);
   });
 
+  it('持有可序列化的未归类展开状态并清理恢复载荷中的失效文件夹 ID', () => {
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      expandedLibraryFolderIds: ['folder-valid', 'folder-missing', 'folder-valid'],
+      unfiledMaterialsExpanded: false,
+    });
+
+    useWorkspaceStore.getState().pruneLibraryFolderExpansion(['folder-valid']);
+
+    expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual(['folder-valid']);
+    expect(useWorkspaceStore.getState().unfiledMaterialsExpanded).toBe(false);
+  });
+
   it('用已持久化的工作区状态还原 Store', () => {
     useWorkspaceStore.getState().hydrate({
       ...DEFAULT_WORKSPACE_STATE,

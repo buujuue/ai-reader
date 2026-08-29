@@ -17,6 +17,7 @@ export function createInMemoryWorkspaceRepository(): WorkspaceRepository {
       stored = structuredClone({
         ...state,
         ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+        unfiledMaterialsExpanded: state.unfiledMaterialsExpanded ?? true,
       });
     },
   };

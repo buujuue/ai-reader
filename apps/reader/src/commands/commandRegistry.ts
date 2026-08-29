@@ -6,6 +6,7 @@ export const COMMAND_IDS = {
   workbenchToggleToc: 'workbench.toggleToc',
   workbenchSetActivityPanelWidth: 'workbench.setActivityPanelWidth',
   workbenchSetLibraryFolderExpanded: 'workbench.setLibraryFolderExpanded',
+  workbenchSetUnfiledMaterialsExpanded: 'workbench.setUnfiledMaterialsExpanded',
   workbenchSaveState: 'workbench.saveState',
   appBack: 'app.back',
   shellDismissDialog: 'shell.dismissDialog',

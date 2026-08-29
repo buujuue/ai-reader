@@ -43,6 +43,7 @@ export function serializeWorkspaceState(): WorkspaceState {
     globalReadingTypography: store.globalReadingTypography,
     materialTypography: store.materialTypography,
     expandedLibraryFolderIds: store.expandedLibraryFolderIds,
+    unfiledMaterialsExpanded: store.unfiledMaterialsExpanded,
   };
 }
 
@@ -207,6 +208,17 @@ export function registerWorkbenchCommands(
       expandedLibraryFolderIds: [...folderIds],
     });
     useWorkspaceStore.getState().setLibraryFolderExpanded(folderId, expanded);
+  });
+
+  registry.register(COMMAND_IDS.workbenchSetUnfiledMaterialsExpanded, async (...args: unknown[]) => {
+    const expanded = args[0];
+    if (typeof expanded !== 'boolean') return;
+    const current = serializeWorkspaceState();
+    await dependencies.workspaceRepository.saveState({
+      ...current,
+      unfiledMaterialsExpanded: expanded,
+    });
+    useWorkspaceStore.getState().setUnfiledMaterialsExpanded(expanded);
   });
 
   registry.register(COMMAND_IDS.workbenchOpenAnnotationPanel, async (...args: unknown[]) => {

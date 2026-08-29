@@ -5,7 +5,7 @@
 - 主要阅读材料与材料批注覆盖面板使用稳定命令 `workbench.setPrimaryMaterial`、`workbench.openAnnotationPanel`、`annotation.openNoteEditor`、`annotation.goTo`、`annotation.exportMarkdown` 和 `annotation.createPdfArea`；书库筛选聚焦与阅读排版入口分别使用 `workbench.focusLibraryFilter`、`reader.typography.open`，组件不直接改写工作区持久化状态。
 
 - `commandRegistry.ts`：核心命令机制。
-  - `COMMAND_IDS`：稳定 Command ID 的单一来源（含 `library.createFolder`、`library.renameFolder`、`library.moveMaterial`、`workbench.setLibraryFolderExpanded`，以及 `workbench.togglePrimarySidebar`、`workbench.saveState`、`library.import`、`library.relink`、`library.refresh`、`library.openBook`、`library.exportBackup`、`reader.activateView`、`reader.nextPage`、`reader.prevPage`、`reader.closeView`、`reader.restoreView`、`reader.typography.apply`、`reader.typography.reset`、`reader.typography.setGlobal`、`annotation.createPdfArea`）。
+  - `COMMAND_IDS`：稳定 Command ID 的单一来源（含 `library.createFolder`、`library.renameFolder`、`library.moveMaterial`、`workbench.setLibraryFolderExpanded`、`workbench.setUnfiledMaterialsExpanded`，以及 `workbench.togglePrimarySidebar`、`workbench.saveState`、`library.import`、`library.relink`、`library.refresh`、`library.openBook`、`library.exportBackup`、`reader.activateView`、`reader.nextPage`、`reader.prevPage`、`reader.closeView`、`reader.restoreView`、`reader.typography.apply`、`reader.typography.reset`、`reader.typography.setGlobal`、`annotation.createPdfArea`）。
   - `CommandRegistry`：注册/执行命令，支持 `register`、`has`、`execute`；重复注册抛 `DuplicateCommandError`，未注册执行抛 `UnknownCommandError`。
   - 所有按钮、菜单、键盘、触摸 Adapter 都通过稳定 Command ID 执行用户意图，避免同一意图多套逻辑。
 - 搜索模式切换使用稳定命令 `reader.search.toggleMode`，由工作台命令层统一编排文本/正则搜索；组件不直接调用阅读器实现。

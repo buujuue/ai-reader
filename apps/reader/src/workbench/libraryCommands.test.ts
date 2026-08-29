@@ -60,6 +60,23 @@ describe('书库材料归类 Command', () => {
     expect(useLibraryStore.getState().materials[0]?.folderId).toBeNull();
   });
 
+  it('刷新书库时安全忽略并清理不存在的文件夹展开 ID', async () => {
+    const root = useLibraryStore.getState().folders[0]!;
+    const persisted = await services.workspaceRepository.loadState();
+    await services.workspaceRepository.saveState({
+      ...persisted,
+      expandedLibraryFolderIds: [root.id, 'folder-deleted'],
+    });
+    useWorkspaceStore.getState().hydrate(await services.workspaceRepository.loadState());
+
+    await services.commands.execute(COMMAND_IDS.libraryRefresh);
+
+    expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual([root.id]);
+    await expect(services.workspaceRepository.loadState()).resolves.toMatchObject({
+      expandedLibraryFolderIds: [root.id],
+    });
+  });
+
   it('递归删除文件夹后把活跃及回收站材料转为未归类并清理展开状态', async () => {
     const root = useLibraryStore.getState().folders[0]!;
     const child = await services.libraryFolderRepository.createFolder('子级', root.id);

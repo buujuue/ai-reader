@@ -64,6 +64,26 @@ export function registerLibraryCommands(
     useLibraryStore.getState().setMaterials(materials);
     useLibraryStore.getState().setTrashedMaterials(trashedMaterials);
     useLibraryStore.getState().setFolders(folders);
+
+    const workspace = useWorkspaceStore.getState();
+    const validFolderIds = new Set(folders.map((folder) => folder.id));
+    const nextExpandedFolderIds = [...new Set(
+      workspace.expandedLibraryFolderIds.filter((folderId) => validFolderIds.has(folderId)),
+    )];
+    const expansionChanged =
+      nextExpandedFolderIds.length !== workspace.expandedLibraryFolderIds.length ||
+      nextExpandedFolderIds.some((folderId, index) => folderId !== workspace.expandedLibraryFolderIds[index]);
+    if (expansionChanged) {
+      workspace.pruneLibraryFolderExpansion([...validFolderIds]);
+      if (dependencies.workspaceRepository) {
+        try {
+          await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+        } catch (error: unknown) {
+          // 失效 ID 已从运行时状态移除;清理持久化失败不能阻塞书库、标签或阅读位置恢复。
+          console.error('清理失效文件夹展开状态失败', error);
+        }
+      }
+    }
   });
 
   registry.register(COMMAND_IDS.libraryCreateFolder, async (...args: unknown[]) => {

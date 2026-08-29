@@ -796,6 +796,19 @@ body::-webkit-scrollbar-thumb:hover,
   border-radius: 8px;
 }
 
+.library-folder-tree-item:focus-visible,
+.library-unfiled-tree-item:focus-visible,
+.library-material-tree-node:focus-visible {
+  outline: 2px solid var(--prototype-focus);
+  outline-offset: 2px;
+}
+
+.library-material-path {
+  color: var(--prototype-accent);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .library-material-tree-item:hover {
   background: var(--prototype-surface-hover);
 }
@@ -828,7 +841,8 @@ body::-webkit-scrollbar-thumb:hover,
 
   .library-folder-row,
   .library-folder-toggle,
-  .library-unfiled-row {
+  .library-unfiled-row,
+  .library-filter-input {
     min-height: 44px;
   }
 
