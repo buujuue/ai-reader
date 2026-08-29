@@ -48,6 +48,7 @@ function createFakeTauriBackend(): {
       language,
       fingerprint,
       sourceFileName,
+      folderId: null,
       source: { title, author, language },
       override: { title: null, author: null, coverSource: null },
       coverSource: null,
@@ -181,6 +182,16 @@ function createFakeTauriBackend(): {
       }
       case IMPORT_COMMAND_NAMES.list:
         return [...materials.values()].filter((material) => !trashed.has(material.id));
+      case IMPORT_COMMAND_NAMES.moveToFolder: {
+        const { materialId, folderId } = args as { materialId: string; folderId: string | null };
+        const current = materials.get(materialId);
+        if (!current || trashed.has(materialId)) {
+          throw new Error('material missing');
+        }
+        const updated = { ...current, folderId };
+        materials.set(materialId, updated);
+        return updated;
+      }
       case IMPORT_COMMAND_NAMES.listTrashed:
         return [...materials.values()].filter((material) => trashed.has(material.id));
       case IMPORT_COMMAND_NAMES.trash: {
@@ -472,6 +483,7 @@ describe('TauriImportRepository 边界映射', () => {
     expect(IMPORT_COMMAND_NAMES.discard).toBe('discard_import');
     expect(IMPORT_COMMAND_NAMES.commit).toBe('commit_import');
     expect(IMPORT_COMMAND_NAMES.list).toBe('list_materials');
+    expect(IMPORT_COMMAND_NAMES.moveToFolder).toBe('move_material_to_folder');
     expect(IMPORT_COMMAND_NAMES.listTrashed).toBe('list_trashed');
     expect(IMPORT_COMMAND_NAMES.trash).toBe('trash_material');
     expect(IMPORT_COMMAND_NAMES.restoreMaterial).toBe('restore_material');

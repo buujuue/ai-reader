@@ -34,6 +34,8 @@ export interface ImportRepository {
   ): Promise<ReadingMaterial>;
   /** 列出活跃书库中的阅读材料(带覆盖优先、来源兜底的有效元数据)。 */
   listMaterials(): Promise<ReadingMaterial[]>;
+  /** 移动一份活跃材料到具体文件夹;folderId 为 null 时移回未归类。 */
+  moveMaterialToFolder(materialId: string, folderId: string | null): Promise<ReadingMaterial>;
   /** 列出回收站中的阅读材料(普通删除仅隐藏入口并移除正文副本,保留用户数据)。 */
   listTrashed(): Promise<ReadingMaterial[]>;
   /** 普通删除:隐藏书库入口并移除正文副本,保留 BookId、封面与全部用户数据。 */

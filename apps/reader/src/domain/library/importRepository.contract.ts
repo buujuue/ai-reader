@@ -42,6 +42,42 @@ export function importRepositoryContract(harness: ImportContractHarness): void {
     expect(first?.language).toBe('zh');
   });
 
+  it('新导入材料默认未归类,可移动到文件夹并移回未归类', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.epub', encodeUtf8('folder-book'));
+    const material = await repository.commitImport(staged, {
+      title: '文件夹书',
+      author: null,
+      language: 'zh',
+    });
+
+    expect(material.folderId).toBeNull();
+    const moved = await repository.moveMaterialToFolder(material.id, 'folder-1');
+    expect(moved).toMatchObject({ id: material.id, folderId: 'folder-1' });
+    expect((await repository.listMaterials())[0]?.folderId).toBe('folder-1');
+
+    const unfiled = await repository.moveMaterialToFolder(material.id, null);
+    expect(unfiled.folderId).toBeNull();
+    expect((await repository.listMaterials())[0]?.folderId).toBeNull();
+  });
+
+  it('材料移入回收站并恢复时保留文件夹归属', async () => {
+    const repository = harness.createRepository();
+    const staged = await harness.stage('book.epub', encodeUtf8('folder-trash-book'));
+    const material = await repository.commitImport(staged, {
+      title: '可恢复书',
+      author: null,
+      language: null,
+    });
+    await repository.moveMaterialToFolder(material.id, 'folder-1');
+
+    await repository.trashMaterial(material.id);
+    expect((await repository.listTrashed())[0]?.folderId).toBe('folder-1');
+    const restored = await repository.restoreMaterial(material.id);
+    expect(restored.folderId).toBe('folder-1');
+    expect((await repository.listMaterials())[0]?.folderId).toBe('folder-1');
+  });
+
   it('来源封面与自定义覆盖分层,读取时自定义优先且清除后回落来源', async () => {
     const repository = harness.createRepository();
     const staged = await harness.stage('book.epub', encodeUtf8('cover-book'));

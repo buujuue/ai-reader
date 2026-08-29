@@ -28,6 +28,7 @@ import {
   type LibraryFolder,
 } from '../domain/library/libraryFolder';
 import { filterMaterialsByQuery } from '../domain/library/libraryFilter';
+import type { ReadingMaterial } from '../domain/library/material';
 import { formatFromSourceFileName, formatLabel } from '../domain/library/materialFormat';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
@@ -39,10 +40,63 @@ type FolderEditorState =
   | { kind: 'create'; parentId: string | null; value: string; error: string | null }
   | { kind: 'rename'; folderId: string; value: string; error: string | null };
 
+interface MoveFolderOption {
+  id: string;
+  label: string;
+  depth: number;
+}
+
 function folderErrorMessage(error: unknown, fallback = '文件夹操作失败,请重试'): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === 'string' && error.length > 0) return error;
   return fallback;
+}
+
+function sortMaterialsByTitle(materials: readonly ReadingMaterial[]): ReadingMaterial[] {
+  return [...materials].sort(
+    (left, right) =>
+      left.title.localeCompare(right.title, 'zh-CN') || left.id.localeCompare(right.id),
+  );
+}
+
+function flattenMoveFolderOptions(folders: readonly LibraryFolder[]): MoveFolderOption[] {
+  const byId = new Map(folders.map((folder) => [folder.id, folder]));
+  const byParent = new Map<string | null, LibraryFolder[]>();
+  for (const folder of folders) {
+    const parentId = folder.parentId !== null && byId.has(folder.parentId)
+      ? folder.parentId
+      : null;
+    const siblings = byParent.get(parentId) ?? [];
+    siblings.push(folder);
+    byParent.set(parentId, siblings);
+  }
+
+  const options: MoveFolderOption[] = [];
+  const visited = new Set<string>();
+  const visit = (
+    folder: LibraryFolder,
+    path: string[],
+    depth: number,
+    ancestors: Set<string>,
+  ) => {
+    if (ancestors.has(folder.id) || visited.has(folder.id)) return;
+    visited.add(folder.id);
+    const nextAncestors = new Set(ancestors).add(folder.id);
+    const nextPath = [...path, folder.name];
+    options.push({ id: folder.id, label: nextPath.join(' / '), depth });
+    for (const child of sortLibraryFolders(byParent.get(folder.id) ?? [])) {
+      visit(child, nextPath, depth + 1, nextAncestors);
+    }
+  };
+
+  for (const root of sortLibraryFolders(byParent.get(null) ?? [])) {
+    visit(root, [], 1, new Set());
+  }
+  // 损坏的循环数据不应让移动菜单丢失其它可用目标。
+  for (const folder of sortLibraryFolders(folders)) {
+    visit(folder, [], 1, new Set());
+  }
+  return options;
 }
 
 /**
@@ -67,12 +121,19 @@ export function PrimarySidebar() {
   const [showTrash, setShowTrash] = useState(false);
   const [focusedMaterialId, setFocusedMaterialId] = useState<string | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const [unfiledExpanded, setUnfiledExpanded] = useState(true);
   const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const filtered = useMemo(
     () => filterMaterialsByQuery(materials, query),
     [materials, query],
+  );
+  const queryKey = query.trim().toLocaleLowerCase('zh-CN');
+  const filteredMaterialIds = useMemo(
+    () => new Set(filtered.map((material) => material.id)),
+    [filtered],
   );
 
   const folderChildren = useMemo(() => {
@@ -91,22 +152,82 @@ export function PrimarySidebar() {
     [folders],
   );
 
+  const folderNameMatches = useMemo(() => {
+    if (!queryKey) return new Set<string>();
+    return new Set(
+      folders
+        .filter((folder) => folder.name.toLocaleLowerCase('zh-CN').includes(queryKey))
+        .map((folder) => folder.id),
+    );
+  }, [folders, queryKey]);
+
+  const folderSearchScope = useMemo(() => {
+    const scope = new Set<string>();
+    if (!queryKey) return scope;
+    const children = new Map<string, LibraryFolder[]>();
+    for (const folder of folders) {
+      if (folder.parentId === null) continue;
+      const siblings = children.get(folder.parentId) ?? [];
+      siblings.push(folder);
+      children.set(folder.parentId, siblings);
+    }
+    const includeDescendants = (folderId: string) => {
+      if (scope.has(folderId)) return;
+      scope.add(folderId);
+      for (const child of children.get(folderId) ?? []) includeDescendants(child.id);
+    };
+    for (const folderId of folderNameMatches) includeDescendants(folderId);
+    return scope;
+  }, [folders, folderNameMatches, queryKey]);
+
+  const visibleMaterialIds = useMemo(() => {
+    if (!queryKey) return new Set(materials.map((material) => material.id));
+    return new Set(
+      materials
+        .filter(
+          (material) =>
+            filteredMaterialIds.has(material.id) ||
+            (material.folderId !== null && folderSearchScope.has(material.folderId)),
+        )
+        .map((material) => material.id),
+    );
+  }, [filteredMaterialIds, folderSearchScope, materials, queryKey]);
+
   const visibleFolderIds = useMemo(() => {
-    const queryKey = query.trim().toLowerCase();
     if (!queryKey) return new Set(folders.map((folder) => folder.id));
     const byId = new Map(folders.map((folder) => [folder.id, folder]));
     const visible = new Set<string>();
-    for (const folder of folders) {
-      if (!folder.name.toLowerCase().includes(queryKey)) continue;
-      let current: LibraryFolder | undefined = folder;
+    const includeAncestors = (folderId: string) => {
+      let current: LibraryFolder | undefined = byId.get(folderId);
       while (current) {
         if (visible.has(current.id)) break;
         visible.add(current.id);
         current = current.parentId === null ? undefined : byId.get(current.parentId);
       }
+    };
+    for (const folderId of folderSearchScope) includeAncestors(folderId);
+    for (const material of materials) {
+      if (visibleMaterialIds.has(material.id) && material.folderId !== null) {
+        includeAncestors(material.folderId);
+      }
     }
     return visible;
-  }, [folders, query]);
+  }, [folders, folderSearchScope, materials, queryKey, visibleMaterialIds]);
+
+  const moveFolderOptions = useMemo(() => flattenMoveFolderOptions(folders), [folders]);
+  const unfiledMaterials = useMemo(
+    () =>
+      sortMaterialsByTitle(
+        materials.filter(
+          (material) => material.folderId === null && visibleMaterialIds.has(material.id),
+        ),
+      ),
+    [materials, visibleMaterialIds],
+  );
+  const unfiledMaterialCount = useMemo(
+    () => materials.filter((material) => material.folderId === null).length,
+    [materials],
+  );
 
   useEffect(() => {
     if (libraryFilterFocusToken > 0) filterRef.current?.focus();
@@ -115,10 +236,16 @@ export function PrimarySidebar() {
   useEffect(() => {
     if (!moreMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!moreMenuRef.current?.contains(event.target as Node)) setMoreMenuOpen(false);
+      if (!moreMenuRef.current?.contains(event.target as Node)) {
+        setMoreMenuOpen(false);
+        setMoveMenuOpen(false);
+      }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMoreMenuOpen(false);
+      if (event.key === 'Escape') {
+        setMoreMenuOpen(false);
+        setMoveMenuOpen(false);
+      }
     };
     document.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('keydown', handleKeyDown);
@@ -136,6 +263,7 @@ export function PrimarySidebar() {
     if (focusedMaterialId && !focusedMaterial) {
       setFocusedMaterialId(null);
       setMoreMenuOpen(false);
+      setMoveMenuOpen(false);
     }
   }, [focusedMaterial, focusedMaterialId]);
 
@@ -154,6 +282,14 @@ export function PrimarySidebar() {
     folderEditor?.kind === 'rename' ? folderEditor.folderId : null,
     folderEditor?.kind === 'create' ? folderEditor.parentId : null,
   ]);
+
+  const previousUnfiledCount = useRef(0);
+  useEffect(() => {
+    if (previousUnfiledCount.current === 0 && unfiledMaterialCount > 0) {
+      setUnfiledExpanded(true);
+    }
+    previousUnfiledCount.current = unfiledMaterialCount;
+  }, [unfiledMaterialCount]);
 
   const handleOpen = (materialId: string) => {
     const material = materials.find((item) => item.id === materialId);
@@ -196,10 +332,34 @@ export function PrimarySidebar() {
 
   const openMoreMenuForMaterial = (materialId: string) => {
     focusMaterial(materialId);
+    setMoveMenuOpen(false);
     setMoreMenuOpen(true);
   };
 
-  const closeMoreMenu = () => setMoreMenuOpen(false);
+  const closeMoreMenu = () => {
+    setMoreMenuOpen(false);
+    setMoveMenuOpen(false);
+  };
+
+  const handleMoveMaterial = async (materialId: string, folderId: string | null) => {
+    try {
+      await commands.execute(COMMAND_IDS.libraryMoveMaterial, materialId, folderId);
+      if (folderId !== null) {
+        void commands
+          .execute(COMMAND_IDS.workbenchSetLibraryFolderExpanded, folderId, true)
+          .catch((error: unknown) => {
+            useShellUiStore.getState().setStatusMessage(
+              `保存文件夹展开状态失败:${folderErrorMessage(error, '请重试')}`,
+            );
+          });
+      }
+      closeMoreMenu();
+    } catch (error: unknown) {
+      useShellUiStore.getState().setStatusMessage(
+        `移动材料失败:${folderErrorMessage(error, '请重试')}`,
+      );
+    }
+  };
 
   const startCreateFolder = (parentId: string | null) => {
     if (parentId !== null) {
@@ -285,14 +445,87 @@ export function PrimarySidebar() {
     );
   };
 
+  const renderMaterialNode = (material: ReadingMaterial, level: number): ReactNode => {
+    const format = formatFromSourceFileName(material.sourceFileName);
+    return (
+      <li key={material.id} role="treeitem" aria-level={level}>
+        <div
+          className="group relative library-material-tree-item"
+          onPointerEnter={() => {
+            focusMaterial(material.id);
+            setMoreMenuOpen(false);
+            setMoveMenuOpen(false);
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              focusMaterial(material.id);
+              handleOpen(material.id);
+            }}
+            onFocus={() => focusMaterial(material.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                event.preventDefault();
+                openMoreMenuForMaterial(material.id);
+              }
+            }}
+            title={
+              material.managedFileAvailable === false
+                ? `${material.title}（正文不可用，可重新导入相同文件以恢复）`
+                : `打开 ${material.title}`
+            }
+            aria-label={`打开 ${material.title}`}
+            className="flex w-full flex-col gap-1.5 rounded-md text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+          >
+            <MaterialCover materialId={material.id} title={material.title} />
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-zinc-300 group-hover:text-sky-300">
+                {material.title}
+              </p>
+              <p className="truncate text-[10px] text-zinc-500">
+                {material.author ?? '未知作者'}
+              </p>
+              <p
+                className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium tracking-wide ${
+                  material.managedFileAvailable === false
+                    ? 'text-amber-300'
+                    : 'uppercase text-zinc-500'
+                }`}
+              >
+                {material.managedFileAvailable === false ? (
+                  <>
+                    <FileWarning size={10} aria-hidden />
+                    正文不可用
+                  </>
+                ) : (
+                  formatLabel(format)
+                )}
+              </p>
+            </div>
+          </button>
+        </div>
+      </li>
+    );
+  };
+
   const renderFolderNode = (folder: LibraryFolder, level: number): ReactNode => {
     if (!visibleFolderIds.has(folder.id)) return null;
     const children = (folderChildren.get(folder.id) ?? []).filter((child) => visibleFolderIds.has(child.id));
-    const queryIsActive = query.trim().length > 0;
+    const folderMaterials = sortMaterialsByTitle(
+      materials.filter(
+        (material) => material.folderId === folder.id && visibleMaterialIds.has(material.id),
+      ),
+    );
+    const queryIsActive = queryKey.length > 0;
     const editingChild = folderEditor?.kind === 'create' && folderEditor.parentId === folder.id;
     const expanded = expandedFolderIds.includes(folder.id) ||
       editingChild ||
-      (queryIsActive && children.some((child) => visibleFolderIds.has(child.id)));
+      (queryIsActive && (
+        folderNameMatches.has(folder.id) ||
+        children.some((child) => visibleFolderIds.has(child.id)) ||
+        folderMaterials.length > 0
+      ));
     const canCreateChild = getLibraryFolderDepth(folder.id, folders) < MAX_LIBRARY_FOLDER_DEPTH;
     return (
       <li key={folder.id} className="library-folder-tree-item" role="treeitem" aria-level={level} aria-expanded={expanded}>
@@ -329,7 +562,11 @@ export function PrimarySidebar() {
         {expanded ? (
           <ul className="library-folder-group" role="group">
             {children.map((child) => renderFolderNode(child, level + 1))}
+            {folderMaterials.map((material) => renderMaterialNode(material, level + 1))}
             {editingChild ? renderFolderEditor(level + 1) : null}
+            {children.length === 0 && folderMaterials.length === 0 ? (
+              <li className="library-tree-empty">文件夹为空</li>
+            ) : null}
           </ul>
         ) : null}
       </li>
@@ -408,6 +645,51 @@ export function PrimarySidebar() {
                       {primaryMaterialId === focusedMaterial.id ? '当前主要材料' : '设为主要材料'}
                     </span>
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-haspopup="menu"
+                    aria-expanded={moveMenuOpen}
+                    onClick={() => setMoveMenuOpen((open) => !open)}
+                  >
+                    <Folder size={14} aria-hidden />
+                    <span>移动到…</span>
+                    <span className="library-menu-item-trailing" aria-hidden>›</span>
+                  </button>
+                  {moveMenuOpen ? (
+                    <div
+                      role="group"
+                      aria-label="移动到目标文件夹"
+                      className="library-move-menu"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        aria-label="移动到未归类"
+                        aria-current={focusedMaterial.folderId === null ? 'location' : undefined}
+                        onClick={() => void handleMoveMaterial(focusedMaterial.id, null)}
+                      >
+                        <FolderOpen size={14} aria-hidden />
+                        <span>未归类</span>
+                        {focusedMaterial.folderId === null ? <Check size={13} aria-hidden /> : null}
+                      </button>
+                      {moveFolderOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          role="menuitem"
+                          aria-label={`移动到 ${option.label}`}
+                          aria-current={focusedMaterial.folderId === option.id ? 'location' : undefined}
+                          style={{ paddingLeft: `${10 + Math.min(option.depth - 1, 4) * 10}px` }}
+                          onClick={() => void handleMoveMaterial(focusedMaterial.id, option.id)}
+                        >
+                          {option.depth > 1 ? <Folder size={14} aria-hidden /> : <FolderOpen size={14} aria-hidden />}
+                          <span>{option.label}</span>
+                          {focusedMaterial.folderId === option.id ? <Check size={13} aria-hidden /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   <div role="separator" className="app-menu-separator" />
                   <button
                     type="button"
@@ -472,86 +754,49 @@ export function PrimarySidebar() {
         <ul className="library-tree" role="tree" aria-label="书库文件夹树">
           {folderEditor?.kind === 'create' && folderEditor.parentId === null ? renderFolderEditor(1) : null}
           {rootFolders.map((folder) => renderFolderNode(folder, 1))}
-          <li className="library-unfiled-tree-item" role="treeitem" aria-level={1} aria-expanded="true">
-            <div className="library-unfiled-row">
-              <FolderOpen size={16} aria-hidden />
-              <span>未归类</span>
-            </div>
-            <ul className="library-material-group" role="group">
-              {materials.length === 0 ? (
-                <li className="library-tree-empty">
-                  <p>尚未导入阅读材料</p>
-                  <span>点击右上角导入按钮选择 EPUB、PDF 或 Markdown。外部原文件不会被修改或删除。</span>
-                </li>
-              ) : filtered.length === 0 ? (
-                <li className="library-tree-empty">
-                  <p>没有匹配的材料</p>
-                  <span>换个标题或作者试试。</span>
-                </li>
-              ) : filtered.map((material) => {
-            const format = formatFromSourceFileName(material.sourceFileName);
-            return (
-              <li key={material.id} role="treeitem" aria-level={2}>
-                <div
-                  className="group relative library-material-tree-item"
-                  onPointerEnter={() => {
-                    focusMaterial(material.id);
-                    setMoreMenuOpen(false);
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      focusMaterial(material.id);
-                      handleOpen(material.id);
-                    }}
-                    onFocus={() => focusMaterial(material.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                        event.preventDefault();
-                        openMoreMenuForMaterial(material.id);
-                      }
-                    }}
-                    title={
-                      material.managedFileAvailable === false
-                        ? `${material.title}（正文不可用，可重新导入相同文件以恢复）`
-                        : `打开 ${material.title}`
-                    }
-                    aria-label={`打开 ${material.title}`}
-                    className="flex w-full flex-col gap-1.5 rounded-md text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
-                  >
-                    <MaterialCover materialId={material.id} title={material.title} />
-                    <div className="min-w-0">
-                      <p className="truncate text-[11px] font-medium text-zinc-300 group-hover:text-sky-300">
-                        {material.title}
-                      </p>
-                      <p className="truncate text-[10px] text-zinc-500">
-                        {material.author ?? '未知作者'}
-                      </p>
-                      <p
-                        className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium tracking-wide ${
-                          material.managedFileAvailable === false
-                            ? 'text-amber-300'
-                            : 'uppercase text-zinc-500'
-                        }`}
-                      >
-                        {material.managedFileAvailable === false ? (
-                          <>
-                            <FileWarning size={10} aria-hidden />
-                            正文不可用
-                          </>
-                        ) : (
-                          formatLabel(format)
-                        )}
-                      </p>
-                    </div>
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-            </ul>
-          </li>
+          {queryKey === '' || unfiledMaterials.length > 0 ? (
+            <li
+              className="library-unfiled-tree-item"
+              role="treeitem"
+              aria-level={1}
+              aria-expanded={unfiledExpanded}
+            >
+              <button
+                type="button"
+                className="library-unfiled-row"
+                aria-label={`${unfiledExpanded ? '收起' : '展开'}未归类材料`}
+                aria-expanded={unfiledExpanded}
+                onClick={() => setUnfiledExpanded((expanded) => !expanded)}
+              >
+                <ChevronRight className={unfiledExpanded ? 'library-folder-chevron expanded' : 'library-folder-chevron'} size={14} aria-hidden />
+                {unfiledExpanded ? <FolderOpen size={16} aria-hidden /> : <Folder size={16} aria-hidden />}
+                <span>未归类</span>
+              </button>
+              {unfiledExpanded && (unfiledMaterialCount > 0 || materials.length === 0) ? (
+                <ul className="library-material-group" role="group">
+                  {materials.length === 0 ? (
+                    <li className="library-tree-empty">
+                      <p>尚未导入阅读材料</p>
+                      <span>点击右上角导入按钮选择 EPUB、PDF 或 Markdown。外部原文件不会被修改或删除。</span>
+                    </li>
+                  ) : unfiledMaterials.length === 0 && queryKey !== '' ? (
+                    <li className="library-tree-empty">
+                      <p>没有匹配的材料</p>
+                      <span>换个文件夹、标题或作者试试。</span>
+                    </li>
+                  ) : (
+                    unfiledMaterials.map((material) => renderMaterialNode(material, 2))
+                  )}
+                </ul>
+              ) : null}
+            </li>
+          ) : null}
+          {queryKey !== '' && visibleFolderIds.size === 0 && unfiledMaterials.length === 0 ? (
+            <li className="library-tree-empty">
+              <p>没有匹配的材料</p>
+              <span>换个文件夹、标题或作者试试。</span>
+            </li>
+          ) : null}
         </ul>
       </div>
 

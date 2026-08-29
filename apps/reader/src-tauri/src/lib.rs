@@ -62,6 +62,7 @@ pub fn run() {
             commands::import::discard_import,
             commands::import::commit_import,
             commands::import::list_materials,
+            commands::import::move_material_to_folder,
             commands::import::list_trashed,
             commands::import::trash_material,
             commands::import::restore_material,

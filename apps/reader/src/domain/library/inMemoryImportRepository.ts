@@ -22,6 +22,7 @@ interface InternalMaterial {
   id: string;
   fingerprint: string;
   sourceFileName: string;
+  folderId: string | null;
   source: SourceMetadata;
   /** 材料文档版本:正式保存 Markdown 时递增(EPUB/PDF 内容不可变,为 0)。 */
   documentVersion: number;
@@ -69,6 +70,7 @@ export function createInMemoryImportRepository(
       id: internal.id,
       fingerprint: internal.fingerprint,
       sourceFileName: internal.sourceFileName,
+      folderId: internal.folderId,
       source: { ...internal.source },
       override: { ...override },
       title: override.title ?? internal.source.title,
@@ -139,6 +141,7 @@ export function createInMemoryImportRepository(
         id,
         fingerprint: stagedImport.fingerprint,
         sourceFileName: stagedImport.originalFileName,
+        folderId: null,
         source: { ...metadata },
         documentVersion: 0,
       };
@@ -166,6 +169,15 @@ export function createInMemoryImportRepository(
       return [...materials.values()]
         .filter((internal) => !trashed.has(internal.id))
         .map(toMaterial);
+    },
+
+    async moveMaterialToFolder(materialId, folderId): Promise<ReadingMaterial> {
+      const internal = requireInternal(materials, materialId);
+      if (trashed.has(materialId)) {
+        throw new Error(`托管书库中不存在该阅读材料:${materialId}`);
+      }
+      internal.folderId = folderId;
+      return toMaterial(internal);
     },
 
     async listTrashed(): Promise<ReadingMaterial[]> {

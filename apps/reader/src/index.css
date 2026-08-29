@@ -605,6 +605,33 @@ body::-webkit-scrollbar-thumb:hover,
   background: color-mix(in srgb, var(--prototype-danger) 20%, transparent);
 }
 
+.library-menu-item-trailing {
+  color: var(--prototype-text-muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.library-move-menu {
+  max-height: min(44vh, 360px);
+  margin: 2px 0 4px;
+  overflow-y: auto;
+  border-top: 1px solid var(--prototype-border);
+  border-bottom: 1px solid var(--prototype-border);
+  scrollbar-color: var(--prototype-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.library-move-menu button {
+  min-width: 0;
+}
+
+.library-move-menu button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .library-tree-scroll {
   min-height: 0;
   flex: 1;
@@ -746,10 +773,15 @@ body::-webkit-scrollbar-thumb:hover,
 }
 
 .library-unfiled-row {
+  width: 100%;
   padding: 0 8px;
+  border: 0;
   color: var(--prototype-accent-strong);
   font-size: 12px;
   font-weight: 650;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .library-material-group {

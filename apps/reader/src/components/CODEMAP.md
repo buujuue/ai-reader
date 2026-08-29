@@ -10,7 +10,7 @@
 - `ActivityBar.tsx`：左侧活动栏只提供“书库”与“目录”两个互斥入口，分别执行 `workbench.togglePrimarySidebar` 与 `workbench.toggleToc`；导入动作位于真实书库面板与文件菜单。
 - `SidebarPanelHeader.tsx`：书库与目录共用的固定顶栏结构，统一标题、图标、右侧操作槽、行高和触控命中区，不承载具体业务行为。
 - `SidebarResizeHandle.tsx`：书库与目录共用的可拖动/可键盘调整宽度手柄；拖动过程更新活动面板宽度，结束时经 `workbench.setActivityPanelWidth` 持久化，不直接访问 Repository。
-- `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，空文件夹保持可见，阅读材料统一置于树底部“未归类”；顶层/子文件夹新建和改名均执行稳定 Command，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留标题/作者筛选、按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。
+- `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，阅读材料按唯一 `folderId` 作为叶子节点，未归类材料固定在树底部且可折叠；材料按有效标题稳定排序，文件夹名/材料标题/作者筛选会保留层级路径。材料更多菜单提供“移动到……”及所有已有文件夹/未归类目标，移动执行 `library.moveMaterial`；顶层/子文件夹新建和改名均执行稳定 Command，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。
 - `MaterialCover.tsx`：封面渲染，经 `importRepository.readCover` 读取托管封面字节并以对象 URL 渲染；默认 IntersectionObserver 懒加载（进入视口才解码）、卸载时 revoke 释放；无封面复用工作区底色和文字颜色显示书名占位，加载失败显示「封面加载失败」。
 - `EditorArea.tsx`：编辑器区，按持久化拆分方向渲染最多两个 Editor Group；每组直接承载活动 `ReadingView`，不再渲染标签栏。点击编辑器组和紧凑布局组切换按钮通过 Command 维护当前组与 Runtime；无活动视图时显示空状态占位。
 - `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；PDF 顶层文档的滚轮/左右点击/轻触只在该 ReadingView 正文容器内接入统一阅读输入，工具栏、搜索栏、对话框和其它 Editor Group 不会被劫持；托管副本缺失时由 Reader Runtime 显示明确的“正文当前不可用”错误并保留标签/用户数据；阅读工具栏提供阅读排版与 Markdown 源码模式，存在拆分组时在材料更多操作左侧提供关闭当前拆分区的 X；材料更多菜单提供向右/向下拆分、查看/导出批注与设置主要材料；导航历史仍由目录、搜索和 Reader Command 维护，不在常驻工具栏显示前进/后退按钮。Markdown 视图处于源码模式时渲染 `MarkdownSourceEditor` 而非阅读容器。Reader 外部不直接操作 Foliate View。
@@ -41,7 +41,7 @@ components/
     ├── readerCommands.ts        ReadingView 调 mountViewDocument
     ├── markdownSessionStore.ts  MarkdownSourceEditor 读写共享会话缓冲区
     ├── searchStore.ts           SearchBar 读视图搜索状态
-    ├── libraryStore.ts          PrimarySidebar 读 materials/trashedMaterials;StatusBar 读当前材料元数据;ActivityBar 读 importing
+    ├── libraryStore.ts          PrimarySidebar 读 folders/materials/trashedMaterials;StatusBar 读当前材料元数据;ActivityBar 读 importing
     ├── shellUiStore.ts          ApplicationBar/AnnotationPanel 读运行时面板状态;StatusBar 读 statusMessage;MarkdownDirtyCloseDialog 读脏关闭状态;MarkdownRecoveryDialog 读恢复队列
     └── workspaceStore.ts        StatusBar 读当前激活 Editor Group/ReadingView;ReadingView 读拆分与活动组
 ```

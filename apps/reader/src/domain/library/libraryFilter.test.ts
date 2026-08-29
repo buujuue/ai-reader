@@ -8,6 +8,7 @@ function material(overrides: Partial<ReadingMaterial>): ReadingMaterial {
     id: 'id',
     fingerprint: 'f',
     sourceFileName: 'book.epub',
+    folderId: null,
     source: { title: '来源', author: '来源作者', language: 'zh' },
     override: { title: null, author: null, coverSource: null },
     title: '来源',

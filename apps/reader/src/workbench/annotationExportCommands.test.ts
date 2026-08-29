@@ -18,6 +18,7 @@ function makeMaterial(): ReadingMaterial {
     id: 'material-1',
     fingerprint: 'fingerprint-1',
     sourceFileName: 'book.epub',
+    folderId: null,
     source: { title: '示例书', author: '来源作者', language: 'zh' },
     override: { title: null, author: null, coverSource: null },
     title: '示例书',

@@ -34,6 +34,8 @@ export interface ReadingMaterial {
   id: string;
   fingerprint: string;
   sourceFileName: string;
+  /** 唯一书库文件夹归属;null 表示位于树底部的未归类区域。 */
+  folderId: string | null;
   /** 不可编辑来源元数据快照。 */
   source: SourceMetadata;
   /** 独立保存的用户覆盖值。 */

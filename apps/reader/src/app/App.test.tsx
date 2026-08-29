@@ -465,6 +465,7 @@ describe('阅读工作台外壳', () => {
     services = createAppServices({
       workspaceRepository: repository,
       libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
     });
     const user = userEvent.setup();
     const { unmount } = renderApp(services);
@@ -544,6 +545,56 @@ describe('阅读工作台外壳', () => {
       expect(screen.getByText('未归类')).toBeInTheDocument();
     });
     await expect(folderRepository.listFolders()).resolves.toEqual(persistedFolders);
+  });
+
+  it('材料默认未归类,可从材料菜单移动到文件夹并在回收站恢复后保留归属', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await waitFor(() => expect(screen.getByRole('tree', { name: '书库文件夹树' })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }));
+    await user.type(screen.getByRole('textbox', { name: '新建文件夹名称' }), '文史');
+    await user.keyboard('{Enter}');
+    const folder = await waitFor(async () => {
+      const folders = await folderRepository.listFolders();
+      expect(folders).toHaveLength(1);
+      return folders[0] as LibraryFolder;
+    });
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
+    const material = useLibraryStore.getState().materials[0]!;
+    expect(material.folderId).toBeNull();
+
+    screen.getByRole('button', { name: /打开 示例书/ }).focus();
+    await user.click(screen.getByRole('button', { name: '书库更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '移动到…' }));
+    await user.click(screen.getByRole('menuitem', { name: '移动到 文史' }));
+
+    await waitFor(() => {
+      expect(useLibraryStore.getState().materials[0]?.folderId).toBe(folder.id);
+    });
+    expect(useLibraryStore.getState().materials[0]?.id).toBe(material.id);
+    expect(screen.getByRole('treeitem', { name: /文史/ })).toHaveTextContent('示例书');
+
+    await user.click(screen.getByRole('button', { name: /打开 示例书/ }));
+    await waitFor(() => expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: /打开 示例书/ }));
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: '书库更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '移入回收站' }));
+    await waitFor(() => expect(useLibraryStore.getState().trashedMaterials).toHaveLength(1));
+    expect(useLibraryStore.getState().trashedMaterials[0]?.folderId).toBe(folder.id);
+    await user.click(screen.getByRole('button', { name: /回收站/ }));
+    await user.click(screen.getByRole('button', { name: /恢复 示例书/ }));
+    await waitFor(() => expect(useLibraryStore.getState().materials[0]?.folderId).toBe(folder.id));
   });
 
   it('材料批注覆盖面板关闭后焦点归还且不写入工作区状态', async () => {

@@ -74,7 +74,7 @@ describe('Annotation 命令', () => {
     const doc = createFakeDocument();
     useReaderRuntime.setState({ documents: new Map([['view-1', doc as never]]) });
     useLibraryStore.setState({
-      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.epub', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 0 }],
+      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.epub', folderId: null, source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 0 }],
     });
 
     const container = document.createElement('p');
@@ -116,7 +116,7 @@ describe('Annotation 命令', () => {
     });
     useReaderRuntime.setState({ documents: new Map([['view-1', doc as never]]) });
     useLibraryStore.setState({
-      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '扫描资料', author: null, language: 'zh', sourceFileName: 'scan.pdf', source: { title: '扫描资料', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 0 }],
+      materials: [{ id: 'material-1', fingerprint: 'fingerprint-1', title: '扫描资料', author: null, language: 'zh', sourceFileName: 'scan.pdf', folderId: null, source: { title: '扫描资料', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 0 }],
     });
 
     await registry.execute('annotation.createPdfArea', 'view-1', {
@@ -234,7 +234,7 @@ describe('Annotation 命令', () => {
       ],
     });
     useLibraryStore.setState({
-      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
+      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', folderId: null, source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
     });
     const document = createFakeDocument();
     document.search.mockReturnValue(
@@ -279,7 +279,7 @@ describe('Annotation 命令', () => {
       ],
     });
     useLibraryStore.setState({
-      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
+      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', folderId: null, source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
     });
     const document = createFakeDocument();
     document.canResolveAnnotation.mockResolvedValue(true);
@@ -319,7 +319,7 @@ describe('Annotation 命令', () => {
       ],
     });
     useLibraryStore.setState({
-      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
+      materials: [{ id: 'material-1', fingerprint: 'new-fingerprint', title: '示例书', author: null, language: 'zh', sourceFileName: 'book.md', folderId: null, source: { title: '示例书', author: null, language: 'zh' }, override: { title: null, author: null, coverSource: null }, coverSource: null, documentVersion: 1 }],
     });
     const document = createFakeDocument();
     document.search.mockReturnValue(

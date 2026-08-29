@@ -90,6 +90,22 @@ pub fn list_materials(
     })
 }
 
+/// 把一份活跃材料移动到目标文件夹;目标为 null 时移回未归类。
+#[tauri::command]
+pub fn move_material_to_folder(
+    database: State<'_, DatabaseHandle>,
+    paths: State<'_, LibraryPaths>,
+    material_id: String,
+    folder_id: Option<String>,
+) -> Result<ReadingMaterial, AppError> {
+    database.with_connection(|connection| {
+        let mut material =
+            ImportRepository::new(connection).move_to_folder(&material_id, folder_id.as_deref())?;
+        set_managed_file_availability(&mut material, &paths);
+        Ok(material)
+    })
+}
+
 /// 列出回收站中的阅读材料(普通删除移除正文副本,仅从活跃书库隐藏)。
 #[tauri::command]
 pub fn list_trashed(

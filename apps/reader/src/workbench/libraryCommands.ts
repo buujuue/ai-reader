@@ -89,6 +89,45 @@ export function registerLibraryCommands(
     return folder;
   });
 
+  registry.register(COMMAND_IDS.libraryMoveMaterial, async (...args: unknown[]) => {
+    const materialId = args[0];
+    const folderId = args[1];
+    if (typeof materialId !== 'string' || materialId.length === 0) {
+      throw new Error('移动材料命令缺少材料 ID');
+    }
+    if (folderId !== null && typeof folderId !== 'string') {
+      throw new Error('移动材料命令的目标文件夹不合法');
+    }
+
+    // 目标来自书库树，但 Command 仍重新读取权威文件夹列表，避免过期 UI
+    // 把材料写入已删除的 FolderId。Repository 只在这一步成功后才更新 Store。
+    let targetFolderName: string | null = null;
+    if (folderId !== null) {
+      const folders = await dependencies.libraryFolderRepository?.listFolders() ?? [];
+      const targetFolder = folders.find((folder) => folder.id === folderId);
+      if (!targetFolder) {
+        throw new Error('目标文件夹不存在,请刷新书库后重试');
+      }
+      targetFolderName = targetFolder.name;
+    }
+
+    const previous = useLibraryStore
+      .getState()
+      .materials.find((material) => material.id === materialId);
+    const updated = await dependencies.importRepository.moveMaterialToFolder(
+      materialId,
+      folderId as string | null,
+    );
+    useLibraryStore.getState().updateMaterial(updated);
+    const targetLabel = targetFolderName ?? '未归类';
+    useShellUiStore.getState().setStatusMessage(
+      previous?.folderId === (folderId as string | null)
+        ? `${updated.title}已在“${targetLabel}”`
+        : `已将${updated.title}移动到“${targetLabel}”`,
+    );
+    return updated;
+  });
+
   registry.register(COMMAND_IDS.libraryUpdateMetadata, async (...args: unknown[]) => {
     const materialId = args[0] as string | undefined;
     const rawTitle = (args[1] as string | null | undefined) ?? null;

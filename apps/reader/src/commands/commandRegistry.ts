@@ -21,6 +21,7 @@ export const COMMAND_IDS = {
   libraryRestoreVersionMigrationSnapshot: 'library.restoreVersionMigrationSnapshot',
   libraryClearVersionMigrationSnapshot: 'library.clearVersionMigrationSnapshot',
   libraryRefresh: 'library.refresh',
+  libraryMoveMaterial: 'library.moveMaterial',
   libraryCreateFolder: 'library.createFolder',
   libraryRenameFolder: 'library.renameFolder',
   libraryOpenBook: 'library.openBook',

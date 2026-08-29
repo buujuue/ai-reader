@@ -30,6 +30,7 @@ export const IMPORT_COMMAND_NAMES = {
   discard: 'discard_import',
   commit: 'commit_import',
   list: 'list_materials',
+  moveToFolder: 'move_material_to_folder',
   listTrashed: 'list_trashed',
   trash: 'trash_material',
   restoreMaterial: 'restore_material',
@@ -110,7 +111,10 @@ function assertMaterialShape(raw: unknown): ReadingMaterial {
     typeof candidate.id !== 'string' ||
     typeof candidate.title !== 'string' ||
     typeof candidate.fingerprint !== 'string' ||
-    typeof candidate.sourceFileName !== 'string'
+    typeof candidate.sourceFileName !== 'string' ||
+    (candidate.folderId !== undefined &&
+      candidate.folderId !== null &&
+      typeof candidate.folderId !== 'string')
   ) {
     throw new Error('reading material payload is malformed');
   }
@@ -121,6 +125,7 @@ function assertMaterialShape(raw: unknown): ReadingMaterial {
     language: candidate.language ?? null,
     fingerprint: candidate.fingerprint,
     sourceFileName: candidate.sourceFileName,
+    folderId: candidate.folderId ?? null,
     source: assertSourceMetadata(candidate.source),
     override: assertOverride(candidate.override),
     coverSource: candidate.coverSource ?? null,
@@ -282,6 +287,10 @@ export function createTauriImportRepository(
     async listMaterials(): Promise<ReadingMaterial[]> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.list);
       return assertMaterialList(raw);
+    },
+    async moveMaterialToFolder(materialId: string, folderId: string | null): Promise<ReadingMaterial> {
+      const raw = await invokeFn(IMPORT_COMMAND_NAMES.moveToFolder, { materialId, folderId });
+      return assertMaterialShape(raw);
     },
     async listTrashed(): Promise<ReadingMaterial[]> {
       const raw = await invokeFn(IMPORT_COMMAND_NAMES.listTrashed);

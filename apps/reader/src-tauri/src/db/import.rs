@@ -130,6 +130,8 @@ pub struct ReadingMaterial {
     pub id: String,
     pub fingerprint: String,
     pub source_file_name: String,
+    /// 唯一书库文件夹归属;NULL 表示未归类。
+    pub folder_id: Option<String>,
     pub source: SourceMetadata,
     #[serde(rename = "override")]
     pub user_override: MaterialOverride,
@@ -789,6 +791,46 @@ impl<'a> ImportRepository<'a> {
             .collect())
     }
 
+    /// 把一份活跃阅读材料移动到指定文件夹;传入 None 时移回未归类。
+    /// 只更新唯一归属字段,不触碰托管正文、封面或阅读数据。
+    pub fn move_to_folder(
+        &self,
+        id: &str,
+        folder_id: Option<&str>,
+    ) -> Result<ReadingMaterial, AppError> {
+        self.ensure_active(id)?;
+        if let Some(folder_id) = folder_id {
+            let exists: Option<String> = self
+                .connection
+                .query_row(
+                    "SELECT id FROM library_folders WHERE id = ?1",
+                    [folder_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if exists.is_none() {
+                return Err(AppError::LibraryFolderNotFound(folder_id.to_string()));
+            }
+        }
+        let current_folder: Option<String> = self.connection.query_row(
+            "SELECT folder_id FROM materials WHERE id = ?1 AND status = 'ready' AND deleted_at IS NULL",
+            [id],
+            |row| row.get(0),
+        )?;
+        if current_folder.as_deref() == folder_id {
+            return self
+                .find_by_id(id)?
+                .ok_or_else(|| AppError::MaterialNotFound(id.to_string()));
+        }
+        self.connection.execute(
+            "UPDATE materials SET folder_id = ?1, updated_at = datetime('now')
+             WHERE id = ?2 AND status = 'ready' AND deleted_at IS NULL",
+            params![folder_id, id],
+        )?;
+        self.find_by_id(id)?
+            .ok_or_else(|| AppError::MaterialNotFound(id.to_string()))
+    }
+
     /// 列出回收站中的阅读材料(普通删除移除正文副本,仅从活跃书库隐藏)。
     pub fn list_trashed(&self) -> Result<Vec<ReadingMaterial>, AppError> {
         Ok(self
@@ -1222,7 +1264,7 @@ impl<'a> ImportRepository<'a> {
         params: &[&dyn rusqlite::ToSql],
     ) -> Result<Vec<(ReadingMaterial, bool)>, AppError> {
         let sql = "SELECT
-                        m.id, m.fingerprint, m.source_file_name,
+                        m.id, m.fingerprint, m.source_file_name, m.folder_id,
                         m.title, m.author, m.language,
                         o.title, o.author, o.cover_source,
                         m.deleted_at, m.document_version
@@ -1286,14 +1328,15 @@ fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<(ReadingMaterial, 
     let id: String = row.get(0)?;
     let fingerprint: String = row.get(1)?;
     let source_file_name: String = row.get(2)?;
-    let source_title: String = row.get(3)?;
-    let source_author: Option<String> = row.get(4)?;
-    let source_language: Option<String> = row.get(5)?;
-    let override_title: Option<String> = row.get(6)?;
-    let override_author: Option<String> = row.get(7)?;
-    let override_cover: Option<String> = row.get(8)?;
-    let deleted_at: Option<String> = row.get(9)?;
-    let document_version: i64 = row.get(10)?;
+    let folder_id: Option<String> = row.get(3)?;
+    let source_title: String = row.get(4)?;
+    let source_author: Option<String> = row.get(5)?;
+    let source_language: Option<String> = row.get(6)?;
+    let override_title: Option<String> = row.get(7)?;
+    let override_author: Option<String> = row.get(8)?;
+    let override_cover: Option<String> = row.get(9)?;
+    let deleted_at: Option<String> = row.get(10)?;
+    let document_version: i64 = row.get(11)?;
 
     let source = SourceMetadata {
         title: source_title.clone(),
@@ -1310,6 +1353,7 @@ fn material_from_row(row: &rusqlite::Row) -> rusqlite::Result<(ReadingMaterial, 
             id,
             fingerprint,
             source_file_name,
+            folder_id,
             source,
             title: user_override
                 .title
@@ -1567,6 +1611,14 @@ mod tests {
         connection
             .execute_batch(include_str!(
                 "migrations/0009_annotation_recovery_state.sql"
+            ))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("migrations/0010_library_folders.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "migrations/0011_material_library_folder.sql"
             ))
             .unwrap();
         connection
@@ -2449,6 +2501,45 @@ mod tests {
             language: Some("zh".to_string()),
         };
         repository.commit(&staged, &metadata, paths).unwrap()
+    }
+
+    #[test]
+    fn moves_material_between_folder_and_unfiled_without_changing_identity() {
+        let connection = migrated_connection();
+        let folder = crate::db::folders::LibraryFolderRepository::new(&connection)
+            .create("文史", None)
+            .unwrap();
+        let repository = ImportRepository::new(&connection);
+        let paths = temp_paths();
+        let material = ready_material(&connection, &paths, "书", None);
+
+        let moved = repository
+            .move_to_folder(&material.id, Some(&folder.id))
+            .unwrap();
+        assert_eq!(moved.id, material.id);
+        assert_eq!(moved.folder_id, Some(folder.id.clone()));
+        assert_eq!(
+            repository.list_materials().unwrap()[0].folder_id,
+            Some(folder.id.clone())
+        );
+
+        let unfiled = repository.move_to_folder(&material.id, None).unwrap();
+        assert_eq!(unfiled.id, material.id);
+        assert_eq!(unfiled.folder_id, None);
+
+        assert!(matches!(
+            repository.move_to_folder(&material.id, Some("missing-folder")),
+            Err(AppError::LibraryFolderNotFound(_))
+        ));
+        assert_eq!(repository.list_materials().unwrap()[0].folder_id, None);
+
+        repository
+            .move_to_folder(&material.id, Some(&folder.id))
+            .unwrap();
+        let trashed = repository.trash(&material.id, &paths).unwrap();
+        assert_eq!(trashed.folder_id, Some(folder.id.clone()));
+        let restored = repository.restore(&material.id, &paths).unwrap();
+        assert_eq!(restored.folder_id, Some(folder.id));
     }
 
     #[test]

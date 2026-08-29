@@ -4,14 +4,14 @@
 
 阅读材料领域模型与导入契约，是「托管导入一份 EPUB」的核心。
 
-- `material.ts`：`ReadingMaterial`（稳定 BookId，含 `source` 来源快照、`override` 覆盖值、有效元数据和托管副本可用状态）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
+- `material.ts`：`ReadingMaterial`（稳定 BookId，含唯一 `folderId` 归属、`source` 来源快照、`override` 覆盖值、有效元数据和托管副本可用状态）、`StagedImport`（暂存句柄）、`SourceMetadata` / `MaterialOverride` 领域类型，serde 命名与 Rust 端 DTO 一致。
 - `cover.ts`：来源封面安全边界；限制字节预算，清洗 SVG，并在需要时按原始宽高比缩放到长边 512、以 JPEG 质量 85 输出。
 - `materialFormat.ts`：`formatFromSourceFileName` 从源文件扩展名推断材料格式（epub/pdf/markdown/unknown），`formatLabel` 输出简体中文标签；不依赖跨 TS/Rust 契约新增字段。
 - `libraryFilter.ts`：`filterMaterialsByQuery` 基于有效元数据（title/author）即时筛选书库的纯函数。
 - `libraryFolder.ts`：书库文件夹稳定身份、显式父级、名称清理/校验、五层深度和稳定排序规则。
 - `libraryFolderRepository.ts` / `inMemoryLibraryFolderRepository.ts` / `tauriLibraryFolderRepository.ts`：独立的文件夹 typed Repository、浏览器内存 Adapter 与 Tauri Adapter；创建/改名不接触 UI、SQL 或数据库路径。
 - `libraryFolderRepository.contract.ts` 与对应测试：内存/Tauri Adapter 共用的文件夹新增、排序、重名、非法名称、改名和五层契约。
-- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。Markdown、EPUB 与 PDF 打开统一使用 `openManagedFileSource`，生产阅读边界不提供通用全量读取；导入暂存、封面和明确的完整文本快照仍走各自专用协议。
+- `importRepository.ts`：typed 导入 Repository 接口，覆盖导入、书库、单本材料文件夹归属、元数据、回收站、同指纹托管副本重新关联、正式 Markdown 保存、Markdown 恢复快照，以及显式 EPUB 版本迁移和迁移前恢复快照协议；是前端调用平台能力的窄边界。Markdown、EPUB 与 PDF 打开统一使用 `openManagedFileSource`，生产阅读边界不提供通用全量读取；导入暂存、封面和明确的完整文本快照仍走各自专用协议。
 - `managedFileSource.ts`：只读、File/Blob 兼容的托管材料范围来源；维护 128 KiB 分块、128 块 LRU 和同分块并发 Promise，不知道 Tauri 或文件路径。
 - `managedRangeProtocol.ts`：Windows Tauri PDF 的 `MaterialId + 半开范围` 二进制 WebView fetch 适配；只负责协议 URL、平台选择和响应长度校验，不接触数据库或托管路径。
 - `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、同指纹 `relink_material`、元数据、`save_markdown`、Markdown 恢复、版本迁移和非 Windows/非 PDF 的托管材料范围命令；Windows PDF 的范围回调切换到 `managedRangeProtocol.ts`，并校验跨端 DTO 形状。

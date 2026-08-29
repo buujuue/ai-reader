@@ -15,6 +15,7 @@ function material(overrides: Partial<ReadingMaterial> = {}): ReadingMaterial {
     id: 'old-book',
     fingerprint: 'old-fingerprint',
     sourceFileName: 'book.epub',
+    folderId: null,
     source: { title: '示例书', author: '作者', language: 'zh' },
     override: { title: null, author: null, coverSource: null },
     title: '示例书',

@@ -29,6 +29,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("migrations/0009_annotation_recovery_state.sql"),
     ),
     (10, include_str!("migrations/0010_library_folders.sql")),
+    (11, include_str!("migrations/0011_material_library_folder.sql")),
 ];
 
 /// 打开数据库连接并应用全部迁移。
@@ -332,7 +333,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
     }
 
     #[test]
