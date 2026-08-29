@@ -15,8 +15,12 @@ import {
   Minus,
   MoreHorizontal,
   Moon,
+  Palette,
   PanelLeftClose,
+  Plus,
+  RotateCcw,
   Search,
+  SlidersHorizontal,
   Square,
   Sparkles,
   StickyNote,
@@ -30,20 +34,34 @@ import {
   type DragEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
 
 import './workbenchPrototype.css';
 
-type ThemeMode = 'dark' | 'light';
-type ActivityPanel = 'library' | 'toc' | null;
+type ThemeMode = 'midnight' | 'apple' | 'claude' | 'mint' | 'rose';
+type ActivityPanel = 'library' | 'toc' | 'interface' | null;
 type MenuKey = 'file' | 'edit' | 'view' | null;
+type InterfaceScope = 'book' | 'global';
+type ReadingFontFamily = 'default' | 'serif' | 'sans';
+type ReadingViewMode = 'single' | 'double';
 
-const DEFAULT_TONE = 4;
-const DEFAULT_GLOW = 1.4;
 const MAX_FOLDER_DEPTH = 5;
+
+interface PrototypeTheme {
+  description: string;
+  id: ThemeMode;
+  label: string;
+}
+
+const PROTOTYPE_THEMES: readonly PrototypeTheme[] = [
+  { id: 'midnight', label: '极夜黑', description: '默认 · 蓝紫环境光' },
+  { id: 'apple', label: '苹果白', description: '通透冷白 · 系统蓝' },
+  { id: 'claude', label: 'Claude 护眼', description: '暖纸米色 · 陶土橙' },
+  { id: 'mint', label: '清新绿', description: '低饱和绿 · 自然呼吸感' },
+  { id: 'rose', label: '柔雾粉', description: '克制豆沙粉 · 柔和安静' },
+];
 
 interface PrototypeBook {
   id: string;
@@ -64,9 +82,18 @@ interface SharedPrototypeState {
   activePanel: ActivityPanel;
   activeBookId: string;
   folders: PrototypeFolder[];
+  glowEnabled: boolean;
+  interfaceScope: InterfaceScope;
   leftWidth: number;
   agentVisible: boolean;
   query: string;
+  readingFontFamily: ReadingFontFamily;
+  readingFontSize: number;
+  readingFontWeight: number;
+  readingLineHeight: number;
+  readingViewMode: ReadingViewMode;
+  readingZoom: number;
+  readingWidth: number;
   rightWidth: number;
   theme: ThemeMode;
 }
@@ -77,8 +104,17 @@ interface SharedPrototypeActions {
   selectBook: (bookId: string) => void;
   setActivePanel: (panel: ActivityPanel) => void;
   setAgentVisible: (visible: boolean) => void;
+  setGlowEnabled: (enabled: boolean) => void;
+  setInterfaceScope: (scope: InterfaceScope) => void;
   setLeftWidth: (width: number) => void;
   setQuery: (query: string) => void;
+  setReadingFontFamily: (fontFamily: ReadingFontFamily) => void;
+  setReadingFontSize: (fontSize: number) => void;
+  setReadingFontWeight: (fontWeight: number) => void;
+  setReadingLineHeight: (lineHeight: number) => void;
+  setReadingViewMode: (viewMode: ReadingViewMode) => void;
+  setReadingZoom: (zoom: number) => void;
+  setReadingWidth: (width: number) => void;
   setRightWidth: (width: number) => void;
   setTheme: (theme: ThemeMode) => void;
   showStatus: (message: string) => void;
@@ -149,7 +185,9 @@ function cloneFolders(items: PrototypeFolder[]): PrototypeFolder[] {
 }
 
 export function WorkbenchPrototype() {
-  const [theme, setTheme] = useState<ThemeMode>('dark');
+  const [theme, setTheme] = useState<ThemeMode>('midnight');
+  const [glowEnabled, setGlowEnabled] = useState(true);
+  const [interfaceScope, setInterfaceScope] = useState<InterfaceScope>('book');
   const [activePanel, setActivePanel] = useState<ActivityPanel>('library');
   const [folders, setFolders] = useState<PrototypeFolder[]>(() => cloneFolders(INITIAL_FOLDERS));
   const [activeBookId, setActiveBookId] = useState('sapiens');
@@ -157,6 +195,13 @@ export function WorkbenchPrototype() {
   const [leftWidth, setLeftWidth] = useState(304);
   const [rightWidth, setRightWidth] = useState(294);
   const [query, setQuery] = useState('');
+  const [readingFontFamily, setReadingFontFamily] = useState<ReadingFontFamily>('default');
+  const [readingFontSize, setReadingFontSize] = useState(16);
+  const [readingFontWeight, setReadingFontWeight] = useState(400);
+  const [readingLineHeight, setReadingLineHeight] = useState(1.95);
+  const [readingViewMode, setReadingViewMode] = useState<ReadingViewMode>('double');
+  const [readingZoom, setReadingZoom] = useState(100);
+  const [readingWidth, setReadingWidth] = useState(680);
   const [statusMessage, setStatusMessage] = useState('就绪');
   const statusTimer = useRef<number | null>(null);
 
@@ -198,9 +243,18 @@ export function WorkbenchPrototype() {
     activePanel,
     activeBookId,
     folders,
+    glowEnabled,
+    interfaceScope,
     leftWidth,
     agentVisible,
     query,
+    readingFontFamily,
+    readingFontSize,
+    readingFontWeight,
+    readingLineHeight,
+    readingViewMode,
+    readingZoom,
+    readingWidth,
     rightWidth,
     theme,
   };
@@ -214,8 +268,17 @@ export function WorkbenchPrototype() {
     },
     setActivePanel,
     setAgentVisible,
+    setGlowEnabled,
+    setInterfaceScope,
     setLeftWidth,
     setQuery,
+    setReadingFontFamily,
+    setReadingFontSize,
+    setReadingFontWeight,
+    setReadingLineHeight,
+    setReadingViewMode,
+    setReadingZoom,
+    setReadingWidth,
     setRightWidth,
     setTheme,
     showStatus,
@@ -225,9 +288,8 @@ export function WorkbenchPrototype() {
     <div
       className="workbench-prototype"
       data-theme={theme}
+      data-glow={glowEnabled ? 'on' : 'off'}
       data-variant="C"
-      data-tone={DEFAULT_TONE}
-      data-glow={DEFAULT_GLOW}
     >
       <a className="prototype-skip-link" href="#prototype-reader-main">
         跳到阅读正文
@@ -283,20 +345,29 @@ function VariantC({ state, actions }: { state: SharedPrototypeState; actions: Sh
 
 function TitleBar({ state, actions }: { state: SharedPrototypeState; actions: SharedPrototypeActions }) {
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
   const menuAreaRef = useRef<HTMLDivElement | null>(null);
+  const themePickerRef = useRef<HTMLDivElement | null>(null);
   const activeBook = findBook(state.folders, state.activeBookId);
 
   useEffect(() => {
-    const closeMenu = (event: MouseEvent) => {
-      if (!menuAreaRef.current?.contains(event.target as Node)) setOpenMenu(null);
+    const closePopovers = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!menuAreaRef.current?.contains(target)) setOpenMenu(null);
+      if (!themePickerRef.current?.contains(target)) setThemePickerOpen(false);
     };
     const closeWithEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenMenu(null);
+      if (event.key !== 'Escape') return;
+      if (themePickerRef.current?.contains(document.activeElement)) {
+        themePickerRef.current.querySelector<HTMLButtonElement>('.theme-picker-trigger')?.focus();
+      }
+      setOpenMenu(null);
+      setThemePickerOpen(false);
     };
-    document.addEventListener('mousedown', closeMenu);
+    document.addEventListener('mousedown', closePopovers);
     window.addEventListener('keydown', closeWithEscape);
     return () => {
-      document.removeEventListener('mousedown', closeMenu);
+      document.removeEventListener('mousedown', closePopovers);
       window.removeEventListener('keydown', closeWithEscape);
     };
   }, []);
@@ -323,8 +394,8 @@ function TitleBar({ state, actions }: { state: SharedPrototypeState; actions: Sh
       case 'toggle-agent':
         actions.setAgentVisible(!state.agentVisible);
         break;
-      case 'theme':
-        actions.setTheme(state.theme === 'dark' ? 'light' : 'dark');
+      case 'theme-picker':
+        setThemePickerOpen(true);
         break;
       case 'split':
         actions.showStatus('视图 → 向右拆分编辑器');
@@ -355,12 +426,145 @@ function TitleBar({ state, actions }: { state: SharedPrototypeState; actions: Sh
         <span>{activeBook?.title ?? 'AI Reader'}</span>
         <span className="titlebar-variant">工作区</span>
       </div>
-      <div className="window-controls" aria-label="窗口控制">
-        <button type="button" aria-label="最小化" title="最小化"><Minus size={16} aria-hidden /></button>
-        <button type="button" aria-label="最大化或还原" title="最大化或还原"><Square size={12} aria-hidden /></button>
-        <button className="window-close" type="button" aria-label="关闭" title="关闭"><X size={17} aria-hidden /></button>
+      <div className="titlebar-end">
+        <ThemePicker
+          theme={state.theme}
+          glowEnabled={state.glowEnabled}
+          open={themePickerOpen}
+          pickerRef={themePickerRef}
+          onOpenChange={(open) => {
+            setOpenMenu(null);
+            setThemePickerOpen(open);
+          }}
+          onSelect={(theme) => {
+            actions.setTheme(theme);
+            actions.showStatus(`已切换到${getPrototypeTheme(theme).label}主题`);
+          }}
+          onGlowChange={(enabled) => {
+            actions.setGlowEnabled(enabled);
+            actions.showStatus(enabled ? '已开启背景光效果' : '已关闭背景光效果');
+          }}
+        />
+        <div className="window-controls" aria-label="窗口控制">
+          <button type="button" aria-label="最小化" title="最小化"><Minus size={16} aria-hidden /></button>
+          <button type="button" aria-label="最大化或还原" title="最大化或还原"><Square size={12} aria-hidden /></button>
+          <button className="window-close" type="button" aria-label="关闭" title="关闭"><X size={17} aria-hidden /></button>
+        </div>
       </div>
     </header>
+  );
+}
+
+function ThemePicker({
+  theme,
+  glowEnabled,
+  open,
+  pickerRef,
+  onOpenChange,
+  onSelect,
+  onGlowChange,
+}: {
+  theme: ThemeMode;
+  glowEnabled: boolean;
+  open: boolean;
+  pickerRef: React.RefObject<HTMLDivElement | null>;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (theme: ThemeMode) => void;
+  onGlowChange: (enabled: boolean) => void;
+}) {
+  const currentTheme = getPrototypeTheme(theme);
+  const selectedOptionRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => selectedOptionRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  return (
+    <div className="theme-picker" ref={pickerRef}>
+      <button
+        className="theme-picker-trigger"
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="切换工作台主题"
+        onClick={() => onOpenChange(!open)}
+      >
+        <Palette size={15} aria-hidden />
+        <span>{currentTheme.label}</span>
+        <ChevronDown size={13} aria-hidden />
+      </button>
+      {open ? (
+        <div className="theme-picker-popover" role="dialog" aria-label="选择工作台主题">
+          <header>
+            <div>
+              <strong>工作台主题</strong>
+              <span>原型预览 · 不保存设置</span>
+            </div>
+          </header>
+          <ThemeGlowToggle glowEnabled={glowEnabled} onChange={() => onGlowChange(!glowEnabled)} />
+          <ThemeOptionList theme={theme} onSelect={onSelect} selectedOptionRef={selectedOptionRef} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ThemeGlowToggle({ glowEnabled, onChange }: { glowEnabled: boolean; onChange: () => void }) {
+  return (
+    <button
+      className={glowEnabled ? 'theme-glow-toggle is-on' : 'theme-glow-toggle'}
+      type="button"
+      role="switch"
+      aria-checked={glowEnabled}
+      onClick={onChange}
+    >
+      <span className="theme-glow-icon" aria-hidden><Sparkles size={15} /></span>
+      <span className="theme-glow-copy">
+        <strong>背景光效果</strong>
+        <small>{glowEnabled ? '已开启 · 每套配色使用对应光晕' : '已关闭 · 使用纯色渐变背景'}</small>
+      </span>
+      <span className="theme-glow-state">{glowEnabled ? '开启' : '关闭'}</span>
+    </button>
+  );
+}
+
+function ThemeOptionList({
+  theme,
+  onSelect,
+  selectedOptionRef,
+}: {
+  theme: ThemeMode;
+  onSelect: (theme: ThemeMode) => void;
+  selectedOptionRef?: React.RefObject<HTMLButtonElement | null>;
+}) {
+  return (
+    <div className="theme-option-list">
+      {PROTOTYPE_THEMES.map((option) => {
+        const selected = option.id === theme;
+        return (
+          <button
+            key={option.id}
+            ref={selected ? selectedOptionRef : undefined}
+            className={selected ? 'theme-option selected' : 'theme-option'}
+            type="button"
+            data-theme-option={option.id}
+            aria-pressed={selected}
+            onClick={() => onSelect(option.id)}
+          >
+            <span className="theme-option-preview" aria-hidden>
+              <span />
+            </span>
+            <span className="theme-option-copy">
+              <strong>{option.label}</strong>
+              <small>{option.description}</small>
+            </span>
+            <span className="theme-option-check" aria-hidden>{selected ? <Check size={15} /> : null}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -439,7 +643,7 @@ function getMenuItems(menu: Exclude<MenuKey, null>, state?: SharedPrototypeState
     { action: 'toggle-agent', label: 'Agent 侧栏', checked: Boolean(state?.agentVisible) },
     { action: 'split', label: '向右拆分编辑器', shortcut: 'Ctrl+\\' },
     { separator: true, action: '', label: '' },
-    { action: 'theme', label: state?.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题' },
+    { action: 'theme-picker', label: `主题配色：${getPrototypeTheme(state?.theme ?? 'midnight').label}` },
     { action: 'typography', label: '阅读排版…' },
     { action: 'fullscreen', label: '全屏', shortcut: 'F11' },
   ];
@@ -457,6 +661,9 @@ function ActivityRail({ state, actions }: { state: SharedPrototypeState; actions
       <button type="button" aria-label="目录" title="目录" aria-pressed={state.activePanel === 'toc'} className={state.activePanel === 'toc' ? 'active' : ''} onClick={() => togglePanel('toc')}>
         <ListTree size={20} aria-hidden /><span>目录</span>
       </button>
+      <button type="button" aria-label="界面" title="界面" aria-pressed={state.activePanel === 'interface'} className={state.activePanel === 'interface' ? 'active' : ''} onClick={() => togglePanel('interface')}>
+        <SlidersHorizontal size={20} aria-hidden /><span>界面</span>
+      </button>
       <div className="activity-rail-spacer" />
       <div className="activity-book-progress" aria-label="当前阅读进度 68%"><span>68</span></div>
     </nav>
@@ -467,7 +674,13 @@ function PrimaryPanel({ state, actions }: { state: SharedPrototypeState; actions
   const style = { '--prototype-left-width': `${state.leftWidth}px` } as CSSProperties;
   return (
     <aside className="prototype-primary-panel variant-c-primary" style={style} aria-label="主侧栏">
-      {state.activePanel === 'library' ? <LibraryPanel state={state} actions={actions} /> : <TocPanel activeBook={findBook(state.folders, state.activeBookId)} />}
+      {state.activePanel === 'library' ? (
+        <LibraryPanel state={state} actions={actions} />
+      ) : state.activePanel === 'toc' ? (
+        <TocPanel activeBook={findBook(state.folders, state.activeBookId)} />
+      ) : (
+        <InterfacePanel state={state} actions={actions} />
+      )}
     </aside>
   );
 }
@@ -582,11 +795,119 @@ function TocPanel({ activeBook }: { activeBook: PrototypeBook | undefined }) {
   );
 }
 
+function InterfacePanel({ state, actions }: { state: SharedPrototypeState; actions: SharedPrototypeActions }) {
+  const [typographySectionOpen, setTypographySectionOpen] = useState(true);
+  const [themeSectionOpen, setThemeSectionOpen] = useState(false);
+  const resetReadingSettings = () => {
+    actions.setReadingFontFamily('default');
+    actions.setReadingFontSize(16);
+    actions.setReadingFontWeight(400);
+    actions.setReadingLineHeight(1.95);
+    actions.setReadingViewMode('double');
+    actions.setReadingZoom(100);
+    actions.setReadingWidth(680);
+    actions.showStatus('已恢复默认阅读排版');
+  };
+
+  return (
+    <div className="interface-panel">
+      <div className="sidebar-heading">
+        <div><span className="sidebar-eyebrow">显示与阅读</span><h2>排版</h2></div>
+        <button type="button" aria-label="关闭界面面板" title="关闭界面面板" onClick={() => actions.setActivePanel(null)}><X size={16} aria-hidden /></button>
+      </div>
+      <div className="interface-panel-scroll">
+        <div className="interface-scope-tabs" role="tablist" aria-label="排版作用范围">
+          <button type="button" role="tab" aria-selected={state.interfaceScope === 'book'} className={state.interfaceScope === 'book' ? 'active' : ''} onClick={() => { actions.setInterfaceScope('book'); actions.showStatus('正在预览当前书籍排版'); }}>书籍</button>
+          <button type="button" role="tab" aria-selected={state.interfaceScope === 'global'} className={state.interfaceScope === 'global' ? 'active' : ''} onClick={() => { actions.setInterfaceScope('global'); actions.showStatus('正在预览全局阅读默认'); }}>全局</button>
+        </div>
+
+        <div className="interface-divider" />
+
+        <section className="interface-typography-section" aria-labelledby="interface-typography-title">
+          <button className="interface-typography-disclosure" type="button" aria-expanded={typographySectionOpen} aria-controls="interface-typography-options" onClick={() => setTypographySectionOpen((open) => !open)}>
+            <ChevronDown className={typographySectionOpen ? 'open' : ''} size={17} aria-hidden />
+            <strong id="interface-typography-title">排版</strong>
+          </button>
+          <div id="interface-typography-options" className="interface-typography-options" hidden={!typographySectionOpen}>
+            <label className="interface-reference-control">
+              <span>视图</span>
+              <select aria-label="视图" value={state.readingViewMode} onChange={(event) => actions.setReadingViewMode(event.target.value as ReadingViewMode)}>
+                <option value="double">双页</option>
+                <option value="single">单页</option>
+              </select>
+            </label>
+            <label className="interface-reference-control">
+              <span>字体</span>
+              <select aria-label="字体" value={state.readingFontFamily} onChange={(event) => actions.setReadingFontFamily(event.target.value as ReadingFontFamily)}>
+                <option value="default">default</option>
+                <option value="serif">宋体衬线</option>
+                <option value="sans">系统无衬线</option>
+              </select>
+            </label>
+            <ReadingStepperControl label="字号" value={state.readingFontSize} defaultValue={16} min={16} max={22} step={1} format={(value) => `${value}px`} onChange={actions.setReadingFontSize} />
+            <ReadingStepperControl label="字重" value={state.readingFontWeight} defaultValue={400} min={300} max={700} step={50} format={(value) => `${value}`} onChange={actions.setReadingFontWeight} />
+            <ReadingStepperControl label="行高" value={state.readingLineHeight} defaultValue={1.95} min={1.65} max={2.2} step={0.05} format={(value) => value.toFixed(2)} onChange={actions.setReadingLineHeight} />
+            <ReadingStepperControl label="缩放" value={state.readingZoom} defaultValue={100} min={80} max={140} step={10} format={(value) => `${value}%`} onChange={actions.setReadingZoom} />
+          </div>
+        </section>
+
+        <button type="button" className="interface-reset" onClick={resetReadingSettings}><RotateCcw size={14} aria-hidden />恢复默认阅读排版</button>
+
+        <section className="interface-section interface-theme-section interface-theme-collapsible" aria-labelledby="interface-theme-title">
+          <button
+            className="interface-section-disclosure"
+            type="button"
+            aria-expanded={themeSectionOpen}
+            aria-controls="interface-theme-options"
+            onClick={() => setThemeSectionOpen((open) => !open)}
+          >
+            <span className="interface-section-disclosure-icon" aria-hidden><Palette size={16} /></span>
+            <span className="interface-section-disclosure-copy">
+              <span className="interface-section-kicker">工作台外观</span>
+              <strong id="interface-theme-title">主题配色</strong>
+            </span>
+            <span className="interface-section-disclosure-current">{getPrototypeTheme(state.theme).label}</span>
+            <ChevronDown className={themeSectionOpen ? 'interface-section-disclosure-chevron open' : 'interface-section-disclosure-chevron'} size={15} aria-hidden />
+          </button>
+          <div id="interface-theme-options" className="interface-theme-options" hidden={!themeSectionOpen}>
+            <ThemeOptionList theme={state.theme} onSelect={(theme) => { actions.setTheme(theme); actions.showStatus(`已切换到${getPrototypeTheme(theme).label}主题`); }} />
+            <ThemeGlowToggle glowEnabled={state.glowEnabled} onChange={() => { actions.setGlowEnabled(!state.glowEnabled); actions.showStatus(state.glowEnabled ? '已关闭背景光效果' : '已开启背景光效果'); }} />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function ReadingStepperControl({ label, value, defaultValue, min, max, step, format, onChange }: { label: string; value: number; defaultValue: number; min: number; max: number; step: number; format: (value: number) => string; onChange: (value: number) => void }) {
+  const displayValue = value === defaultValue ? 'default' : format(value);
+  const decrement = () => onChange(Math.max(min, Number((value - step).toFixed(2))));
+  const increment = () => onChange(Math.min(max, Number((value + step).toFixed(2))));
+  return (
+    <div className="interface-reference-control interface-stepper-control">
+      <span>{label}</span>
+      <div className="interface-stepper-field">
+        <output aria-label={`${label}当前值`}>{displayValue}</output>
+        <button type="button" aria-label={`减小${label}`} title={`减小${label}`} onClick={decrement}><Minus size={17} aria-hidden /></button>
+        <button type="button" aria-label={`增大${label}`} title={`增大${label}`} onClick={increment}><Plus size={19} aria-hidden /></button>
+        <button type="button" aria-label={`恢复默认${label}`} title={`恢复默认${label}`} onClick={() => onChange(defaultValue)}><X size={19} aria-hidden /></button>
+      </div>
+    </div>
+  );
+}
+
 function ReaderCanvas({ state, actions }: { state: SharedPrototypeState; actions: SharedPrototypeActions }) {
   const activeBook = findBook(state.folders, state.activeBookId);
   const [moreOpen, setMoreOpen] = useState(false);
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
+  const readingStyle = {
+    '--prototype-reading-font-size': `${state.readingFontSize}px`,
+    '--prototype-reading-font-weight': state.readingFontWeight,
+    '--prototype-reading-line-height': state.readingLineHeight,
+    '--prototype-reading-zoom': state.readingZoom / 100,
+    '--prototype-reading-width': `${state.readingWidth}px`,
+  } as CSSProperties;
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -597,7 +918,7 @@ function ReaderCanvas({ state, actions }: { state: SharedPrototypeState; actions
   }, []);
 
   return (
-    <div className="reader-canvas reader-zen">
+    <div className={`reader-canvas reader-zen reading-font-${state.readingFontFamily}`} data-reading-view-mode={state.readingViewMode} style={readingStyle}>
       <div className="editor-tabs" role="tablist" aria-label="阅读标签">
         <button type="button" role="tab" aria-selected="true" className="editor-tab active"><BookMarked size={14} aria-hidden /><span>{activeBook?.title ?? '阅读材料'}</span><span className="tab-progress-dot" title="主要阅读材料" /><X size={13} aria-hidden /></button>
         <button type="button" role="tab" aria-selected="false" className="editor-tab"><BookMarked size={14} aria-hidden /><span>规训与惩罚</span><X size={13} aria-hidden /></button>
@@ -666,7 +987,12 @@ function ResizeHandle({ label, side, value, min, max, onChange }: { label: strin
 }
 
 function WorkbenchStatus({ state }: { state: SharedPrototypeState }) {
-  return <footer className="workbench-statusbar"><div><span className="status-indicator" /><span>AI Reader</span><span>本地托管书库</span></div><div><span>VS Code 工作区</span><span>UTF-8</span><span>{state.theme === 'dark' ? <Moon size={12} aria-hidden /> : <Sun size={12} aria-hidden />}</span></div></footer>;
+  const activeTheme = getPrototypeTheme(state.theme);
+  return <footer className="workbench-statusbar"><div><span className="status-indicator" /><span>AI Reader</span><span>本地托管书库</span></div><div><span>VS Code 工作区</span><span>UTF-8</span><span className="status-theme">{state.theme === 'midnight' ? <Moon size={12} aria-hidden /> : <Sun size={12} aria-hidden />}<span>{activeTheme.label}</span></span></div></footer>;
+}
+
+function getPrototypeTheme(theme: ThemeMode): PrototypeTheme {
+  return PROTOTYPE_THEMES.find((option) => option.id === theme) ?? PROTOTYPE_THEMES[0]!;
 }
 
 function setBookDragData(event: DragEvent<HTMLButtonElement>, bookId: string) {
