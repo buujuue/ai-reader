@@ -15,7 +15,7 @@
 - `managedFileSource.ts`：只读、File/Blob 兼容的托管材料范围来源；维护 128 KiB 分块、128 块 LRU 和同分块并发 Promise，不知道 Tauri 或文件路径。
 - `managedRangeProtocol.ts`：Windows Tauri PDF 的 `MaterialId + 半开范围` 二进制 WebView fetch 适配；只负责协议 URL、平台选择和响应长度校验，不接触数据库或托管路径。
 - `tauriImportRepository.ts`：Tauri Adapter，经 `invoke` 调用导入、书库、回收站、同指纹 `relink_material`、元数据、`save_markdown`、Markdown 恢复、版本迁移和非 Windows/非 PDF 的托管材料范围命令；Windows PDF 的范围回调切换到 `managedRangeProtocol.ts`，并校验跨端 DTO 形状。
-- `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。
+- `backupRepository.ts` / `inMemoryBackupRepository.ts` / `tauriBackupRepository.ts`：完整书库备份 typed Repository、内存测试 Adapter 与 Tauri Adapter；只传递目标路径和导出结果，不把 SQLite、托管文件或归档字节带入前端。v2 文件夹/材料归属和 v1 兼容清理由 Rust `db/backup.rs` 隐藏实现。
 - `inMemoryImportRepository.ts`：内存 Adapter，浏览器降级开发用；用 sha256 模拟 Rust 完整内容指纹，并按「完整指纹 + 格式」模拟 pending/ready 查重、来源快照/覆盖值合并、来源封面与自定义封面分层、托管副本缺失后的重新关联与回收站（普通删除移除正文副本、恢复/永久删除同步清理迁移快照）。
 - `importRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的导入、正式 Markdown 保存与恢复快照契约测试。
 - `metadataRepository.contract.ts`：内存与 Tauri 两个 Adapter 共享的元数据覆盖契约测试。

@@ -38,9 +38,15 @@ pnpm --filter @ai-reader/app test:real-annotations
 | 非目标没有提前实现 | 根 `package.json`、`apps/reader/package.json`、`apps/reader/src-tauri/Cargo.toml` 与 `pnpm verify:v1` | 第一版运行时不引入 AI、Agent、OCR、账号、云同步、手机、Linux 或完整 Web 产品依赖；`CONTEXT.md` 中的未来领域词汇只是边界记录，不是实现 |
 | 工作区结构、命令和架构边界同步 | `AGENTS.md`、各目录 `AGENTS.md`、`CODEMAP.md`、`docs/architecture/overview.md` | 目录、命令、TS/Rust 所有权和跨端验证入口与当前代码一致 |
 
+## Issue #52 树型书库总验收补充
+
+- v2 备份的 `manifest.json` 明确保存 `folders` 和 `materials[].folderId`；SQLite 快照保存完整 Workspace State，Rust 在暂存区校验文件夹树、材料归属、外键和展开状态引用。
+- v1 旧备份通过同一恢复协议读取；恢复前只在暂存数据库清除文件夹数据，材料归入未归类，书籍、封面、设置、位置、批注和标签保持不变。
+- 应用级入口由 `apps/reader/src/app/App.test.tsx` 验证，Rust 的同版/旧版恢复、损坏层级和原子回滚由 `apps/reader/src-tauri/src/db/backup.rs` 验证；Windows Tauri 的真实导入、树操作、导出/恢复和重启冒烟仍需按本机可用材料执行，不能以浏览器降级测试代替。
+
 ## 当前结论
 
-截至提交 `40b3b59`：
+截至 Issue #52 实现提交：
 
 - 静态交付闸门和仓库级测试可以作为 Issue #31 的可重复验收入口；
 - 最新跨端 CI 已证明四个平台的构建链、原生启动链和对应模拟器证据上传链路可运行；

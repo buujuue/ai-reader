@@ -274,6 +274,16 @@ fn normalize_name(name: &str) -> Result<String, AppError> {
     Ok(normalized.to_string())
 }
 
+pub(crate) fn validate_stored_name(name: &str) -> Result<(), AppError> {
+    let normalized = normalize_name(name)?;
+    if normalized != name {
+        return Err(AppError::InvalidLibraryFolderName(
+            "文件夹名称未去除首尾空格".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

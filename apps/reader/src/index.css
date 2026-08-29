@@ -1250,3 +1250,40 @@ body::-webkit-scrollbar-thumb:hover,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Windows 高对比模式下保留结构、焦点和拖放状态，不依赖暗色令牌对比度。 */
+@media (forced-colors: active) {
+  .app-shell.workbench-prototype {
+    color: CanvasText;
+    background: Canvas;
+    forced-color-adjust: auto;
+  }
+
+  .app-shell button,
+  .app-shell input,
+  .app-shell [role='menu'],
+  .app-shell [role='treeitem'] {
+    color: ButtonText;
+    border-color: ButtonText;
+    background: ButtonFace;
+    forced-color-adjust: auto;
+  }
+
+  .app-shell button:focus-visible,
+  .app-shell input:focus-visible,
+  .app-shell [tabindex='-1']:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .app-shell [data-drop-state='valid'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .app-shell [data-drop-state='same'],
+  .app-shell [data-drop-state='invalid'] {
+    outline: 2px dashed GrayText;
+    outline-offset: -2px;
+  }
+}

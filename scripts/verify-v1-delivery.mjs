@@ -27,6 +27,7 @@ const tauriImportAdapter = read('apps/reader/src/domain/library/tauriImportRepos
 const tauriCommands = read('apps/reader/src-tauri/src/lib.rs');
 const readerCommands = read('apps/reader/src/workbench/readerCommands.ts');
 const performanceScript = read('apps/reader/scripts/verify-reading-performance.mjs');
+const appStyles = read('apps/reader/src/index.css');
 
 const checks = [
   {
@@ -127,6 +128,13 @@ const checks = [
       exists('apps/reader/src/domain/workspace/inMemoryWorkspaceRepository.test.ts') &&
       exists('apps/reader/src/domain/workspace/tauriWorkspaceRepository.test.ts') &&
       exists('apps/reader/src-tauri/src/db/mod.rs'),
+  },
+  {
+    name: '树型书库在 reduced-motion 与高对比模式下保留可见状态反馈',
+    pass:
+      appStyles.includes('prefers-reduced-motion') &&
+      appStyles.includes('forced-colors: active') &&
+      appStyles.includes("data-drop-state='valid'"),
   },
   {
     name: '第一版未引入 AI、Agent、OCR、账号或云同步运行时依赖',

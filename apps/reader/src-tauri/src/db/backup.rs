@@ -4,14 +4,15 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{classify_io_error, AppError};
 use crate::fs::LibraryPaths;
 
-pub const BACKUP_FORMAT_VERSION: u32 = 1;
+pub const LEGACY_BACKUP_FORMAT_VERSION: u32 = 1;
+pub const BACKUP_FORMAT_VERSION: u32 = 2;
 const COPY_BUFFER_SIZE: usize = 64 * 1024;
 const TAR_BLOCK_SIZE: usize = 512;
 
@@ -36,6 +37,16 @@ pub struct BackupMaterial {
     pub has_cover: bool,
     #[serde(default)]
     pub has_source_cover: bool,
+    #[serde(default)]
+    pub folder_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +57,8 @@ pub struct BackupManifest {
     pub encrypted: bool,
     pub entries: Vec<BackupManifestEntry>,
     pub materials: Vec<BackupMaterial>,
+    #[serde(default)]
+    pub folders: Vec<BackupFolder>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +99,13 @@ enum RestorePhase {
 struct BackupSourceEntry {
     manifest: BackupManifestEntry,
     source_path: PathBuf,
+}
+
+struct CollectedBackupEntries {
+    database_entry: BackupSourceEntry,
+    file_entries: Vec<BackupSourceEntry>,
+    materials: Vec<BackupMaterial>,
+    folders: Vec<BackupFolder>,
 }
 
 /// 完整书库备份 Repository。数据库快照、托管文件与 manifest 都由 Rust
@@ -140,8 +160,14 @@ impl<'a> BackupRepository<'a> {
                 .map_err(classify_io_error)?;
             self.connection.backup("main", &snapshot_path, None)?;
             let snapshot = Connection::open(&snapshot_path)?;
-            let (database_entry, mut file_entries, materials) =
-                collect_backup_entries(&snapshot, &snapshot_path, paths)?;
+            normalize_workspace_state_for_backup(&snapshot, &snapshot_path)?;
+            let collected = collect_backup_entries(&snapshot, &snapshot_path, paths)?;
+            let CollectedBackupEntries {
+                database_entry,
+                mut file_entries,
+                materials,
+                folders,
+            } = collected;
             file_entries.insert(0, database_entry);
 
             let manifest = BackupManifest {
@@ -153,6 +179,7 @@ impl<'a> BackupRepository<'a> {
                     .map(|entry| entry.manifest.clone())
                     .collect(),
                 materials,
+                folders,
             };
             let manifest_bytes =
                 serde_json::to_vec_pretty(&manifest).map_err(AppError::BackupManifestSerialize)?;
@@ -216,6 +243,9 @@ impl<'a> BackupRepository<'a> {
 
             std::fs::create_dir_all(&stage_dir).map_err(classify_io_error)?;
             stage_archive(source, &stage_dir, &manifest)?;
+            if manifest.format_version == LEGACY_BACKUP_FORMAT_VERSION {
+                normalize_legacy_staged_library(&stage_dir)?;
+            }
             validate_staged_library(&stage_dir, &manifest)?;
 
             create_current_snapshot(connection, paths, &snapshot_dir)?;
@@ -462,7 +492,10 @@ fn skip_tar_padding(reader: &mut File, size: u64) -> Result<(), AppError> {
 }
 
 fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
-    if manifest.format_version != BACKUP_FORMAT_VERSION {
+    if !matches!(
+        manifest.format_version,
+        LEGACY_BACKUP_FORMAT_VERSION | BACKUP_FORMAT_VERSION
+    ) {
         return Err(AppError::BackupValidation(format!(
             "不支持的备份版本:{}",
             manifest.format_version
@@ -470,6 +503,19 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
     }
     if manifest.encrypted {
         return Err(AppError::BackupValidation("暂不支持加密备份".to_string()));
+    }
+
+    let folder_ids = validate_folder_records(&manifest.folders)?;
+    if manifest.format_version == LEGACY_BACKUP_FORMAT_VERSION
+        && (!manifest.folders.is_empty()
+            || manifest
+                .materials
+                .iter()
+                .any(|material| material.folder_id.is_some()))
+    {
+        return Err(AppError::BackupValidation(
+            "旧版备份不应包含书库文件夹数据".to_string(),
+        ));
     }
 
     let mut materials = HashSet::new();
@@ -486,6 +532,14 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
                 "manifest 重复书籍:{}",
                 material.id
             )));
+        }
+        if let Some(folder_id) = &material.folder_id {
+            if !folder_ids.contains(folder_id) {
+                return Err(AppError::BackupValidation(format!(
+                    "书籍归属文件夹不存在:{}",
+                    folder_id
+                )));
+            }
         }
     }
 
@@ -587,6 +641,90 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+fn validate_folder_records(folders: &[BackupFolder]) -> Result<HashSet<String>, AppError> {
+    let mut ids = HashSet::new();
+    let mut by_sibling_name = HashSet::new();
+    let mut by_id = HashMap::new();
+    for folder in folders {
+        validate_backup_folder_id(&folder.id)?;
+        validate_backup_folder_name(&folder.name)?;
+        if !ids.insert(folder.id.clone()) {
+            return Err(AppError::BackupValidation(format!(
+                "manifest 重复文件夹:{}",
+                folder.id
+            )));
+        }
+        let sibling_key = (folder.parent_id.clone(), folder.name.to_lowercase());
+        if !by_sibling_name.insert(sibling_key) {
+            return Err(AppError::BackupValidation(format!(
+                "同一父级下文件夹名称重复:{}",
+                folder.name
+            )));
+        }
+        by_id.insert(folder.id.clone(), folder.clone());
+    }
+
+    let mut depths = HashMap::new();
+    for folder in folders {
+        validate_folder_depth(&folder.id, &by_id, &mut depths, &mut HashSet::new())?;
+    }
+    Ok(ids)
+}
+
+fn validate_folder_depth(
+    folder_id: &str,
+    by_id: &HashMap<String, BackupFolder>,
+    depths: &mut HashMap<String, usize>,
+    visiting: &mut HashSet<String>,
+) -> Result<usize, AppError> {
+    if let Some(depth) = depths.get(folder_id) {
+        return Ok(*depth);
+    }
+    if !visiting.insert(folder_id.to_string()) {
+        return Err(AppError::BackupValidation(
+            "文件夹层级数据存在循环".to_string(),
+        ));
+    }
+    let folder = by_id
+        .get(folder_id)
+        .ok_or_else(|| AppError::BackupValidation(format!("文件夹父级不存在:{folder_id}")))?;
+    let depth = match &folder.parent_id {
+        Some(parent_id) => {
+            if !by_id.contains_key(parent_id) {
+                return Err(AppError::BackupValidation(format!(
+                    "文件夹父级不存在:{}",
+                    parent_id
+                )));
+            }
+            validate_folder_depth(parent_id, by_id, depths, visiting)? + 1
+        }
+        None => 1,
+    };
+    visiting.remove(folder_id);
+    if depth > crate::db::folders::MAX_LIBRARY_FOLDER_DEPTH {
+        return Err(AppError::BackupValidation(format!(
+            "文件夹层级超过最多五层:{}",
+            folder_id
+        )));
+    }
+    depths.insert(folder_id.to_string(), depth);
+    Ok(depth)
+}
+
+fn validate_backup_folder_id(folder_id: &str) -> Result<(), AppError> {
+    if folder_id.is_empty() || folder_id.chars().any(char::is_control) {
+        return Err(AppError::BackupValidation(format!(
+            "文件夹标识不安全:{folder_id}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_backup_folder_name(name: &str) -> Result<(), AppError> {
+    crate::db::folders::validate_stored_name(name)
+        .map_err(|error| AppError::BackupValidation(format!("文件夹名称无效:{error}")))
 }
 
 fn validate_material_id(material_id: &str) -> Result<(), AppError> {
@@ -733,6 +871,327 @@ fn staged_entry_path(stage_dir: &Path, entry: &BackupManifestEntry) -> Result<Pa
     }
 }
 
+fn normalize_workspace_state_for_backup(
+    database: &Connection,
+    database_path: &Path,
+) -> Result<(), AppError> {
+    let workspace_json: Option<String> = database
+        .query_row(
+            "SELECT json FROM workspace_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::BackupValidation(format!("工作区状态无法读取:{error}")))?;
+    if let Some(workspace_json) = workspace_json {
+        let mut value: serde_json::Value = serde_json::from_str(&workspace_json)
+            .map_err(|error| AppError::BackupValidation(format!("工作区状态无法解析:{error}")))?;
+        let Some(object) = value.as_object_mut() else {
+            return Err(AppError::BackupValidation(
+                "工作区状态不是 JSON 对象".to_string(),
+            ));
+        };
+        if let Some(expanded) = object.get("expandedLibraryFolderIds") {
+            if !expanded.is_array() {
+                return Err(AppError::BackupValidation(
+                    "书库文件夹展开状态格式不正确".to_string(),
+                ));
+            }
+        }
+        if let Some(unfiled_expanded) = object.get("unfiledMaterialsExpanded") {
+            if !unfiled_expanded.is_boolean() {
+                return Err(AppError::BackupValidation(
+                    "未归类材料展开状态格式不正确".to_string(),
+                ));
+            }
+        }
+        if !object.contains_key("expandedLibraryFolderIds") {
+            object.insert(
+                "expandedLibraryFolderIds".to_string(),
+                serde_json::json!([]),
+            );
+        }
+        if !object.contains_key("unfiledMaterialsExpanded") {
+            object.insert("unfiledMaterialsExpanded".to_string(), serde_json::json!(true));
+        }
+        let normalized = serde_json::to_string(&value)
+            .map_err(|error| AppError::BackupValidation(format!("工作区状态无法写入:{error}")))?;
+        database
+            .execute(
+                "UPDATE workspace_state SET json = ?1 WHERE id = 1",
+                [&normalized],
+            )
+            .map_err(|error| AppError::BackupValidation(format!("工作区状态无法更新:{error}")))?;
+    } else {
+        let default_state = crate::db::workspace::WorkspaceState::default();
+        let default_json = serde_json::to_string(&default_state)
+            .map_err(|error| AppError::BackupValidation(format!("工作区状态无法写入:{error}")))?;
+        database
+            .execute(
+                "INSERT INTO workspace_state (id, json) VALUES (1, ?1)",
+                [&default_json],
+            )
+            .map_err(|error| AppError::BackupValidation(format!("工作区状态无法创建:{error}")))?;
+    }
+    flush_database_journal(database, database_path, "备份快照")
+}
+
+fn flush_database_journal(
+    database: &Connection,
+    database_path: &Path,
+    context: &str,
+) -> Result<(), AppError> {
+    let checkpoint: (i64, i64, i64) = database
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|error| AppError::BackupValidation(format!("{context} WAL 无法收敛:{error}")))?;
+    if checkpoint.0 != 0 {
+        return Err(AppError::BackupValidation(format!(
+            "{context} WAL checkpoint 未完成:busy={}",
+            checkpoint.0
+        )));
+    }
+    let journal_mode: String = database
+        .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))
+        .map_err(|error| AppError::BackupValidation(format!("{context} journal 模式无法切换:{error}")))?;
+    if !journal_mode.eq_ignore_ascii_case("delete") {
+        return Err(AppError::BackupValidation(format!(
+            "{context} journal 模式未收敛:{journal_mode}"
+        )));
+    }
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = PathBuf::from(format!("{}{}", database_path.display(), suffix));
+        if sidecar.exists() {
+            return Err(AppError::BackupValidation(format!(
+                "{context}仍存在数据库 sidecar:{}",
+                sidecar.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_legacy_staged_library(stage_dir: &Path) -> Result<(), AppError> {
+    let database_path = stage_dir.join("database").join("ai-reader.db");
+    let database = Connection::open(&database_path)
+        .map_err(|error| AppError::BackupValidation(format!("旧版备份数据库无法打开:{error}")))?;
+
+    if database_has_column(&database, "materials", "folder_id")? {
+        database
+            .execute("UPDATE materials SET folder_id = NULL", [])
+            .map_err(|error| {
+                AppError::BackupValidation(format!("旧版备份材料归属无法清理:{error}"))
+            })?;
+    }
+    if database_has_table(&database, "library_folders")? {
+        // 文件夹表使用父级 RESTRICT 外键,所以从叶子到根清理,同时保留其它
+        // 书籍、封面、批注、位置和工作区字段。
+        loop {
+            let deleted = database
+                .execute(
+                    "DELETE FROM library_folders
+                     WHERE id NOT IN (
+                         SELECT parent_id FROM library_folders WHERE parent_id IS NOT NULL
+                     )",
+                    [],
+                )
+                .map_err(|error| {
+                    AppError::BackupValidation(format!("旧版备份文件夹数据无法清理:{error}"))
+                })?;
+            if deleted == 0 {
+                break;
+            }
+        }
+        let remaining: i64 = database
+            .query_row("SELECT COUNT(*) FROM library_folders", [], |row| row.get(0))
+            .map_err(|error| {
+                AppError::BackupValidation(format!("旧版备份文件夹数据无法校验:{error}"))
+            })?;
+        if remaining != 0 {
+            return Err(AppError::BackupValidation(
+                "旧版备份文件夹层级存在循环,无法安全恢复".to_string(),
+            ));
+        }
+    }
+
+    if database_has_table(&database, "workspace_state")? {
+        let workspace_json: Option<String> = database
+            .query_row("SELECT json FROM workspace_state WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|error| {
+                AppError::BackupValidation(format!("旧版工作区状态无法读取:{error}"))
+            })?;
+        if let Some(workspace_json) = workspace_json {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&workspace_json).map_err(|error| {
+                    AppError::BackupValidation(format!("旧版工作区状态无法解析:{error}"))
+                })?;
+            if let Some(object) = value.as_object_mut() {
+                object.remove("expandedLibraryFolderIds");
+                object.remove("unfiledMaterialsExpanded");
+                let normalized = serde_json::to_string(&value).map_err(|error| {
+                    AppError::BackupValidation(format!("旧版工作区状态无法写入:{error}"))
+                })?;
+                database
+                    .execute(
+                        "UPDATE workspace_state SET json = ?1 WHERE id = 1",
+                        [&normalized],
+                    )
+                    .map_err(|error| {
+                        AppError::BackupValidation(format!("旧版工作区状态无法更新:{error}"))
+                    })?;
+            }
+        }
+    }
+    flush_database_journal(&database, &database_path, "旧版备份")
+}
+
+fn database_has_table(connection: &Connection, table: &str) -> Result<bool, AppError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
+fn database_has_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, AppError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|name| name == column);
+    Ok(columns)
+}
+
+fn validate_staged_folder_data(
+    database: &Connection,
+    manifest: &BackupManifest,
+) -> Result<(), AppError> {
+    if !database_has_column(database, "materials", "folder_id")? {
+        return Err(AppError::BackupValidation(
+            "新版备份数据库缺少材料文件夹归属字段".to_string(),
+        ));
+    }
+
+    let mut statement = database.prepare(
+        "SELECT id, name, name_key, parent_id
+         FROM library_folders
+         ORDER BY name_key ASC, id ASC",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            BackupFolder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(3)?,
+            },
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut actual_folders = Vec::new();
+    for row in rows {
+        let (folder, name_key) = row?;
+        if name_key != folder.name.to_lowercase() {
+            return Err(AppError::BackupValidation(format!(
+                "文件夹名称索引不一致:{}",
+                folder.id
+            )));
+        }
+        actual_folders.push(folder);
+    }
+    let folder_ids = validate_folder_records(&actual_folders)?;
+    let mut expected_folders = manifest.folders.clone();
+    expected_folders.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    if actual_folders != expected_folders {
+        return Err(AppError::BackupValidation(
+            "数据库文件夹结构与 manifest 不一致".to_string(),
+        ));
+    }
+
+    let mut foreign_key_rows = database.prepare("PRAGMA foreign_key_check")?;
+    if foreign_key_rows.query([])?.next()?.is_some() {
+        return Err(AppError::BackupValidation(
+            "数据库外键关系校验失败,文件夹归属可能已损坏".to_string(),
+        ));
+    }
+
+    validate_workspace_tree(database, &folder_ids, true)
+}
+
+fn validate_workspace_tree(
+    database: &Connection,
+    folder_ids: &HashSet<String>,
+    require_tree_fields: bool,
+) -> Result<(), AppError> {
+    let workspace_json: Option<String> = database
+        .query_row("SELECT json FROM workspace_state WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(|error| AppError::BackupValidation(format!("工作区状态无法读取:{error}")))?;
+    let Some(workspace_json) = workspace_json else {
+        return Err(AppError::BackupValidation(
+            "新版备份缺少 Workspace State".to_string(),
+        ));
+    };
+    let value: serde_json::Value = serde_json::from_str(&workspace_json)
+        .map_err(|error| AppError::BackupValidation(format!("工作区状态无法解析:{error}")))?;
+    let Some(object) = value.as_object() else {
+        return Err(AppError::BackupValidation(
+            "工作区状态不是 JSON 对象".to_string(),
+        ));
+    };
+    if require_tree_fields
+        && (!object.contains_key("expandedLibraryFolderIds")
+            || !object.contains_key("unfiledMaterialsExpanded"))
+    {
+        return Err(AppError::BackupValidation(
+            "新版备份缺少书库树展开状态".to_string(),
+        ));
+    }
+    if let Some(expanded) = object.get("expandedLibraryFolderIds") {
+        let Some(expanded) = expanded.as_array() else {
+            return Err(AppError::BackupValidation(
+                "书库文件夹展开状态格式不正确".to_string(),
+            ));
+        };
+        let mut seen = HashSet::new();
+        for folder_id in expanded {
+            let Some(folder_id) = folder_id.as_str() else {
+                return Err(AppError::BackupValidation(
+                    "书库文件夹展开状态包含无效标识".to_string(),
+                ));
+            };
+            if !folder_ids.contains(folder_id) || !seen.insert(folder_id) {
+                return Err(AppError::BackupValidation(format!(
+                    "书库文件夹展开状态引用无效:{folder_id}"
+                )));
+            }
+        }
+    }
+    if let Some(unfiled_expanded) = object.get("unfiledMaterialsExpanded") {
+        if !unfiled_expanded.is_boolean() {
+            return Err(AppError::BackupValidation(
+                "未归类材料展开状态格式不正确".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Result<(), AppError> {
     for material in &manifest.materials {
         let entry = manifest
@@ -748,7 +1207,9 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
                 material.id
             )));
         }
-        if material.has_source_cover && !stage_dir.join("source-covers").join(&material.id).is_file() {
+        if material.has_source_cover
+            && !stage_dir.join("source-covers").join(&material.id).is_file()
+        {
             return Err(AppError::BackupValidation(format!(
                 "缺少来源封面:{}",
                 material.id
@@ -759,6 +1220,7 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
     let database =
         Connection::open_with_flags(&database_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|error| AppError::BackupValidation(format!("数据库无法打开:{error}")))?;
+    let is_current_backup = manifest.format_version == BACKUP_FORMAT_VERSION;
     let integrity: String = database
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(|error| AppError::BackupValidation(format!("数据库完整性检查失败:{error}")))?;
@@ -783,13 +1245,35 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
             "数据库版本更新于当前应用:{schema_version}"
         )));
     }
-    for table in [
+    validate_migration_history(&database, schema_version)?;
+    let has_folder_table = database_has_table(&database, "library_folders")?;
+    let has_folder_column = database_has_column(&database, "materials", "folder_id")?;
+    if schema_version >= 10 && !has_folder_table {
+        return Err(AppError::BackupValidation(
+            "数据库迁移记录与文件夹表不一致".to_string(),
+        ));
+    }
+    if schema_version >= 11 && !has_folder_column {
+        return Err(AppError::BackupValidation(
+            "数据库迁移记录与材料归属字段不一致".to_string(),
+        ));
+    }
+    if is_current_backup && (!has_folder_table || !has_folder_column) {
+        return Err(AppError::BackupValidation(
+            "新版备份数据库缺少完整文件夹结构".to_string(),
+        ));
+    }
+    let mut required_tables = vec![
         "schema_migrations",
         "workspace_state",
         "materials",
         "material_overrides",
         "annotations",
-    ] {
+    ];
+    if is_current_backup {
+        required_tables.push("library_folders");
+    }
+    for table in required_tables {
         let exists: bool = database.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
             [table],
@@ -802,28 +1286,39 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
         }
     }
 
-    let mut statement = database.prepare(
-        "SELECT m.id, m.source_file_name, m.fingerprint, m.deleted_at,
+    if is_current_backup {
+        validate_staged_folder_data(&database, manifest)?;
+    }
+
+    let material_query = if is_current_backup {
+        "SELECT m.id, m.source_file_name, m.fingerprint, m.deleted_at, m.folder_id,
                 EXISTS(SELECT 1 FROM material_overrides o
                        WHERE o.material_id = m.id AND o.cover_source IS NOT NULL)
-         FROM materials m WHERE m.status = 'ready' ORDER BY m.id",
-    )?;
+         FROM materials m WHERE m.status = 'ready' ORDER BY m.id"
+    } else {
+        "SELECT m.id, m.source_file_name, m.fingerprint, m.deleted_at, NULL,
+                EXISTS(SELECT 1 FROM material_overrides o
+                       WHERE o.material_id = m.id AND o.cover_source IS NOT NULL)
+         FROM materials m WHERE m.status = 'ready' ORDER BY m.id"
+    };
+    let mut statement = database.prepare(material_query)?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?.is_some(),
-            row.get::<_, bool>(4)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, bool>(5)?,
         ))
     })?;
     let mut actual = HashMap::new();
     for row in rows {
-        let (id, source_file_name, fingerprint, trashed, has_cover) = row?;
+        let (id, source_file_name, fingerprint, trashed, folder_id, has_cover) = row?;
         if actual
             .insert(
                 id.clone(),
-                (source_file_name, fingerprint, trashed, has_cover),
+                (source_file_name, fingerprint, trashed, folder_id, has_cover),
             )
             .is_some()
         {
@@ -838,7 +1333,8 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
         ));
     }
     for material in &manifest.materials {
-        let Some((source_file_name, fingerprint, trashed, has_cover)) = actual.get(&material.id)
+        let Some((source_file_name, fingerprint, trashed, folder_id, has_cover)) =
+            actual.get(&material.id)
         else {
             return Err(AppError::BackupValidation(format!(
                 "数据库缺少书籍:{}",
@@ -848,11 +1344,30 @@ fn validate_staged_library(stage_dir: &Path, manifest: &BackupManifest) -> Resul
         if source_file_name != &material.source_file_name
             || fingerprint != &material.fingerprint
             || trashed != &material.trashed
+            || folder_id != &material.folder_id
             || has_cover != &material.has_cover
         {
             return Err(AppError::BackupValidation(format!(
                 "书籍元数据指纹或状态不一致:{}",
                 material.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_migration_history(
+    database: &Connection,
+    schema_version: i64,
+) -> Result<(), AppError> {
+    let mut statement = database.prepare("SELECT version FROM schema_migrations")?;
+    let versions = statement
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    for version in 1..=schema_version {
+        if !versions.contains(&version) {
+            return Err(AppError::BackupValidation(format!(
+                "数据库迁移记录不连续,缺少版本:{version}"
             )));
         }
     }
@@ -1094,7 +1609,11 @@ fn restore_old_paths(paths: &LibraryPaths, state: &RestoreState) -> Result<(), A
                 .display(),
             suffix
         ));
-        restore_file(&active, &old)?;
+        if old.exists() {
+            restore_file(&active, &old)?;
+        } else if active.exists() {
+            std::fs::remove_file(&active).map_err(classify_io_error)?;
+        }
     }
     Ok(())
 }
@@ -1125,14 +1644,7 @@ fn collect_backup_entries(
     snapshot: &Connection,
     snapshot_path: &Path,
     paths: &LibraryPaths,
-) -> Result<
-    (
-        BackupSourceEntry,
-        Vec<BackupSourceEntry>,
-        Vec<BackupMaterial>,
-    ),
-    AppError,
-> {
+) -> Result<CollectedBackupEntries, AppError> {
     let database_manifest =
         file_manifest_entry("database/ai-reader.db", "database", None, snapshot_path)?;
     let database_entry = BackupSourceEntry {
@@ -1141,7 +1653,7 @@ fn collect_backup_entries(
     };
 
     let mut statement = snapshot.prepare(
-        "SELECT m.id, m.source_file_name, m.fingerprint, m.deleted_at, o.cover_source
+        "SELECT m.id, m.source_file_name, m.fingerprint, m.deleted_at, m.folder_id, o.cover_source
          FROM materials AS m
          LEFT JOIN material_overrides AS o ON o.material_id = m.id
          WHERE m.status = 'ready'
@@ -1153,14 +1665,15 @@ fn collect_backup_entries(
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?.is_some(),
-            row.get::<_, Option<String>>(4)?.is_some(),
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?.is_some(),
         ))
     })?;
 
     let mut entries = Vec::new();
     let mut materials = Vec::new();
     for row in rows {
-        let (id, source_file_name, fingerprint, trashed, has_cover) = row?;
+        let (id, source_file_name, fingerprint, trashed, folder_id, has_cover) = row?;
         let managed_path = material_path(&paths.managed_dir, &id)?;
         let managed_manifest = file_manifest_entry(
             &format!("library/{id}"),
@@ -1209,10 +1722,31 @@ fn collect_backup_entries(
             trashed,
             has_cover,
             has_source_cover,
+            folder_id,
         });
     }
 
-    Ok((database_entry, entries, materials))
+    let mut folder_statement = snapshot.prepare(
+        "SELECT id, name, parent_id
+         FROM library_folders
+         ORDER BY name_key ASC, id ASC",
+    )?;
+    let folders = folder_statement
+        .query_map([], |row| {
+            Ok(BackupFolder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(CollectedBackupEntries {
+        database_entry,
+        file_entries: entries,
+        materials,
+        folders,
+    })
 }
 
 fn material_path(root: &Path, material_id: &str) -> Result<PathBuf, AppError> {
@@ -1583,8 +2117,23 @@ mod tests {
         let folder = crate::db::folders::LibraryFolderRepository::new(&connection)
             .create("文史", None)
             .unwrap();
-        crate::db::folders::LibraryFolderRepository::new(&connection)
+        let child = crate::db::folders::LibraryFolderRepository::new(&connection)
             .create("章节", Some(&folder.id))
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE materials SET folder_id = ?1 WHERE id = 'material-1'",
+                [&child.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE workspace_state SET json = ?1 WHERE id = 1",
+                [format!(
+                    r#"{{"schemaVersion":12,"primarySidebarVisible":true,"tocVisible":false,"activityPanelWidth":304,"primaryMaterialId":"material-1","splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[],"globalReadingTypography":{{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"}},"materialTypography":{{}},"expandedLibraryFolderIds":["{}","{}"],"unfiledMaterialsExpanded":false}}"#,
+                    folder.id, child.id
+                )],
+            )
             .unwrap();
         let destination = root.join("library.airbackup");
 
@@ -1592,7 +2141,23 @@ mod tests {
             .export(&paths, &destination)
             .unwrap();
         let archive = std::fs::read(&destination).unwrap();
-        let database = read_tar_entries(&archive)
+        let entries = read_tar_entries(&archive);
+        let manifest: BackupManifest = serde_json::from_slice(&entries[0].1).unwrap();
+        assert_eq!(manifest.folders.len(), 2);
+        assert!(manifest.folders.iter().any(|candidate| {
+            candidate.id == folder.id && candidate.name == "文史" && candidate.parent_id.is_none()
+        }));
+        assert!(manifest.folders.iter().any(|candidate| {
+            candidate.id == child.id
+                && candidate.name == "章节"
+                && candidate.parent_id.as_deref() == Some(folder.id.as_str())
+        }));
+        assert_eq!(
+            manifest.materials[0].folder_id.as_deref(),
+            Some(child.id.as_str())
+        );
+
+        let database = entries
             .into_iter()
             .find(|(name, _)| name == "database/ai-reader.db")
             .map(|(_, bytes)| bytes)
@@ -1611,11 +2176,273 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         expect_folder(&rows, "文史", None);
-        expect_folder(&rows, "章节", Some(folder.id));
+        expect_folder(&rows, "章节", Some(folder.id.clone()));
+        let material_folder: String = snapshot
+            .query_row(
+                "SELECT folder_id FROM materials WHERE id = 'material-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(material_folder, child.id);
+        let workspace_json: String = snapshot
+            .query_row("SELECT json FROM workspace_state WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let workspace: serde_json::Value = serde_json::from_str(&workspace_json).unwrap();
+        assert_eq!(
+            workspace["expandedLibraryFolderIds"],
+            serde_json::json!([folder.id, child.id])
+        );
+        assert_eq!(workspace["unfiledMaterialsExpanded"], false);
     }
 
     fn expect_folder(rows: &[(String, Option<String>)], name: &str, parent_id: Option<String>) {
         assert!(rows.iter().any(|row| row.0 == name && row.1 == parent_id));
+    }
+
+    #[test]
+    fn legacy_v1_restore_drops_folder_data_but_preserves_library_content() {
+        let (connection, paths, root) = setup();
+        let folder = crate::db::folders::LibraryFolderRepository::new(&connection)
+            .create("旧版不应恢复", None)
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE materials SET folder_id = ?1 WHERE id = 'material-1'",
+                [&folder.id],
+            )
+            .unwrap();
+        let source = root.join("legacy-v1.airbackup");
+        BackupRepository::new(&connection)
+            .export(&paths, &source)
+            .unwrap();
+        rewrite_archive_manifest(&source, |manifest| {
+            manifest.format_version = LEGACY_BACKUP_FORMAT_VERSION;
+            manifest.folders.clear();
+            for material in &mut manifest.materials {
+                material.folder_id = None;
+            }
+        });
+
+        materialize_database(&connection, &paths);
+        let handle = crate::db::DatabaseHandle::new(connection);
+        let result = handle.restore_backup(&paths, &source).unwrap();
+
+        assert_eq!(result.material_count, 1);
+        assert_eq!(
+            std::fs::read(paths.managed_path("material-1")).unwrap(),
+            vec![b'x'; 2 * 1024 * 1024]
+        );
+        assert_eq!(
+            std::fs::read(paths.cover_path("material-1")).unwrap(),
+            b"cover"
+        );
+        let restored = handle
+            .with_connection(|connection| {
+                let folder_count: i64 =
+                    connection
+                        .query_row("SELECT COUNT(*) FROM library_folders", [], |row| row.get(0))?;
+                let material_folder: Option<String> = connection.query_row(
+                    "SELECT folder_id FROM materials WHERE id = 'material-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let annotation_count: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM annotations WHERE material_id = 'material-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let title: String = connection.query_row(
+                    "SELECT title FROM materials WHERE id = 'material-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let workspace_json: String = connection.query_row(
+                    "SELECT json FROM workspace_state WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((
+                    folder_count,
+                    material_folder,
+                    annotation_count,
+                    title,
+                    workspace_json,
+                ))
+            })
+            .unwrap();
+        assert_eq!(restored.0, 0);
+        assert_eq!(restored.1, None);
+        assert_eq!(restored.2, 1);
+        assert_eq!(restored.3, "示例书");
+        let workspace: serde_json::Value = serde_json::from_str(&restored.4).unwrap();
+        assert_eq!(workspace["globalReadingTypography"]["fontSize"], 20);
+        assert_eq!(
+            workspace["editorGroups"][0]["views"][0]["location"]["cfi"],
+            "epubcfi(/6/4)"
+        );
+    }
+
+    #[test]
+    fn same_version_restore_preserves_folder_assignment_and_workspace_tree_state() {
+        let (connection, paths, root) = setup();
+        let folder = crate::db::folders::LibraryFolderRepository::new(&connection)
+            .create("恢复文件夹", None)
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE materials SET folder_id = ?1 WHERE id = 'material-1'",
+                [&folder.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE workspace_state SET json = ?1 WHERE id = 1",
+                [format!(
+                    r#"{{"schemaVersion":12,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[],"expandedLibraryFolderIds":["{}"],"unfiledMaterialsExpanded":false}}"#,
+                    folder.id
+                )],
+            )
+            .unwrap();
+        let source = root.join("same-version.airbackup");
+        BackupRepository::new(&connection)
+            .export(&paths, &source)
+            .unwrap();
+
+        materialize_database(&connection, &paths);
+        connection
+            .execute("UPDATE materials SET folder_id = NULL", [])
+            .unwrap();
+        crate::db::folders::LibraryFolderRepository::new(&connection)
+            .delete(&folder.id)
+            .unwrap();
+        materialize_database(&connection, &paths);
+
+        let handle = crate::db::DatabaseHandle::new(connection);
+        handle.restore_backup(&paths, &source).unwrap();
+
+        let restored = handle
+            .with_connection(|connection| {
+                let folder_id: String = connection.query_row(
+                    "SELECT folder_id FROM materials WHERE id = 'material-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let workspace_json: String = connection.query_row(
+                    "SELECT json FROM workspace_state WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((folder_id, workspace_json))
+            })
+            .unwrap();
+        assert_eq!(restored.0, folder.id);
+        let workspace: serde_json::Value = serde_json::from_str(&restored.1).unwrap();
+        assert_eq!(
+            workspace["expandedLibraryFolderIds"],
+            serde_json::json!([folder.id])
+        );
+        assert_eq!(workspace["unfiledMaterialsExpanded"], false);
+    }
+
+    #[test]
+    fn manifest_validation_rejects_folder_cycles_and_duplicate_sibling_names() {
+        let manifest = BackupManifest {
+            format_version: BACKUP_FORMAT_VERSION,
+            created_at: 0,
+            encrypted: false,
+            entries: Vec::new(),
+            materials: Vec::new(),
+            folders: vec![
+                BackupFolder {
+                    id: "a".to_string(),
+                    name: "相同".to_string(),
+                    parent_id: Some("b".to_string()),
+                },
+                BackupFolder {
+                    id: "b".to_string(),
+                    name: "相同".to_string(),
+                    parent_id: Some("a".to_string()),
+                },
+            ],
+        };
+        assert!(matches!(
+            validate_manifest(&manifest),
+            Err(AppError::BackupValidation(_))
+        ));
+
+        let duplicate_siblings = BackupManifest {
+            folders: vec![
+                BackupFolder {
+                    id: "a".to_string(),
+                    name: "Science".to_string(),
+                    parent_id: None,
+                },
+                BackupFolder {
+                    id: "b".to_string(),
+                    name: "science".to_string(),
+                    parent_id: None,
+                },
+            ],
+            ..manifest
+        };
+        assert!(matches!(
+            validate_manifest(&duplicate_siblings),
+            Err(AppError::BackupValidation(_))
+        ));
+    }
+
+    #[test]
+    fn migration_validation_rejects_missing_intermediate_version() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
+                 INSERT INTO schema_migrations (version) VALUES (1), (3);",
+            )
+            .unwrap();
+
+        let error = validate_migration_history(&connection, 3).unwrap_err();
+
+        assert!(matches!(error, AppError::BackupValidation(message) if message.contains("缺少版本:2")));
+    }
+
+    #[test]
+    fn v2_workspace_validation_rejects_missing_workspace_state() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE workspace_state (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    json TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+
+        let error = validate_workspace_tree(&connection, &HashSet::new(), true).unwrap_err();
+
+        assert!(matches!(error, AppError::BackupValidation(message) if message.contains("缺少 Workspace State")));
+    }
+
+    fn rewrite_archive_manifest(source: &Path, update: impl FnOnce(&mut BackupManifest)) {
+        let entries = read_tar_entries(&std::fs::read(source).unwrap());
+        let mut manifest: BackupManifest = serde_json::from_slice(&entries[0].1).unwrap();
+        update(&mut manifest);
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        let mut rewritten = Vec::new();
+        {
+            let mut writer = TarWriter::new(&mut rewritten);
+            writer
+                .append_bytes("manifest.json", &manifest_bytes)
+                .unwrap();
+            for (name, bytes) in entries.into_iter().skip(1) {
+                writer.append_bytes(&name, &bytes).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        std::fs::write(source, rewritten).unwrap();
     }
 
     #[test]
@@ -1834,6 +2661,7 @@ mod tests {
             encrypted: false,
             entries: Vec::new(),
             materials: Vec::new(),
+            folders: Vec::new(),
         };
         assert!(matches!(
             validate_manifest(&manifest),
@@ -1908,5 +2736,42 @@ mod tests {
         );
         assert!(!paths.stash_dir.join("library-restore.json").exists());
         assert!(!root.join("unused").exists());
+    }
+
+    #[test]
+    fn rollback_removes_new_database_sidecars_when_old_snapshot_has_none() {
+        let (_connection, paths, _root) = setup();
+        let operation_root = paths.stash_dir.join(".restore-sidecars");
+        let old_dir = operation_root.join("old");
+        let stage_dir = operation_root.join("staged");
+        let snapshot_dir = operation_root.join("snapshot");
+        for directory in ["database", "library", "covers", "source-covers"] {
+            std::fs::create_dir_all(old_dir.join(directory)).unwrap();
+        }
+        std::fs::write(old_dir.join("database").join("ai-reader.db"), b"old-db").unwrap();
+        std::fs::write(paths.database_path(), b"new-db").unwrap();
+        let wal_path = PathBuf::from(format!("{}-wal", paths.database_path().display()));
+        let shm_path = PathBuf::from(format!("{}-shm", paths.database_path().display()));
+        std::fs::write(&wal_path, b"new-wal").unwrap();
+        std::fs::write(&shm_path, b"new-shm").unwrap();
+        let state = RestoreState {
+            operation_id: "sidecars".to_string(),
+            stage_dir,
+            snapshot_dir,
+            old_dir,
+            phase: RestorePhase::Switching,
+            result: BackupRestoreResult {
+                material_count: 0,
+                entry_count: 1,
+                total_bytes: 1,
+            },
+        };
+        write_restore_state(&paths, &state).unwrap();
+
+        recover_library_restore(&paths).unwrap();
+
+        assert_eq!(std::fs::read(paths.database_path()).unwrap(), b"old-db");
+        assert!(!wal_path.exists());
+        assert!(!shm_path.exists());
     }
 }

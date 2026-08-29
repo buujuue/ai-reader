@@ -32,6 +32,9 @@ import { useShellUiStore } from '../workbench/shellUiStore';
 import { createInMemoryAnnotationRepository } from '../domain/annotation/inMemoryAnnotationRepository';
 import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
 import type { LibraryFolder } from '../domain/library/libraryFolder';
+import type { BackupRepository } from '../domain/library/backupRepository';
+import type { BackupDestinationPicker } from './backupDestinationPicker';
+import type { BackupSourcePicker } from './backupSourcePicker';
 import type { Annotation } from '../domain/annotation/annotation';
 import { App } from './App';
 import { AppServicesProvider } from './AppServicesContext';
@@ -177,6 +180,50 @@ describe('阅读工作台外壳', () => {
     expect(screen.getByRole('menu', { name: '文件菜单' })).toHaveTextContent('关闭当前材料');
     expect(screen.queryByText('Agent 侧栏')).not.toBeInTheDocument();
     expect(screen.queryByText('切换到浅色主题')).not.toBeInTheDocument();
+  });
+
+  it('应用顶栏备份与恢复入口经同一 Command 调用 typed Repository', async () => {
+    const backupRepository: BackupRepository = {
+      exportBackup: vi.fn(async (destinationPath) => ({
+        destinationPath,
+        entryCount: 9,
+        totalBytes: 4096,
+      })),
+      restoreBackup: vi.fn(async () => ({
+        materialCount: 2,
+        entryCount: 9,
+        totalBytes: 4096,
+      })),
+    };
+    const backupDestinationPicker: BackupDestinationPicker = {
+      pickBackupDestination: vi.fn(async () => 'library.airbackup'),
+    };
+    const backupSourcePicker: BackupSourcePicker = {
+      pickBackupSource: vi.fn(async () => 'library.airbackup'),
+    };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    services = createAppServices({
+      workspaceRepository: repository,
+      backupRepository,
+      backupDestinationPicker,
+      backupSourcePicker,
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '文件' }));
+    await user.click(screen.getByRole('menuitem', { name: '导出完整备份…' }));
+    await waitFor(() => {
+      expect(backupRepository.exportBackup).toHaveBeenCalledWith('library.airbackup');
+    });
+
+    await user.click(screen.getByRole('button', { name: '文件' }));
+    await user.click(screen.getByRole('menuitem', { name: '恢复完整备份…' }));
+    await waitFor(() => {
+      expect(backupRepository.restoreBackup).toHaveBeenCalledWith('library.airbackup');
+    });
+    expect(useShellUiStore.getState().statusMessage).toBe('书库恢复成功，共恢复 2 本书');
+    confirmSpy.mockRestore();
   });
 
   it('点击活动栏按钮通过 Command 往返隐藏主侧栏并持久化', async () => {
