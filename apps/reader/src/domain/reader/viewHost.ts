@@ -116,6 +116,12 @@ export interface FoliateViewHost {
 
   /** 销毁并释放渲染器。 */
   close(): void;
+
+  /** 重新挂载已打开的 renderer；宿主不得重新解析文档。 */
+  attach?(container: HTMLElement): void;
+
+  /** 从 DOM 摘下 renderer，但保留其已解析内容和位置。 */
+  detach?(): void;
 }
 
 /** 创建 Foliate 视图宿主的工厂窄缝(生产懒加载 foliate-js,测试注入伪宿主)。 */

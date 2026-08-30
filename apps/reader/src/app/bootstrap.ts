@@ -28,8 +28,10 @@ import {
   registerReaderCommands,
   flushReaderPositions,
   reloadMaterialViews,
+  invalidateReaderRuntimeMaterial,
   type ReaderCommandDependencies,
 } from '../workbench/readerCommands';
+import { ReaderRuntimeCache } from '../workbench/readerRuntimeCache';
 import { registerWorkbenchCommands } from '../workbench/workbenchCommands';
 import { registerBackupCommands } from '../workbench/backupCommands';
 import type { BackupRepository } from '../domain/library/backupRepository';
@@ -133,6 +135,8 @@ export interface AppServicesOptions {
   epubDerivedTocCache?: EpubDerivedTocCache;
   windowLifecycle?: WindowLifecycle | null;
   androidBackButton?: AndroidBackButton | null;
+  /** 可注入的有限 Reader Runtime 缓存；生产按窗口指针/宽度自动选择预算。 */
+  readerRuntimeCache?: ReaderRuntimeCache;
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
@@ -265,6 +269,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     (isTauriRuntime()
       ? createDefaultTauriEpubDerivedTocCache()
       : createEpubDerivedTocCache());
+  const readerRuntimeCache = options.readerRuntimeCache ?? new ReaderRuntimeCache();
 
   const commands = new CommandRegistry();
   const readerCommandDependencies: ReaderCommandDependencies = {
@@ -277,6 +282,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     pdfRasterize: options.pdfRasterize,
     epubNativeAccelerator,
     epubDerivedTocCache,
+    readerRuntimeCache,
   };
   registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
   registerBackupCommands(commands, {
@@ -294,6 +300,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     workspaceRepository,
     syncVersionMigrationState: !isTauriRuntime(),
     reloadMaterialViews: (materialId) => reloadMaterialViews(readerCommandDependencies, materialId),
+    invalidateMaterialRuntime: invalidateReaderRuntimeMaterial,
     ...(isTauriRuntime() ? { reloadApplication: () => window.location.reload() } : {}),
     ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
   });
@@ -306,6 +313,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
   registerMarkdownCommands(commands, {
     importRepository: importServices.importRepository,
     workspaceRepository,
+    invalidateMaterialRuntime: invalidateReaderRuntimeMaterial,
     ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
   });
   // 暴露批注 Store 到 window,供真实浏览器验收脚本读取(仅开发/测试用)。

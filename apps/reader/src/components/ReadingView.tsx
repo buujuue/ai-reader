@@ -17,7 +17,10 @@ import { COMMAND_IDS, type CommandId } from '../commands/commandRegistry';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import { useReaderRuntime } from '../workbench/readerRuntime';
-import { mountViewDocument } from '../workbench/readerCommands';
+import {
+  mountViewDocument,
+  registerReaderRuntimeInputCleanup,
+} from '../workbench/readerCommands';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
@@ -26,9 +29,9 @@ import { SearchBar } from './SearchBar';
 import { SelectionToolbar } from './SelectionToolbar';
 
 /**
- * 单个阅读视图(标签)的正文区域。它把活动视图的 BookDocument 挂载到自身容器,
- * 在卸载时 flush 阅读位置并释放渲染器;同时把键盘与内容文档的输入(滚轮/点击/触摸)
- * 统一桥接到 Command Registry 的翻页命令。Reader 外部不直接操作 Foliate View。
+ * 单个阅读视图(标签)的正文区域。它把活动视图的 BookDocument 挂载到自身容器，
+ * 把键盘与内容文档的输入(滚轮/点击/触摸)统一桥接到 Command Registry 的翻页命令，
+ * 并向 Reader Runtime 注册输入接线清理。Runtime 的 flush、挂起和关闭由命令层统一负责。
  */
 export function ReadingView({ viewId }: { viewId: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -158,13 +161,14 @@ export function ReadingView({ viewId }: { viewId: string }) {
       window.addEventListener('keydown', handleWindowKeyDown);
     }
 
-    return () => {
+    const cleanup = () => {
       window.removeEventListener('keydown', handleWindowKeyDown);
       offContentCreate();
       for (const detach of detachList) {
         detach();
       }
     };
+    return registerReaderRuntimeInputCleanup(viewId, cleanup);
   }, [commands, groupId, isActiveView, viewId, document]);
 
   const isMarkdownSourceMode = sourceMode && document?.format === 'markdown';

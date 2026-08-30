@@ -53,6 +53,8 @@ export function registerLibraryCommands(
     reloadApplication?: () => void;
     /** 浏览器降级模式重建当前材料视图，不依赖整页刷新。 */
     reloadMaterialViews?: (materialId: string) => Promise<void>;
+    /** 永久清理或版本替换前后失效所有对应的活 Reader Runtime。 */
+    invalidateMaterialRuntime?: (materialId: string) => Promise<void>;
   },
 ): void {
   registry.register(COMMAND_IDS.libraryRefresh, async () => {
@@ -318,6 +320,7 @@ export function registerLibraryCommands(
       throw new Error('永久删除资料命令缺少材料 ID');
     }
     await dependencies.importRepository.purgeMaterial(materialId);
+    await dependencies.invalidateMaterialRuntime?.(materialId);
     const viewIds = useWorkspaceStore
       .getState()
       .editorGroups.flatMap((group) =>
@@ -531,7 +534,9 @@ export function registerLibraryCommands(
     useShellUiStore.getState().setVersionMigrationCandidates(remainingCandidates);
     useShellUiStore.getState().setVersionMigrationPreview(null);
     useShellUiStore.getState().setStatusMessage('已完成版本迁移，迁移前快照已保留');
-    dependencies.reloadApplication?.();
+    await dependencies.invalidateMaterialRuntime?.(result.material.id);
+    if (dependencies.reloadApplication) dependencies.reloadApplication();
+    else await dependencies.reloadMaterialViews?.(result.material.id);
   });
 
   registry.register(COMMAND_IDS.libraryCancelVersionMigration, async () => {
@@ -575,7 +580,9 @@ export function registerLibraryCommands(
       );
     useWorkspaceStore.getState().hydrate(result.workspaceState);
     useShellUiStore.getState().setStatusMessage('已恢复迁移前版本，快照仍然保留');
-    dependencies.reloadApplication?.();
+    await dependencies.invalidateMaterialRuntime?.(result.material.id);
+    if (dependencies.reloadApplication) dependencies.reloadApplication();
+    else await dependencies.reloadMaterialViews?.(result.material.id);
   });
 
   registry.register(COMMAND_IDS.libraryClearVersionMigrationSnapshot, async (...args: unknown[]) => {

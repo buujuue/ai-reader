@@ -9,6 +9,9 @@
 /** 明确禁止的 URL 协议(大小写不敏感)。其余未列出的协议也一律拒绝。 */
 const BLOCKED_URL_PROTOCOLS = /^(?:javascript|vbscript|file|cid|jar):/i;
 
+/** 清洗规则版本；任何输出语义变化都必须递增，令 Reader Runtime 缓存失效。 */
+export const EPUB_SANITIZER_VERSION = 'sanitizer-v1';
+
 /** 允许的 data: URI(仅安全的栅格图片),避免把 SVG 当作主动内容载荷。 */
 const ALLOWED_DATA_IMAGE_URI =
   /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp|x-icon)(?:;[a-z0-9=.-]+)*,/i;

@@ -1,4 +1,8 @@
-import type { BookDocument, BookDocumentMetadata } from './bookDocument';
+import type {
+  BookDocument,
+  BookDocumentMetadata,
+  ReaderRuntimeResourceUsage,
+} from './bookDocument';
 import type { ReadingLocation } from './readingLocation';
 import type { SearchEvent, SearchOptions } from './search';
 import { sanitizeEpubContent } from './sanitizer';
@@ -71,6 +75,11 @@ export class EpubBookDocument implements BookDocument {
   private contentCreateListeners = new Set<(doc: Document) => void>();
   private readErrorListeners = new Set<(error: unknown) => void>();
   private removeHostReadErrorListener: (() => void) | null = null;
+  private readonly contentCreateHostCleanups = new Map<
+    (doc: Document) => void,
+    () => void
+  >();
+  private opened = false;
 
   constructor(options: EpubBookDocumentOptions) {
     // BookDocument 只持有只读来源;清洗器与 renderer 后续只能处理派生字符串,
@@ -132,18 +141,52 @@ export class EpubBookDocument implements BookDocument {
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
     view.applyTypography(this.typography);
     await view.init(null);
+    this.opened = true;
     this.currentProgress = view.getReadingProgress?.() ?? null;
-    // host 就绪后,把此前缓冲的内容创建订阅转发给 host,并补发已存在的文档。
-    for (const listener of this.contentCreateListeners) {
-      view.onContentCreate((doc) => {
-        removeEpubDisplayOnlyNodes(doc);
-        listener(doc);
-      });
-      for (const doc of view.getContentDocs()) {
-        removeEpubDisplayOnlyNodes(doc);
-        listener(doc);
+    // 订阅可能早于 host.open() 建立;此处补接仍未接线的订阅。
+    for (const listener of this.contentCreateListeners) this.attachContentCreateListener(listener);
+  }
+
+  attach(container: HTMLElement): boolean {
+    if (!this.host || !this.opened) return false;
+    this.host.attach?.(container);
+    this.container = container;
+    return true;
+  }
+
+  detach(): void {
+    for (const contentDocument of this.host?.getContentDocs() ?? []) {
+      contentDocument.getSelection?.()?.removeAllRanges();
+    }
+    this.host?.detach?.();
+    this.container = null;
+  }
+
+  isRuntimeReady(): boolean {
+    return this.opened;
+  }
+
+  getRuntimeResourceUsage(): ReaderRuntimeResourceUsage {
+    const contentDocs = this.host?.getContentDocs() ?? [];
+    let canvasCount = 0;
+    let canvasBytes = 0;
+    for (const contentDocument of contentDocs) {
+      for (const canvas of contentDocument.querySelectorAll('canvas')) {
+        canvasCount += 1;
+        canvasBytes += Math.max(0, canvas.width) * Math.max(0, canvas.height) * 4;
       }
     }
+    const sourceStats = (this.source as Blob & {
+      getRuntimeResourceUsage?: () => Pick<ReaderRuntimeResourceUsage, 'rangeCacheBytes'>;
+    }).getRuntimeResourceUsage?.();
+    const rangeCacheBytes = sourceStats?.rangeCacheBytes ?? 0;
+    return {
+      iframeCount: contentDocs.length,
+      canvasCount,
+      decodedPageCount: 0,
+      rangeCacheBytes,
+      estimatedBytes: canvasBytes + rangeCacheBytes,
+    };
   }
 
   getLocation(): ReadingLocation | null {
@@ -257,19 +300,13 @@ export class EpubBookDocument implements BookDocument {
   }
 
   onContentCreate(listener: (doc: Document) => void): () => void {
-    // host 可能尚未就绪(组件在 open() 完成前订阅),先缓冲,待 host 就绪后统一转发。
     this.contentCreateListeners.add(listener);
-    if (this.host) {
-      this.host.onContentCreate((doc) => {
-        removeEpubDisplayOnlyNodes(doc);
-        listener(doc);
-      });
-      for (const doc of this.host.getContentDocs()) {
-        removeEpubDisplayOnlyNodes(doc);
-        listener(doc);
-      }
-    }
-    return () => this.contentCreateListeners.delete(listener);
+    this.attachContentCreateListener(listener);
+    return () => {
+      this.contentCreateListeners.delete(listener);
+      this.contentCreateHostCleanups.get(listener)?.();
+      this.contentCreateHostCleanups.delete(listener);
+    };
   }
 
   onLocationChange(listener: (location: ReadingLocation) => void): () => void {
@@ -283,6 +320,9 @@ export class EpubBookDocument implements BookDocument {
     this.host?.close();
     this.host = null;
     this.container = null;
+    this.opened = false;
+    for (const cleanup of this.contentCreateHostCleanups.values()) cleanup();
+    this.contentCreateHostCleanups.clear();
     this.currentLocation = null;
     this.currentProgress = null;
     this.locationListeners.clear();
@@ -291,6 +331,20 @@ export class EpubBookDocument implements BookDocument {
     this.contentCreateListeners.clear();
     this.progressListeners.clear();
     this.readErrorListeners.clear();
+  }
+
+  private attachContentCreateListener(listener: (doc: Document) => void): void {
+    if (!this.host || this.contentCreateHostCleanups.has(listener)) return;
+    const host = this.host;
+    const cleanup = host.onContentCreate((doc) => {
+      removeEpubDisplayOnlyNodes(doc);
+      listener(doc);
+    });
+    this.contentCreateHostCleanups.set(listener, cleanup);
+    for (const doc of host.getContentDocs()) {
+      removeEpubDisplayOnlyNodes(doc);
+      listener(doc);
+    }
   }
 
   private wireSecurity(): void {

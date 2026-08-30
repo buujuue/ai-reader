@@ -15,11 +15,14 @@ import { useWorkspaceStore } from './workspaceStore';
 import { serializeWorkspaceState } from './workbenchCommands';
 import { findView, getActiveViewId, isViewActive } from './viewUtils';
 import { readManagedMarkdownText } from './markdownSource';
+import { buildReaderRuntimeCacheKeyForMaterial } from './readerRuntimeCache';
 
 export interface MarkdownCommandDependencies {
   importRepository: ImportRepository;
   workspaceRepository: WorkspaceRepository;
   viewHostFactory?: FoliateViewHostFactory;
+  /** Markdown 正式版本递增后清掉旧材料版本的活 Runtime。 */
+  invalidateMaterialRuntime?: (materialId: string) => Promise<void>;
 }
 
 const RECOVERY_WRITE_DELAY_MS = 1_000;
@@ -48,32 +51,33 @@ function getSession(materialId: string) {
 async function rebuildMarkdownDocuments(
   material: ReadingMaterial,
   dependencies: MarkdownCommandDependencies,
+  activeViewIds?: readonly string[],
 ): Promise<void> {
   const text = await readManagedMarkdownText(dependencies.importRepository, material.id);
   const runtime = useReaderRuntime.getState();
   const state = useWorkspaceStore.getState();
-  const viewIds = state.editorGroups
+  const viewIds = activeViewIds ?? state.editorGroups
     .flatMap((group) => group.views)
-    .filter((view) => view.materialId === material.id)
+    .filter((view) => view.materialId === material.id && isViewActive(view.id))
     .map((view) => view.id);
   const factory = dependencies.viewHostFactory ?? createFoliateViewHostFactory();
   for (const viewId of viewIds) {
-    if (!isViewActive(viewId)) continue;
     const existing = runtime.documents.get(viewId);
-    if (!existing) continue;
-    existing.close();
+    existing?.close();
+    const nextDocument = new MarkdownBookDocument({
+      text,
+      metadata: {
+        title: material.title,
+        author: material.author,
+        language: material.language,
+      },
+      viewHostFactory: factory,
+      sourceFingerprint: material.fingerprint,
+    });
     runtime.setDocument(
       viewId,
-      new MarkdownBookDocument({
-        text,
-        metadata: {
-          title: material.title,
-          author: material.author,
-          language: material.language,
-        },
-        viewHostFactory: factory,
-        sourceFingerprint: material.fingerprint,
-      }),
+      nextDocument,
+      { cacheKey: buildReaderRuntimeCacheKeyForMaterial(viewId, material) },
     );
   }
 }
@@ -168,13 +172,20 @@ export function registerMarkdownCommands(
       .recordFormalSave(materialId, savedText, updated.documentVersion);
     useLibraryStore.getState().updateMaterial(updated);
 
+    const activeViewIds = useWorkspaceStore
+      .getState()
+      .editorGroups.flatMap((group) => group.views)
+      .filter((view) => view.materialId === materialId && isViewActive(view.id))
+      .map((view) => view.id);
+    await dependencies.invalidateMaterialRuntime?.(materialId);
+
     let recoveryCleared = false;
     if (bufferUnchanged) {
       recoveryCleared = await clearRecoverySnapshot(materialId);
     } else {
       await flushRecoveryWrite(materialId);
     }
-    await rebuildMarkdownDocuments(updated, dependencies);
+    await rebuildMarkdownDocuments(updated, dependencies, activeViewIds);
 
     if (bufferUnchanged && getSession(materialId)?.dirty) {
       bufferUnchanged = false;

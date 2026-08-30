@@ -8,6 +8,8 @@ export type ReaderDocumentStatus =
   | { status: 'ready' }
   | { status: 'error'; message: string };
 
+export type ReaderRuntimeLifecycle = 'active' | 'suspended';
+
 /**
  * Reader Runtime:不可持久化的活对象集合。它按阅读视图 id 持有 BookDocument
  * (内部是 Foliate View 等渲染器)。工作区标签、阅读位置等可序列化状态
@@ -16,7 +18,16 @@ export type ReaderDocumentStatus =
 export interface ReaderRuntimeState {
   documents: Map<string, BookDocument>;
   documentStates: Map<string, ReaderDocumentStatus>;
-  setDocument: (viewId: string, document: BookDocument) => void;
+  documentLifecycles: Map<string, ReaderRuntimeLifecycle>;
+  documentCacheKeys: Map<string, string>;
+  setDocument: (
+    viewId: string,
+    document: BookDocument,
+    options?: { lifecycle?: ReaderRuntimeLifecycle; cacheKey?: string },
+  ) => void;
+  setDocumentLifecycle: (viewId: string, lifecycle: ReaderRuntimeLifecycle) => void;
+  getDocumentLifecycle: (viewId: string) => ReaderRuntimeLifecycle | undefined;
+  getDocumentCacheKey: (viewId: string) => string | undefined;
   setDocumentState: (viewId: string, state: ReaderDocumentStatus) => void;
   getDocument: (viewId: string) => BookDocument | undefined;
   removeDocument: (viewId: string) => void;
@@ -26,16 +37,39 @@ export interface ReaderRuntimeState {
 export const useReaderRuntime = create<ReaderRuntimeState>()((set, get) => ({
   documents: new Map(),
   documentStates: new Map(),
+  documentLifecycles: new Map(),
+  documentCacheKeys: new Map(),
 
-  setDocument: (viewId, document) => {
+  setDocument: (viewId, document, options) => {
     set((state) => {
       const documents = new Map(state.documents);
       documents.set(viewId, document);
       const documentStates = new Map(state.documentStates);
       documentStates.set(viewId, { status: 'idle' });
-      return { documents, documentStates };
+      const documentLifecycles = new Map(state.documentLifecycles);
+      documentLifecycles.set(viewId, options?.lifecycle ?? 'active');
+      const documentCacheKeys = new Map(state.documentCacheKeys);
+      if (options?.cacheKey) documentCacheKeys.set(viewId, options.cacheKey);
+      else documentCacheKeys.delete(viewId);
+      return { documents, documentStates, documentLifecycles, documentCacheKeys };
     });
   },
+
+  setDocumentLifecycle: (viewId, lifecycle) => {
+    set((state) => {
+      if (!state.documents.has(viewId)) return state;
+      const documentLifecycles = new Map(state.documentLifecycles);
+      documentLifecycles.set(viewId, lifecycle);
+      return { documentLifecycles };
+    });
+  },
+
+  getDocumentLifecycle: (viewId) => {
+    const lifecycle = get().documentLifecycles.get(viewId);
+    return lifecycle ?? (get().documents.has(viewId) ? 'active' : undefined);
+  },
+
+  getDocumentCacheKey: (viewId) => get().documentCacheKeys.get(viewId),
 
   setDocumentState: (viewId, documentState) => {
     set((state) => {
@@ -55,7 +89,11 @@ export const useReaderRuntime = create<ReaderRuntimeState>()((set, get) => ({
       documents.delete(viewId);
       const documentStates = new Map(state.documentStates);
       documentStates.delete(viewId);
-      return { documents, documentStates };
+      const documentLifecycles = new Map(state.documentLifecycles);
+      documentLifecycles.delete(viewId);
+      const documentCacheKeys = new Map(state.documentCacheKeys);
+      documentCacheKeys.delete(viewId);
+      return { documents, documentStates, documentLifecycles, documentCacheKeys };
     });
   },
 
@@ -64,6 +102,11 @@ export const useReaderRuntime = create<ReaderRuntimeState>()((set, get) => ({
     for (const document of documents.values()) {
       document.close();
     }
-    set({ documents: new Map(), documentStates: new Map() });
+    set({
+      documents: new Map(),
+      documentStates: new Map(),
+      documentLifecycles: new Map(),
+      documentCacheKeys: new Map(),
+    });
   },
 }));

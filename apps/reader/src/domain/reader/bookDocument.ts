@@ -32,13 +32,22 @@ export interface AreaSelection {
   };
 }
 
+/** Reader Runtime 活对象的可获得资源快照；不进入 Workspace State。 */
+export interface ReaderRuntimeResourceUsage {
+  iframeCount: number;
+  canvasCount: number;
+  decodedPageCount: number;
+  rangeCacheBytes: number;
+  estimatedBytes: number;
+}
+
 /**
  * BookDocument:TS 阅读领域对 EPUB、PDF、Markdown 的统一文档 Interface。
  * 它向 Reader 提供元数据、目录、导航、位置解析与阅读能力;
  * Reader 外部不得直接依赖 Foliate View 等具体渲染器对象。
  *
- * 第一版只实现 EPUB。所有直接调用具体渲染器(如 Foliate View)的代码
- * 都集中在 BookDocument 的 EPUB 实现内,不泄漏到上层。
+ * EPUB、PDF、Markdown 的具体渲染器调用都集中在各自 BookDocument 实现内，
+ * 不泄漏到上层；attach/detach 是 EPUB/Markdown 有界 Runtime 缓存的可选能力。
  */
 export interface BookDocument {
   readonly format: 'epub' | 'pdf' | 'markdown';
@@ -52,6 +61,21 @@ export interface BookDocument {
 
   /** 挂载到给定容器并打开文档。容器必须是已插入 DOM 的元素。 */
   open(container: HTMLElement): Promise<void>;
+
+  /**
+   * 把已经打开但被挂起的 renderer 重新接回新容器；返回 false 表示仍需 open()。
+   * 该能力只用于 EPUB/Markdown 有界 Runtime 缓存，PDF 不实现所以继续重建。
+   */
+  attach?(container: HTMLElement): boolean;
+
+  /** 从界面容器摘下 renderer，但不销毁 BookDocument 或其派生运行时。 */
+  detach?(): void;
+
+  /** 返回文档是否已完成首次打开，可用于阻止缓存未完成的加载任务。 */
+  isRuntimeReady?(): boolean;
+
+  /** 读取可获得的 iframe、Canvas、解码页和范围缓存资源估算。 */
+  getRuntimeResourceUsage?(): ReaderRuntimeResourceUsage;
 
   /** 读取当前阅读位置(可序列化)。 */
   getLocation(): ReadingLocation | null;

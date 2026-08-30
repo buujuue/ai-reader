@@ -10,6 +10,9 @@
 import { marked } from 'marked';
 import { sanitizeHtmlFragment } from '../sanitizer';
 
+/** Markdown 解析/分段规则版本；输出语义变化时递增。 */
+export const MARKDOWN_PARSER_VERSION = 'markdown-parser-v1';
+
 /** 一份 Markdown 的一个章节(按一级标题切分)。`title` 为一节标题文本。 */
 export interface MarkdownSection {
   title: string;

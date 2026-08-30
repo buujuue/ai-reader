@@ -168,7 +168,7 @@ function toToc(items: unknown): import('./toc').Toc {
  * - 脚本:foliate-js 内置 `Loader.allowScript = false`,不起书籍脚本。
  */
 export class UpstreamFoliateViewHost implements FoliateViewHost {
-  private readonly element: ExtendedFoliateView;
+  private element: ExtendedFoliateView;
   private readonly viewModule: Promise<typeof import('foliate-js/view.js')>;
   private opened = false;
   private readonly fallbackUrls = new Set<string>();
@@ -184,6 +184,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private canonicalSearchIndex: CanonicalSearchIndexSnapshot | null = null;
   private canonicalSearchIndexKey: string | null = null;
   private searchAnnotations = new Map<number, string[]>();
+  private readonly relocateHandlers = new Set<EventListener>();
+  private readonly progressHandlers = new Set<EventListener>();
+  private readonly contentCreateHandlers = new Set<EventListener>();
 
   constructor(
     element: ExtendedFoliateView,
@@ -196,6 +199,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   async open(book: unknown, options: FoliateViewOpenOptions = {}): Promise<void> {
     this.canonicalSearchConfig = options.canonicalSearch ?? null;
     const viewModule = await this.viewModule;
+    this.ensureElementUpgraded();
     const isFileInput =
       typeof book === 'string' ||
       (typeof book === 'object' &&
@@ -274,6 +278,39 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.wireShowAnnotation();
   }
 
+  /**
+   * 工厂为了保持同步接口会先创建占位元素，再懒加载 foliate-js。某些 WebView
+   * 不会把模块稍后注册的自定义元素升级到既有节点，因此在 open 前补一次安全替换。
+   */
+  private ensureElementUpgraded(): void {
+    if (typeof this.element.open === 'function') return;
+    const previous = this.element;
+    const upgraded = document.createElement('foliate-view') as unknown as ExtendedFoliateView;
+    upgraded.style.display = 'block';
+    upgraded.style.width = '100%';
+    upgraded.style.height = '100%';
+    upgraded.style.overflow = 'hidden';
+    previous.replaceWith(upgraded);
+    this.element = upgraded;
+    for (const handler of this.relocateHandlers) upgraded.addEventListener('relocate', handler);
+    for (const handler of this.progressHandlers) upgraded.addEventListener('relocate', handler);
+    for (const handler of this.contentCreateHandlers) upgraded.addEventListener('load', handler);
+  }
+
+  attach(container: HTMLElement): void {
+    if (this.element.parentElement !== container) {
+      container.appendChild(this.element);
+    }
+  }
+
+  detach(): void {
+    // 保持 renderer 连在一个固定、不可见的缓存根上。直接 remove() 会让
+    // foliate-paginator 尚未结束的 rAF 在下一帧读取空 docBackground，尤其在
+    // Chromium/WebView 切标签时会产生异步异常；缓存命中时仍只移动这一节点。
+    const cacheRoot = getRuntimeCacheRoot();
+    cacheRoot.appendChild(this.element);
+  }
+
   async init(location: unknown): Promise<void> {
     await this.element.init(
       location ? { lastLocation: location } : { showTextStart: true },
@@ -326,7 +363,11 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       if (progress) listener(progress);
     };
     this.element.addEventListener('relocate', handler);
-    return () => this.element.removeEventListener('relocate', handler);
+    this.progressHandlers.add(handler);
+    return () => {
+      this.progressHandlers.delete(handler);
+      this.element.removeEventListener('relocate', handler);
+    };
   }
 
   applyTypography(settings: ReadingTypography): void {
@@ -403,7 +444,11 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       }
     };
     this.element.addEventListener('relocate', handler);
-    return () => this.element.removeEventListener('relocate', handler);
+    this.relocateHandlers.add(handler);
+    return () => {
+      this.relocateHandlers.delete(handler);
+      this.element.removeEventListener('relocate', handler);
+    };
   }
 
   onReadError(listener: (error: unknown) => void): () => void {
@@ -448,7 +493,11 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     };
     // foliate-view 在每次内容文档加载后派发 `load` 事件(随章节翻页持续出现)。
     this.element.addEventListener('load', handler);
-    return () => this.element.removeEventListener('load', handler);
+    this.contentCreateHandlers.add(handler);
+    return () => {
+      this.contentCreateHandlers.delete(handler);
+      this.element.removeEventListener('load', handler);
+    };
   }
 
   getCFI(index: number, range: Range): string {
@@ -519,6 +568,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       this.externalLinkListeners.clear();
       this.showAnnotationListeners.clear();
       this.readErrorListeners.clear();
+      this.relocateHandlers.clear();
+      this.progressHandlers.clear();
+      this.contentCreateHandlers.clear();
       this.drawAnnotationCleanup?.();
       this.showAnnotationCleanup?.();
       this.contentCleanup = null;
@@ -832,6 +884,18 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     this.showAnnotationCleanup = () =>
       this.element.removeEventListener('show-annotation', handler);
   }
+}
+
+function getRuntimeCacheRoot(): HTMLElement {
+  const existing = document.getElementById('ai-reader-runtime-cache-root');
+  if (existing instanceof HTMLElement) return existing;
+  const root = document.createElement('div');
+  root.id = 'ai-reader-runtime-cache-root';
+  root.setAttribute('aria-hidden', 'true');
+  root.style.cssText =
+    'position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden;visibility:hidden;pointer-events:none;';
+  document.body.appendChild(root);
+  return root;
 }
 
 function asFoliateBook(value: unknown): FoliateBook | null {

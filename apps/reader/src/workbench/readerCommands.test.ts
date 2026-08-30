@@ -14,6 +14,7 @@ import type { SearchEvent } from '../domain/reader/search';
 import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from '../domain/reader/pdf/pdfTestFakes';
 import { mountViewDocument, registerReaderCommands } from './readerCommands';
+import { ReaderRuntimeCache } from './readerRuntimeCache';
 import { useWorkspaceStore } from './workspaceStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useSearchStore } from './searchStore';
@@ -527,6 +528,28 @@ describe('Reader 命令', () => {
     expect(openManagedFileSource).toHaveBeenCalledTimes(1);
   });
 
+  it('活动 Runtime 的材料键变化时安全重建而不复用旧对象', async () => {
+    const material = await setupWithEpub();
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const original = useReaderRuntime.getState().getDocument(viewId);
+    const changedMaterial = { ...material, fingerprint: 'changed-content-fingerprint' };
+
+    await registry.execute(COMMAND_IDS.readerActivateView, viewId, changedMaterial);
+
+    const rebuilt = useReaderRuntime.getState().getDocument(viewId);
+    expect(rebuilt).toBeDefined();
+    expect(rebuilt).not.toBe(original);
+    expect(openManagedFileSource).toHaveBeenCalledTimes(2);
+  });
+
   it('快速连续打开不同材料时最终活动视图不会被过期运行时覆盖', async () => {
     const materials = await setupWithEpubMaterials();
     const firstMaterial = materials[0]!;
@@ -551,8 +574,9 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(true);
   });
 
-  it('switches tabs with one active runtime and restores the saved location', async () => {
+  it('切换 EPUB 标签时保留一个有限挂起 Runtime 并命中同一渲染器', async () => {
     const [firstMaterial, secondMaterial] = await setupWithEpubMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
     const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
     registerReaderCommands(registry, {
       importRepository,
@@ -566,6 +590,7 @@ describe('Reader 命令', () => {
         hosts.push(host);
         return host;
       },
+      readerRuntimeCache,
     });
 
     await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
@@ -579,6 +604,9 @@ describe('Reader 命令', () => {
       { importRepository, workspaceRepository },
     );
     await vi.waitFor(() => expect(hosts).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(useReaderRuntime.getState().getDocument(firstViewId)?.isRuntimeReady?.()).toBe(true),
+    );
     useWorkspaceStore.getState().setViewLocation(firstViewId, savedLocation);
 
     await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
@@ -591,25 +619,37 @@ describe('Reader 命令', () => {
       { importRepository, workspaceRepository },
     );
     await vi.waitFor(() => expect(hosts).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(useReaderRuntime.getState().getDocument(secondViewId)?.isRuntimeReady?.()).toBe(true),
+    );
     expect(useWorkspaceStore.getState().editorGroups[0]!.activeViewId).toBe(secondViewId);
-    expect(useReaderRuntime.getState().documents.size).toBe(1);
-    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(false);
-    expect(hosts[0]!.close).toHaveBeenCalledOnce();
+    expect(useReaderRuntime.getState().documents.size).toBe(2);
+    expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
+    expect(useReaderRuntime.getState().getDocumentLifecycle(firstViewId)).toBe('suspended');
+    expect(hosts[0]!.close).not.toHaveBeenCalled();
+    expect(readerRuntimeCache.getDiagnostics().entries).toHaveLength(2);
+    const suspendedFirstDocument = useReaderRuntime.getState().getDocument(firstViewId);
 
     await registry.execute(COMMAND_IDS.readerActivateView, firstViewId);
 
     expect(useWorkspaceStore.getState().editorGroups[0]!.activeViewId).toBe(firstViewId);
-    expect(useReaderRuntime.getState().documents.size).toBe(1);
+    expect(useReaderRuntime.getState().documents.size).toBe(2);
     expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
+    expect(useReaderRuntime.getState().getDocumentLifecycle(firstViewId)).toBe('active');
     expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(savedLocation);
-    expect(hosts[1]!.close).toHaveBeenCalledOnce();
+    expect(hosts[1]!.close).not.toHaveBeenCalled();
 
     const activeDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
-    mountViewDocument(activeDocument, firstViewId, document.createElement('div'), savedLocation, {
+    expect(activeDocument).toBe(suspendedFirstDocument);
+    expect(activeDocument.isRuntimeReady?.()).toBe(true);
+    const resumedContainer = document.createElement('div');
+    expect(activeDocument.attach?.(resumedContainer)).toBe(true);
+    mountViewDocument(activeDocument, firstViewId, resumedContainer, savedLocation, {
       importRepository,
       workspaceRepository,
     });
-    await vi.waitFor(() => expect(hosts[2]!.goToLocation).toHaveBeenCalledWith(savedLocation.cfi));
+    expect(hosts).toHaveLength(2);
+    expect(hosts[0]!.goToLocation).not.toHaveBeenCalled();
   });
 
   it('closes the active tab and rebuilds the next tab runtime', async () => {

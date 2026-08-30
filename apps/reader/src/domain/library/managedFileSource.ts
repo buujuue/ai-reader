@@ -136,6 +136,16 @@ export class ManagedFileSource extends File {
     return this.#readBytes(offset, offset + length);
   }
 
+  /** 供 Reader Runtime 预算诊断使用；不暴露正文或文件路径。 */
+  getRuntimeResourceUsage(): { rangeCacheBytes: number } {
+    return {
+      rangeCacheBytes: [...this.#cache.values()].reduce(
+        (total, chunk) => total + chunk.byteLength,
+        0,
+      ),
+    };
+  }
+
   override slice(
     start = 0,
     end = this.size,

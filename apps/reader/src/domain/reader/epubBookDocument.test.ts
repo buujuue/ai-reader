@@ -185,6 +185,26 @@ describe('EpubBookDocument', () => {
     expect(book.getLocation()).toBeNull();
   });
 
+  it('挂起后重新挂载同一宿主而不重复打开文档', async () => {
+    const host = createFakeHost();
+    const attach = vi.fn();
+    const detach = vi.fn();
+    host.attach = attach;
+    host.detach = detach;
+    const book = createDocument(() => host);
+    const firstContainer = document.createElement('div');
+    const secondContainer = document.createElement('div');
+
+    await book.open(firstContainer);
+    book.detach?.();
+
+    expect(book.isRuntimeReady?.()).toBe(true);
+    expect(detach).toHaveBeenCalledOnce();
+    expect(book.attach?.(secondContainer)).toBe(true);
+    expect(attach).toHaveBeenCalledWith(secondContainer);
+    expect(host.openedBytes).toBeInstanceOf(File);
+  });
+
   it('打开时复用调用方提供的来源', async () => {
     const host = createFakeHost();
     const source = new File([new Uint8Array([1, 2, 3])], 'book.epub', {

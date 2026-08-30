@@ -101,7 +101,7 @@ Status: ready-for-agent
 83. As a 维护者, I want 每个用户意图拥有稳定 Command ID, so that 按钮、菜单、快捷键和手势不会实现四套逻辑。
 84. As a 维护者, I want TS 不发送任意 SQL, so that 数据库迁移和完整性集中由 Rust 管理。
 85. As a 维护者, I want Rust 不理解 React 标签和焦点, so that平台核心与界面状态保持解耦。
-86. As a 维护者, I want 只保留每个可见组的活跃渲染器, so that 多标签不会持续占用 PDF Canvas 和 WebView 内存。
+86. As a 维护者, I want 只为可见组保留活动渲染器并对 EPUB/Markdown 使用有限挂起缓存, so that 多标签不会无界占用 PDF Canvas 和 WebView 内存。
 87. As a 维护者, I want 依赖使用锁文件固定且避免无必要 Fork, so that 新项目的供应链和升级成本可控。
 88. As a 维护者, I want 通过 ADR 记录每个重要 Seam 和取舍, so that 项目可以作为可理解的架构学习过程演进。
 89. As a 后续产品设计者, I want 主要阅读材料与焦点分离, so that 未来书籍 Agent 的归属不会随点击漂移。
@@ -137,7 +137,7 @@ Status: ready-for-agent
 - Workbench 集中拥有最多两个 Editor Group、标签顺序、活动 View、主要阅读材料和面板期望状态。
 - 同一 Editor Group 内每种材料最多拥有一个 ReadingView；跨组允许同时打开同一材料，位置与导航历史按视图保留，资料级批注和排版覆盖按材料共享。
 - 主要阅读材料由用户显式指定；单材料时自动指定，焦点切换不改变它。
-- 只挂载每个可见 Editor Group 的活动 ReadingView；失活标签保存位置并释放渲染器。
+- 只挂载每个可见 Editor Group 的活动 ReadingView；已完成的 EPUB/Markdown 失活标签可按 ReadingView 身份进入有界 `suspended` Reader Runtime 缓存，挂起前 flush 位置并清理选区、搜索任务、输入焦点和临时覆盖层；PDF、未完成加载、版本/指纹/算法不一致或超出桌面/平板预算时进入 `evicted` 并关闭。Workspace State 仍完全可序列化。具体替代决策见 ADR-0040。
 - 工作台由活动栏、主侧栏、中央 Editor Group 和状态栏组成。主要阅读材料的批注通过材料操作菜单打开覆盖式批注面板；右侧栏保留给未来 Agent，第一版不显示 Agent 占位。
 - 材料更多菜单位于阅读工具栏右侧，提供查看/导出该材料批注、设置主要阅读材料、编辑元数据和移入回收站；阅读排版沿用阅读设置入口。
 - 工作台外壳第一阶段固定采用 C 深色视觉；阅读材料的浅色、羊皮和深色主题仍由现有阅读排版设置单独控制，不新增工作台主题持久化状态。
@@ -157,6 +157,7 @@ Status: ready-for-agent
 - 文本批注锚点保存 CFI、选中文字、前文、后文、文档版本与恢复状态。恢复顺序为原 CFI、唯一引文上下文，最后标记失联。
 - 扫描 PDF 区域锚点语义上保存页码和归一化矩形；第一版兼容传输层以 `pdf-text:` 编码承载它，加载时不得按文本引文恢复，版本变化后保留为失联批注。
 - 所有书籍内容视为不可信。第一版永久禁用书籍脚本、iframe、对象嵌入和主动远程资源；外部链接必须交给系统浏览器。
+- Reader Runtime 生命周期分为 `active`、`suspended`、`evicted`、`closed`；缓存只准入 EPUB/Markdown，键包含 ReadingView 身份、MaterialId、完整内容指纹、Markdown 文档版本、解析/清洗算法版本和缓存算法版本。桌面/平板使用独立的活 Runtime、iframe、Canvas、解码页、范围缓存和估算资源硬预算，并按 LRU 淘汰挂起对象；性能门槛从同机冷回切测量动态派生，不写死绝对毫秒数。对应 ADR-0040。
 - Tauri CSP 和 Capability 使用最小白名单；前端没有任意文件系统、Shell 或 SQL 能力。
 - 上游 Tauri、官方插件和普通 Rust crate 使用锁文件固定；不 vendoring Tauri、tao 或 swift-rs。只有可复现问题且无上游解法时才建立带 ADR 的最小 Patch/Fork。
 - 完整备份包含版本化 manifest、SQLite 一致快照、托管材料与封面；流式生成且第一版不加密。
@@ -183,6 +184,7 @@ Status: ready-for-agent
 - 安全测试使用带脚本、危险 URL、远程资源和嵌入对象的恶意 EPUB/Markdown fixture，验证内容不能执行或取得 Tauri IPC。
 - 备份测试验证大文件流式处理、manifest 版本、指纹校验、空间不足、损坏包和失败后原书库保持可用。
 - 性能验收关注可观察预算：最多两个活跃渲染器；大文件导入不整体读入 JS 内存；非活动标签不保留 PDF Canvas；书库封面按需加载。
+- Reader Runtime 缓存验收运行 `pnpm --dir apps/reader test:reader-runtime-cache`：真实 Chrome 通过 `library.openBook`/`reader.activateView` Command 测量 EPUB 与 Markdown A→B→A，记录切换、首次可见、回切可交互、缓存命中、对象创建、范围读取、Runtime 资源和可获得的堆内存；至少三轮，以同机冷路径中位数/P95 作为动态门槛。
 - 参考 Readest 的既有测试类型：Vitest jsdom、Vitest Browser、Playwright Web、WebdriverIO Tauri 与 Rust tests，但只引入当前切片真正需要的工具。
 
 ## Out of Scope
