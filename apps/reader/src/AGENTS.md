@@ -22,7 +22,7 @@
 - 用户意图一律走 Command：UI 组件执行 Command，不在组件里另接行为逻辑；命令必须在 `commands/` 注册稳定 ID。
 - 前端不接触 SQLite 表、SQL、数据库路径与文件细节；平台能力只经 typed Repository 接口调用 Rust 命令。`ManagedFileSource` 只接收稳定 MaterialId 解析出的 File/Blob 兼容范围来源，不向格式层暴露 Tauri 协议或路径。
 - 内存 Adapter 与 Tauri Adapter 必须运行同一份 `workspaceRepository.contract.ts` 契约测试；Repository 接口变化时同步更新契约与两个 Adapter。
-- Workspace State 必须可序列化；Reader Runtime 活对象（视图、选区、加载任务）不得进入持久化状态。每个 Editor Group 仅保留活动阅读器，全应用最多两个活动渲染器；EPUB/Markdown 完成打开后可由 `readerRuntimeCache.ts` 按有界预算挂起，PDF 保持关闭重建。
+- Workspace State 必须可序列化；Reader Runtime 活对象（视图、选区、加载任务）不得进入持久化状态。每个 Editor Group 仅保留活动阅读器，全应用最多两个活动渲染器；EPUB/Markdown 完成打开后可由 `readerRuntimeCache.ts` 按有界预算挂起，切换由 `readerCommands.ts` 先 flush 并清除输入/搜索接线，PDF 保持关闭重建；材料失效与整库恢复必须释放旧对象。
 
 ## Readest 参照
 

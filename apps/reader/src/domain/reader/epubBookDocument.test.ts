@@ -205,6 +205,24 @@ describe('EpubBookDocument', () => {
     expect(host.openedBytes).toBeInstanceOf(File);
   });
 
+  it('挂起时清除内容选择并让内容文档中的活动元素失焦', async () => {
+    const host = createFakeHost();
+    const contentDocument = document.implementation.createHTMLDocument('正文');
+    const input = contentDocument.createElement('input');
+    contentDocument.body.appendChild(input);
+    input.focus();
+    host.getContentDocs = () => [contentDocument];
+    host.attach = vi.fn();
+    host.detach = vi.fn();
+    const book = createDocument(() => host);
+
+    await book.open(document.createElement('div'));
+    book.detach?.();
+
+    expect(contentDocument.activeElement).toBe(contentDocument.body);
+    expect(host.detach).toHaveBeenCalledOnce();
+  });
+
   it('打开时复用调用方提供的来源', async () => {
     const host = createFakeHost();
     const source = new File([new Uint8Array([1, 2, 3])], 'book.epub', {
@@ -243,6 +261,21 @@ describe('EpubBookDocument', () => {
 
     expect(host.cfis).toEqual(['epubcfi(/6/4)']);
     expect(book.getLocation()).toEqual({ kind: 'epub', cfi: 'epubcfi(/6/4)' });
+  });
+
+  it('精确定位后忽略窗口切换期间迟到的章节起点 relocate', async () => {
+    const host = createFakeHost();
+    const book = createDocument(() => host);
+    const listener = vi.fn();
+    book.onLocationChange(listener);
+    await book.open(document.createElement('div'));
+    const target = { kind: 'epub' as const, cfi: 'epubcfi(/6/2!/4,/2,/4/1:20)' };
+
+    await book.goToLocation(target);
+    host.emitRelocate('epubcfi(/6/2!/4)');
+
+    expect(book.getLocation()).toEqual(target);
+    expect(listener).not.toHaveBeenCalledWith({ kind: 'epub', cfi: 'epubcfi(/6/2!/4)' });
   });
 
   it('打开前订阅的位置反馈会在宿主就绪后继续转发', async () => {

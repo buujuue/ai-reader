@@ -110,4 +110,20 @@ describe('ReaderRuntimeCache', () => {
     }
     expect(cache.getEntries()).toHaveLength(0);
   });
+
+  it('回收站失效只移除挂起条目并保留活动条目', () => {
+    const cache = new ReaderRuntimeCache<{ id: string }>({ budget: makeBudget() });
+    const active = makeEntry('active');
+    const suspended = makeEntry('suspended');
+
+    cache.registerActive(active);
+    cache.suspend(suspended);
+
+    const invalidated = cache.invalidateMaterial('material-active', { includeActive: false });
+
+    expect(invalidated).toHaveLength(0);
+    expect(cache.getEntries().map((entry) => entry.viewId)).toEqual(['active', 'suspended']);
+    expect(cache.invalidateMaterial('material-suspended', { includeActive: false })).toHaveLength(1);
+    expect(cache.getEntries().map((entry) => entry.viewId)).toEqual(['active']);
+  });
 });

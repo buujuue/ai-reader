@@ -42,6 +42,7 @@ function createHarness(options: {
   };
   const confirmUnencryptedBackup = vi.fn(() => options.confirmed ?? true);
   const flushReaderPositions = vi.fn(async () => undefined);
+  const closeReaderRuntimes = vi.fn(async () => undefined);
   const registry = new CommandRegistry();
   registerBackupCommands(registry, {
     backupRepository,
@@ -50,6 +51,7 @@ function createHarness(options: {
     confirmUnencryptedBackup,
     confirmRestore: vi.fn(() => true),
     flushReaderPositions,
+    closeReaderRuntimes,
   });
   return {
     registry,
@@ -58,6 +60,7 @@ function createHarness(options: {
     sourcePicker,
     confirmUnencryptedBackup,
     flushReaderPositions,
+    closeReaderRuntimes,
   };
 }
 
@@ -130,6 +133,7 @@ describe('library.exportBackup command', () => {
     expect(harness.sourcePicker.pickBackupSource).toHaveBeenCalledOnce();
     expect(harness.flushReaderPositions).toHaveBeenCalledOnce();
     expect(harness.backupRepository.restoreBackup).toHaveBeenCalledWith('backup.airbackup');
+    expect(harness.closeReaderRuntimes).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ materialCount: 2 });
     expect(useShellUiStore.getState().statusMessage).toBe('书库恢复成功，共恢复 2 本书');
   });
@@ -142,5 +146,18 @@ describe('library.exportBackup command', () => {
     expect(result).toBeNull();
     expect(harness.backupRepository.restoreBackup).not.toHaveBeenCalled();
     expect(harness.flushReaderPositions).not.toHaveBeenCalled();
+  });
+
+  it('整库恢复失败时不提前关闭旧 Runtime', async () => {
+    const harness = createHarness({
+      source: 'backup.airbackup',
+      restoreError: new Error('备份校验失败'),
+    });
+
+    await expect(harness.registry.execute(COMMAND_IDS.libraryRestoreBackup)).rejects.toThrow(
+      '备份校验失败',
+    );
+
+    expect(harness.closeReaderRuntimes).not.toHaveBeenCalled();
   });
 });

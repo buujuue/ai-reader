@@ -13,7 +13,12 @@ import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
 import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from '../domain/reader/pdf/pdfTestFakes';
-import { mountViewDocument, registerReaderCommands } from './readerCommands';
+import {
+  invalidateReaderRuntimeMaterial,
+  mountViewDocument,
+  registerReaderCommands,
+  registerReaderRuntimeInputCleanup,
+} from './readerCommands';
 import { ReaderRuntimeCache } from './readerRuntimeCache';
 import { useWorkspaceStore } from './workspaceStore';
 import { useReaderRuntime } from './readerRuntime';
@@ -86,9 +91,9 @@ describe('Reader 命令', () => {
     return importRepository.commitImport(staged, metadata);
   }
 
-  async function setupWithEpubMaterials() {
+  async function setupWithEpubMaterials(count = 2) {
     const sources = new Map<string, Uint8Array>();
-    const names = ['demo-a.epub', 'demo-b.epub'];
+    const names = Array.from({ length: count }, (_, index) => `demo-${String.fromCharCode(97 + index)}.epub`);
     for (const [index, name] of names.entries()) {
       addInMemorySource(sources, name, buildEpub({ title: `Demo Book ${index + 1}` }));
     }
@@ -460,6 +465,12 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().documents.size).toBe(2);
     expect(useReaderRuntime.getState().documents.has(firstViewId)).toBe(true);
     expect(useReaderRuntime.getState().documents.has(secondViewId)).toBe(true);
+    expect(useReaderRuntime.getState().getDocument(firstViewId)).not.toBe(
+      useReaderRuntime.getState().getDocument(secondViewId),
+    );
+    expect(useReaderRuntime.getState().getDocumentCacheKey(firstViewId)).not.toBe(
+      useReaderRuntime.getState().getDocumentCacheKey(secondViewId),
+    );
   });
 
   it('PDF 双 Editor Group 各自挂载时每个 Runtime 只创建一次 PDF.js 文档', async () => {
@@ -608,6 +619,10 @@ describe('Reader 命令', () => {
       expect(useReaderRuntime.getState().getDocument(firstViewId)?.isRuntimeReady?.()).toBe(true),
     );
     useWorkspaceStore.getState().setViewLocation(firstViewId, savedLocation);
+    await useReaderRuntime.getState().getDocument(firstViewId)!.goToLocation(savedLocation);
+    const firstHostNavigationCount = (
+      hosts[0]!.goToLocation as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
 
     await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
     const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
@@ -642,6 +657,7 @@ describe('Reader 命令', () => {
     const activeDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
     expect(activeDocument).toBe(suspendedFirstDocument);
     expect(activeDocument.isRuntimeReady?.()).toBe(true);
+    expect(activeDocument.getLocation()).toEqual(savedLocation);
     const resumedContainer = document.createElement('div');
     expect(activeDocument.attach?.(resumedContainer)).toBe(true);
     mountViewDocument(activeDocument, firstViewId, resumedContainer, savedLocation, {
@@ -649,7 +665,176 @@ describe('Reader 命令', () => {
       workspaceRepository,
     });
     expect(hosts).toHaveLength(2);
-    expect(hosts[0]!.goToLocation).not.toHaveBeenCalled();
+    expect(hosts[0]!.goToLocation).toHaveBeenCalledTimes(firstHostNavigationCount);
+  });
+
+  it('缓存命中后仍把 Runtime 状态恢复为 ready', async () => {
+    const [firstMaterial, secondMaterial] = await setupWithEpubMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    mountViewDocument(secondDocument, secondViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
+
+    useWorkspaceStore.getState().setActiveView('group-1', firstViewId);
+    await registry.execute(COMMAND_IDS.readerRestoreView, firstViewId, firstMaterial);
+
+    expect(useReaderRuntime.getState().documentStates.get(firstViewId)).toEqual({ status: 'ready' });
+  });
+
+  it('挂起期间材料指纹变化时不命中旧缓存并安全重建', async () => {
+    const [firstMaterial, secondMaterial] = await setupWithEpubMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = { ...createFakeViewHost(), close: vi.fn() };
+        hosts.push(host);
+        return host;
+      },
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    mountViewDocument(secondDocument, secondViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
+
+    const changedMaterial = { ...firstMaterial, fingerprint: 'changed-content-fingerprint' };
+    await registry.execute(COMMAND_IDS.readerActivateView, firstViewId, changedMaterial);
+
+    // 新 Runtime 只在 ReadingView 重新挂载后才创建 Foliate 宿主;Command 阶段
+    // 已经完成旧缓存失效并构造了新的 BookDocument。
+    expect(hosts).toHaveLength(2);
+    expect(hosts[0]!.close).toHaveBeenCalledOnce();
+    const rebuilt = useReaderRuntime.getState().getDocument(firstViewId)!;
+    expect(rebuilt).not.toBe(firstDocument);
+    mountViewDocument(rebuilt, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(rebuilt.isRuntimeReady?.()).toBe(true));
+    expect(hosts).toHaveLength(3);
+  });
+
+  it('切换时清理阅读输入接线,LRU 淘汰的 Runtime 只关闭一次', async () => {
+    const materials = await setupWithEpubMaterials(3);
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = { ...createFakeViewHost(), close: vi.fn() };
+        hosts.push(host);
+        return host;
+      },
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, materials[0]);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+    const inputCleanup = vi.fn();
+    const unregisterInputCleanup = registerReaderRuntimeInputCleanup(firstViewId, inputCleanup);
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, materials[1]);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    mountViewDocument(secondDocument, secondViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, materials[2]);
+
+    expect(inputCleanup).toHaveBeenCalledOnce();
+    expect(hosts[0]!.close).toHaveBeenCalledOnce();
+    expect(useReaderRuntime.getState().getDocument(firstViewId)).toBeUndefined();
+    expect(readerRuntimeCache.getEntries().some((entry) => entry.viewId === firstViewId)).toBe(false);
+    unregisterInputCleanup();
+  });
+
+  it('材料失效时关闭挂起 Runtime 并保留其它视图', async () => {
+    const [firstMaterial, secondMaterial] = await setupWithEpubMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = { ...createFakeViewHost(), close: vi.fn() };
+        hosts.push(host);
+        return host;
+      },
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, firstMaterial);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, secondMaterial);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    mountViewDocument(secondDocument, secondViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
+
+    await invalidateReaderRuntimeMaterial(firstMaterial!.id);
+
+    expect(hosts[0]!.close).toHaveBeenCalledOnce();
+    expect(useReaderRuntime.getState().getDocument(firstViewId)).toBeUndefined();
+    expect(useReaderRuntime.getState().getDocument(secondViewId)).toBe(secondDocument);
+    expect(readerRuntimeCache.getEntries().some((entry) => entry.viewId === firstViewId)).toBe(false);
   });
 
   it('closes the active tab and rebuilds the next tab runtime', async () => {

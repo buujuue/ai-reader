@@ -101,6 +101,15 @@ describe('Workspace Store', () => {
     expect(useWorkspaceStore.getState().primaryMaterialId).toBe('material-1');
   });
 
+  it('可以先新增非活动标签,由 Reader Command 在 flush 后再激活', () => {
+    const firstViewId = useWorkspaceStore.getState().openView('material-1');
+    const secondViewId = useWorkspaceStore.getState().openView('material-2', { activate: false });
+
+    const group = useWorkspaceStore.getState().editorGroups[0]!;
+    expect(group.activeViewId).toBe(firstViewId);
+    expect(group.views.map((view) => view.id)).toEqual([firstViewId, secondViewId]);
+  });
+
   it('用户可以显式指定主要阅读材料', () => {
     useWorkspaceStore.getState().setPrimaryMaterial('material-2');
 

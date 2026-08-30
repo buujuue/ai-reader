@@ -27,6 +27,7 @@ import { registerMarkdownCommands } from '../workbench/markdownCommands';
 import {
   registerReaderCommands,
   flushReaderPositions,
+  flushAndCloseAllReaderViews,
   reloadMaterialViews,
   invalidateReaderRuntimeMaterial,
   type ReaderCommandDependencies,
@@ -290,6 +291,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     destinationPicker: backupDestinationPicker,
     sourcePicker: backupSourcePicker,
     flushReaderPositions,
+    closeReaderRuntimes: flushAndCloseAllReaderViews,
     reloadApplication: isTauriRuntime() ? () => window.location.reload() : undefined,
   });
   registerLibraryCommands(commands, {

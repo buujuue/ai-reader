@@ -1,5 +1,5 @@
 /**
- * Reader Runtime 有界缓存的真实浏览器基线。
+ * Reader Runtime 有界缓存的真实浏览器基线（工单 #53/#54）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
  * EPUB 与 Markdown 的 A→B→A 流程，分别记录冷启动与缓存回切的可交互时间、
@@ -190,9 +190,11 @@ async function main() {
         .find((view) => view.materialId === materialId)?.id ?? null;
       const openAndWait = async (material, commandId) => {
         const started = performance.now();
-        await registry.execute(commandId, material);
-        const viewId = viewIdForMaterial(material.id);
-        if (!viewId) throw new Error(`没有创建 ${material.title} 的 ReadingView`);
+        const commandViewId = await registry.execute(commandId, material);
+        const viewId = typeof commandViewId === 'string'
+          ? commandViewId
+          : viewIdForMaterial(material.id);
+        if (!viewId) throw new Error(`没有创建 ${material.title} 的 ReadingView:${JSON.stringify(useWorkspaceStore.getState())}`);
         const commandStatus = commandModule.getReaderRuntimeStatusForMeasurement(viewId);
         if (commandStatus?.status === 'error') throw new Error(`${material.title} Command 打开失败:${commandStatus.message}`);
         await waitFor(() => commandModule.getReaderRuntimeDocumentForMeasurement(viewId) !== undefined, `${material.title} BookDocument 创建`);
@@ -206,9 +208,15 @@ async function main() {
           },
           `${material.title} 首次可见`,
         );
+        await waitFrames(4);
+        const workspaceLocation = useWorkspaceStore.getState().editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === viewId)?.location ?? null;
         return {
           viewId,
           book,
+          locationBeforeSwitch: workspaceLocation ?? book.getLocation(),
+          tocBeforeSwitch: book.getTOC(),
           firstVisibleMs: performance.now() - started,
         };
       };
@@ -232,19 +240,26 @@ async function main() {
         const returnStarted = performance.now();
         await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, epub);
         await waitFor(
-          () => Boolean(first.book.isRuntimeReady?.()) && first.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
+          () => commandModule.getReaderRuntimeStatusForMeasurement(first.viewId)?.status === 'ready' &&
+            first.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
           'EPUB 缓存回切可交互',
         );
         const hitReturnInteractiveMs = performance.now() - returnStarted;
         const hitCounters = diffCounters(hitCountersBefore);
         const hitDiagnostics = cache.getDiagnostics();
         const cachedResourceUsage = first.book.getRuntimeResourceUsage?.() ?? null;
+        const locationPreserved =
+          first.locationBeforeSwitch !== null &&
+          JSON.stringify(first.book.getLocation()) === JSON.stringify(first.locationBeforeSwitch);
+        const tocPreserved =
+          JSON.stringify(first.book.getTOC()) === JSON.stringify(first.tocBeforeSwitch);
 
         const markdownHitCountersBefore = snapshotCounters();
         const markdownReturnStarted = performance.now();
         await registry.execute(COMMAND_IDS.readerActivateView, second.viewId, markdown);
         await waitFor(
-          () => Boolean(second.book.isRuntimeReady?.()) && second.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
+          () => commandModule.getReaderRuntimeStatusForMeasurement(second.viewId)?.status === 'ready' &&
+            second.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
           'Markdown 缓存回切可交互',
         );
         const markdownHitReturnInteractiveMs = performance.now() - markdownReturnStarted;
@@ -263,7 +278,8 @@ async function main() {
         const coldBook = commandModule.getReaderRuntimeDocumentForMeasurement(first.viewId);
         if (!coldBook) throw new Error('冷回切没有重建 EPUB BookDocument');
         await waitFor(
-          () => Boolean(coldBook.isRuntimeReady?.()) && coldBook.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
+          () => commandModule.getReaderRuntimeStatusForMeasurement(first.viewId)?.status === 'ready' &&
+            coldBook.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
           'EPUB 冷回切可交互',
         );
         const coldReturnInteractiveMs = performance.now() - coldStarted;
@@ -275,7 +291,8 @@ async function main() {
         const markdownColdBook = commandModule.getReaderRuntimeDocumentForMeasurement(second.viewId);
         if (!markdownColdBook) throw new Error('冷回切没有重建 Markdown BookDocument');
         await waitFor(
-          () => Boolean(markdownColdBook.isRuntimeReady?.()) && markdownColdBook.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
+          () => commandModule.getReaderRuntimeStatusForMeasurement(second.viewId)?.status === 'ready' &&
+            markdownColdBook.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected),
           'Markdown 冷回切可交互',
         );
         const markdownColdReturnInteractiveMs = performance.now() - markdownColdStarted;
@@ -286,6 +303,8 @@ async function main() {
             firstVisibleMs: first.firstVisibleMs,
             secondSwitchAndVisibleMs: switchOutAndSecondVisibleMs,
             hitReturnInteractiveMs,
+            locationPreserved,
+            tocPreserved,
             coldReturnInteractiveMs,
             cacheHitDelta: hitDiagnostics.hits - hitBefore,
             hitCounters,
@@ -317,7 +336,7 @@ async function main() {
       await waitFrames();
       return {
         schemaVersion: 'reader-runtime-cache.v1',
-        issue: 53,
+        issue: 54,
         status: 'measured',
         runCount: requestedRuns,
         samples,
@@ -346,6 +365,8 @@ async function main() {
       markdownCovered: result.samples.every((sample) => sample.markdown.format === 'markdown'),
       everyRunHasCacheHit: result.samples.every((sample) => sample.epub.cacheHitDelta === 1),
       everyRunHasMarkdownCacheHit: result.samples.every((sample) => sample.markdown.cacheHitDelta === 1),
+      everyRunPreservesEpubLocation: result.samples.every((sample) => sample.epub.locationPreserved),
+      everyRunPreservesEpubToc: result.samples.every((sample) => sample.epub.tocPreserved),
       cacheHitCreatesNoDocument: result.samples.every((sample) => sample.epub.hitCounters.sourceOpens === 0),
       cacheHitCreatesNoRenderer: result.samples.every((sample) => sample.epub.hitCounters.rendererCreates === 0),
       cacheHitReadsNoRanges: result.samples.every((sample) => sample.epub.hitCounters.rangeReads === 0),

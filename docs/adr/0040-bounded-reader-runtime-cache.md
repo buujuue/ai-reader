@@ -59,7 +59,7 @@ active ──挂起前 flush/清理──> suspended ──LRU/失效──> evi
 - `contentAlgorithmVersion`：`epub-canonical-v1|markdown-parser-v1|sanitizer-v1`；
 - `format` 与 `reader-runtime-cache-v1` 状态机版本。
 
-键不完全相等就安全 miss 并关闭旧对象。Markdown 正式保存、EPUB 显式版本迁移、材料重新关联或材料永久清理会失效该 MaterialId 的全部缓存；普通移入回收站不改变内容键但关闭/标签关闭仍遵守生命周期。恢复迁移快照同样先清除旧 Runtime，禁止旧指纹继续响应输入。
+键不完全相等就安全 miss 并关闭旧对象。Markdown 正式保存、EPUB 显式版本迁移、材料重新关联或材料永久清理会失效该 MaterialId 的全部缓存；普通移入回收站只失效挂起条目，保留当前活动 ReadingView 的可逆旧正文，直到用户切换/关闭时关闭而不再重新准入缓存。恢复迁移快照同样先清除旧 Runtime，禁止旧指纹继续响应输入。
 
 ### 错误恢复
 

@@ -53,8 +53,11 @@ export function registerLibraryCommands(
     reloadApplication?: () => void;
     /** 浏览器降级模式重建当前材料视图，不依赖整页刷新。 */
     reloadMaterialViews?: (materialId: string) => Promise<void>;
-    /** 永久清理或版本替换前后失效所有对应的活 Reader Runtime。 */
-    invalidateMaterialRuntime?: (materialId: string) => Promise<void>;
+    /** 失效对应材料的活 Reader Runtime;默认包含 active,回收站只清理 suspended。 */
+    invalidateMaterialRuntime?: (
+      materialId: string,
+      options?: { includeActive?: boolean },
+    ) => Promise<void>;
   },
 ): void {
   registry.register(COMMAND_IDS.libraryRefresh, async () => {
@@ -292,6 +295,7 @@ export function registerLibraryCommands(
       throw new Error('删除资料命令缺少材料 ID');
     }
     const trashed = await dependencies.importRepository.trashMaterial(materialId);
+    await dependencies.invalidateMaterialRuntime?.(materialId, { includeActive: false });
     useLibraryStore.getState().removeMaterial(materialId);
     useLibraryStore.getState().setTrashedMaterials([
       ...useLibraryStore.getState().trashedMaterials.filter((item) => item.id !== trashed.id),

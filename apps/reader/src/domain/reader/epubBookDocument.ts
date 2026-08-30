@@ -21,6 +21,8 @@ import {
 } from './epubCanonical';
 import type { CanonicalSearchIndexCache } from './canonicalSearch';
 
+type CfiReadingLocation = Extract<ReadingLocation, { cfi: string }>;
+
 export interface EpubBookDocumentOptions {
   /** EPUB 的只读、惰性 File/Blob 兼容来源。 */
   source: Blob;
@@ -67,6 +69,11 @@ export class EpubBookDocument implements BookDocument {
   private container: HTMLElement | null = null;
   private currentLocation: ReadingLocation | null = null;
   private currentProgress: ReadingProgress | null = null;
+  // attach/goTo 期间 Foliate 可能在目标位置之后补发一次旧的章节起点 relocate。
+  // 在短暂稳定窗口内保留用户请求的精确位置,避免它被过期事件覆盖。
+  private requestedLocation: CfiReadingLocation | null = null;
+  private requestedLocationTimer: ReturnType<typeof setTimeout> | null = null;
+  private detachedLocation: CfiReadingLocation | null = null;
   // 位置变化、书内/外部链接监听器在 host 就绪前也可能被订阅,统一缓冲后接线。
   private locationListeners = new Set<(location: ReadingLocation) => void>();
   private progressListeners = new Set<(progress: ReadingProgress) => void>();
@@ -157,7 +164,10 @@ export class EpubBookDocument implements BookDocument {
   detach(): void {
     for (const contentDocument of this.host?.getContentDocs() ?? []) {
       contentDocument.getSelection?.()?.removeAllRanges();
+      (contentDocument.activeElement as HTMLElement | null)?.blur?.();
     }
+    const location = this.currentLocation;
+    this.detachedLocation = location && 'cfi' in location ? location : null;
     this.host?.detach?.();
     this.container = null;
   }
@@ -212,15 +222,27 @@ export class EpubBookDocument implements BookDocument {
     if (location.kind !== this.locationKind) {
       throw new Error(`不支持的阅读位置类型:${location.kind}`);
     }
-    await this.host?.goToLocation(location.cfi);
-    this.currentLocation = location;
+    const cfiLocation = location as CfiReadingLocation;
+    this.detachedLocation = null;
+    this.holdRequestedLocation(cfiLocation);
+    try {
+      await this.host?.goToLocation(location.cfi);
+      this.currentLocation = location;
+    } catch (error) {
+      this.clearRequestedLocation();
+      throw error;
+    }
   }
 
   async next(): Promise<void> {
+    this.clearRequestedLocation();
+    this.detachedLocation = null;
     await this.host?.next();
   }
 
   async prev(): Promise<void> {
+    this.clearRequestedLocation();
+    this.detachedLocation = null;
     await this.host?.prev();
   }
 
@@ -253,6 +275,8 @@ export class EpubBookDocument implements BookDocument {
   }
 
   async goToHref(href: string): Promise<void> {
+    this.clearRequestedLocation();
+    this.detachedLocation = null;
     await this.host?.goToHref(href);
   }
 
@@ -325,6 +349,8 @@ export class EpubBookDocument implements BookDocument {
     this.contentCreateHostCleanups.clear();
     this.currentLocation = null;
     this.currentProgress = null;
+    this.clearRequestedLocation();
+    this.detachedLocation = null;
     this.locationListeners.clear();
     this.internalLinkListeners.clear();
     this.externalLinkListeners.clear();
@@ -356,6 +382,15 @@ export class EpubBookDocument implements BookDocument {
     // 位置变化事件:把渲染器 CFI 转成可序列化的 ReadingLocation。
     this.host.onRelocate((cfi) => {
       const location: ReadingLocation = { kind: this.locationKind, cfi };
+      if (this.detachedLocation && this.detachedLocation.cfi !== cfi) {
+        if (isCoarserCfi(cfi, this.detachedLocation.cfi)) return;
+        this.detachedLocation = null;
+      }
+      if (this.requestedLocation && this.requestedLocation.cfi !== cfi) {
+        // attach/reflow 期间可能连续派发章节起点、辅助节点和目标范围等
+        // 中间事件;明确导航命令会先解除保护,这里不能猜测哪个事件可信。
+        return;
+      }
       this.currentLocation = location;
       for (const listener of this.locationListeners) {
         listener(location);
@@ -380,6 +415,28 @@ export class EpubBookDocument implements BookDocument {
       }
     });
   }
+
+  private holdRequestedLocation(location: CfiReadingLocation): void {
+    this.requestedLocation = location;
+    if (this.requestedLocationTimer) clearTimeout(this.requestedLocationTimer);
+    this.requestedLocationTimer = setTimeout(() => {
+      this.requestedLocation = null;
+      this.requestedLocationTimer = null;
+    }, 2_000);
+  }
+
+  private clearRequestedLocation(): void {
+    if (this.requestedLocationTimer) clearTimeout(this.requestedLocationTimer);
+    this.requestedLocation = null;
+    this.requestedLocationTimer = null;
+  }
+}
+
+function isCoarserCfi(candidate: string, specific: string): boolean {
+  if (candidate === specific) return false;
+  const coarseCfi = candidate.endsWith(')') ? candidate.slice(0, -1) : candidate;
+  const nextCharacter = specific[coarseCfi.length];
+  return specific.startsWith(coarseCfi) && (nextCharacter === ',' || nextCharacter === '!');
 }
 
 export { sanitizeEpubContent };

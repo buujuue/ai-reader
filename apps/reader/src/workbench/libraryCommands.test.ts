@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createInMemoryFilePicker } from '../app/filePicker';
 import { createAppServices, type AppServices } from '../app/bootstrap';
-import { COMMAND_IDS } from '../commands/commandRegistry';
+import { COMMAND_IDS, CommandRegistry } from '../commands/commandRegistry';
 import { addInMemorySource, createInMemoryImportRepository } from '../domain/library/inMemoryImportRepository';
 import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
 import { useLibraryStore } from './libraryStore';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
+import { registerLibraryCommands } from './libraryCommands';
 
 describe('书库材料归类 Command', () => {
   let services: AppServices;
@@ -143,5 +144,23 @@ describe('书库材料归类 Command', () => {
     expect(deleteFolder).not.toHaveBeenCalled();
     expect(await services.libraryFolderRepository.listFolders()).toEqual([root]);
     expect(useWorkspaceStore.getState().expandedLibraryFolderIds).toEqual([root.id]);
+  });
+
+  it('移入回收站后使挂起 Runtime 失效但不关闭当前活动视图', async () => {
+    const material = useLibraryStore.getState().materials[0]!;
+    const invalidateMaterialRuntime = vi.fn(async () => undefined);
+    const registry = new CommandRegistry();
+    registerLibraryCommands(registry, {
+      importRepository: services.importRepository,
+      filePicker: createInMemoryFilePicker([]),
+      libraryFolderRepository: services.libraryFolderRepository,
+      invalidateMaterialRuntime,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryTrash, material.id);
+
+    expect(invalidateMaterialRuntime).toHaveBeenCalledWith(material.id, { includeActive: false });
+    expect(useLibraryStore.getState().materials.some((item) => item.id === material.id)).toBe(false);
+    expect(useLibraryStore.getState().trashedMaterials.some((item) => item.id === material.id)).toBe(true);
   });
 });

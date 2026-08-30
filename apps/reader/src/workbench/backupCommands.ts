@@ -12,6 +12,8 @@ export interface BackupCommandDependencies {
   confirmUnencryptedBackup?: () => boolean;
   confirmRestore?: () => boolean;
   flushReaderPositions?: () => Promise<void>;
+  /** 整库替换成功后关闭旧 Reader Runtime,防止旧字节在重载前继续存活。 */
+  closeReaderRuntimes?: () => Promise<void>;
   reloadApplication?: (() => void) | undefined;
 }
 
@@ -75,6 +77,7 @@ export function registerBackupCommands(
     try {
       await dependencies.flushReaderPositions?.();
       const result = await dependencies.backupRepository.restoreBackup(sourcePath);
+      await dependencies.closeReaderRuntimes?.();
       useShellUiStore
         .getState()
         .setStatusMessage(`书库恢复成功，共恢复 ${result.materialCount} 本书`);

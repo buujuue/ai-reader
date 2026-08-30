@@ -55,7 +55,7 @@ export interface WorkspaceStoreState {
   pruneLibraryFolderExpansion: (validFolderIds: readonly string[]) => void;
   removeLibraryFolderIds: (folderIds: readonly string[]) => void;
   getEffectiveTypography: (materialId: string) => ReadingTypography;
-  openView: (materialId: string) => string;
+  openView: (materialId: string, options?: { activate?: boolean }) => string;
   closeView: (viewId: string) => void;
   removeMaterial: (materialId: string) => void;
   setActiveView: (groupId: string, viewId: string) => void;
@@ -268,12 +268,14 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     );
   },
 
-  openView: (materialId) => {
+  openView: (materialId, options) => {
     const state = get();
+    const activate = options?.activate ?? true;
     const groupId = state.activeEditorGroupId;
     const activeGroup = state.editorGroups.find((group) => group.id === groupId);
     const existingView = activeGroup?.views.find((view) => view.materialId === materialId);
     if (existingView) {
+      if (!activate) return existingView.id;
       set({
         editorGroups: state.editorGroups.map((group) =>
           group.id === groupId ? { ...group, activeViewId: existingView.id } : group,
@@ -292,7 +294,11 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     set((state) => {
       const editorGroups = state.editorGroups.map((group) =>
         group.id === groupId
-          ? { ...group, views: [...group.views, view], activeViewId: view.id }
+          ? {
+              ...group,
+              views: [...group.views, view],
+              activeViewId: activate ? view.id : group.activeViewId,
+            }
           : group,
       );
       const materials = uniqueMaterialIds(editorGroups);
