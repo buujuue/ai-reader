@@ -3,9 +3,11 @@ import {
   ArrowRight,
   Code2,
   MoreHorizontal,
+  Pencil,
   Settings2,
   Star,
   StickyNote,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -318,6 +320,16 @@ function MaterialReadingToolbar({
       .finally(() => setOpen(false));
   };
 
+  const editMetadata = () => {
+    setOpen(false);
+    useShellUiStore.getState().openMetadataEditor(materialId);
+  };
+
+  const trashMaterial = () => {
+    setOpen(false);
+    void commands.execute(COMMAND_IDS.libraryTrash, materialId).catch(() => undefined);
+  };
+
   return (
     <div
       role="toolbar"
@@ -417,6 +429,20 @@ function MaterialReadingToolbar({
             <button type="button" role="menuitem" onClick={setPrimary}>
               {primaryMaterialId === materialId ? <X size={14} aria-hidden /> : <Star size={14} aria-hidden />}
               {primaryMaterialId === materialId ? '取消主要材料' : '设为主要材料'}
+            </button>
+            <div role="separator" />
+            <button type="button" role="menuitem" onClick={editMetadata}>
+              <Pencil size={14} aria-hidden />
+              编辑元数据
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="library-menu-danger"
+              onClick={trashMaterial}
+            >
+              <Trash2 size={14} aria-hidden />
+              移入回收站
             </button>
             </div>
           ) : null}

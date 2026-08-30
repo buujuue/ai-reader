@@ -143,8 +143,11 @@ export function MetadataEditorDialog() {
           </div>
         </div>
 
-        <label className="mb-1 block text-xs text-zinc-400">标题</label>
+        <label htmlFor={`metadata-title-${material.id}`} className="mb-1 block text-xs text-zinc-400">
+          标题
+        </label>
         <input
+          id={`metadata-title-${material.id}`}
           type="text"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
@@ -152,8 +155,11 @@ export function MetadataEditorDialog() {
           placeholder="留空则使用来源标题"
         />
 
-        <label className="mb-1 block text-xs text-zinc-400">作者</label>
+        <label htmlFor={`metadata-author-${material.id}`} className="mb-1 block text-xs text-zinc-400">
+          作者
+        </label>
         <input
+          id={`metadata-author-${material.id}`}
           type="text"
           value={author}
           onChange={(event) => setAuthor(event.target.value)}

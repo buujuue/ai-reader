@@ -5,7 +5,7 @@ status: accepted
 # 以材料唯一归属连接书库文件夹
 
 每份活跃 Reading Material 在 `materials.folder_id` 中保存一个可为空的
-`FolderId`。`NULL` 表示树底部的未归类区域；非空值必须引用一个已有书库文件夹。
+`FolderId`。`NULL` 表示文件夹树下方、回收站上方的未归类区域；非空值必须引用一个已有书库文件夹。
 材料只能有一个归属，移动材料只更新这一列，不复制或改写托管正文、封面、阅读位置和批注。
 
 ## 决策
@@ -14,8 +14,8 @@ status: accepted
 - `ImportRepository` 提供 `moveMaterialToFolder(materialId, folderId)`；`folderId = null`
   用于移回未归类。Command 层再次根据权威文件夹列表校验目标，Tauri/Rust 侧用 SQLite
   外键和活动材料校验兜底。
-- 文件夹树仍由 `LibraryFolderRepository` 管理；书库侧栏把材料渲染为对应文件夹的叶子节点，
-  未归类材料固定在树底部。单本移动入口包括材料操作菜单和桌面精确指针下的拖放快捷方式，
+- 文件夹树仍由 `LibraryFolderRepository` 管理；书库侧栏把已归类材料渲染为对应文件夹的叶子节点，
+  未归类材料在文件夹树下方、回收站上方以独立可折叠区块展示。单本移动入口包括材料操作菜单和桌面精确指针下的拖放快捷方式，
   二者都执行同一个 `library.moveMaterial` Command；不引入文件夹拖放、多选或批量移动。
 - 普通移入回收站、恢复、Markdown 正式保存和 EPUB 版本迁移只更新各自已有字段，必须保留
   `folder_id`。永久删除随材料记录级联清理归属。

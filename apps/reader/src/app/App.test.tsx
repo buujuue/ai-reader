@@ -162,6 +162,10 @@ describe('阅读工作台外壳', () => {
   it('默认生产入口呈现 C 工作台顶栏并只保留书库与目录活动入口', () => {
     renderApp(services);
 
+    expect(document.querySelector('.app-shell.workbench-prototype')).toHaveAttribute(
+      'data-theme',
+      'midnight',
+    );
     expect(screen.getByRole('banner', { name: '应用顶栏' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '书库' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '目录' })).toBeInTheDocument();
@@ -486,25 +490,21 @@ describe('阅读工作台外壳', () => {
     expect(useWorkspaceStore.getState().unfiledMaterialsExpanded).toBe(false);
   });
 
-  it('书库树支持方向键、Home/End、Enter/Space 与 Escape,且搜索不会改写持久展开状态', async () => {
+  it('未归类区位于文件夹树下方并支持折叠,搜索不会改写持久展开状态', async () => {
     const user = userEvent.setup();
     renderApp(services);
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '未归类材料' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: '收起未归类材料' })).toBeInTheDocument());
 
-    const unfiled = screen.getByRole('treeitem', { name: '未归类材料' });
-    const material = screen.getByRole('treeitem', { name: '示例书' });
-    unfiled.focus();
-    await user.keyboard('{End}');
-    expect(document.activeElement).toBe(material);
-    await user.keyboard('{Home}');
-    expect(document.activeElement).toBe(unfiled);
-    await user.keyboard('{ArrowRight}');
-    expect(document.activeElement).toBe(material);
-    await user.keyboard('{ArrowLeft}');
-    expect(document.activeElement).toBe(unfiled);
-    await user.keyboard('{Space}');
+    const unfiled = screen.getByRole('button', { name: '收起未归类材料' });
+    const folderTree = screen.getByRole('tree', { name: '书库文件夹树' });
+    expect(folderTree).not.toHaveTextContent('示例书');
+    await user.click(unfiled);
     await waitFor(() => expect(screen.getByRole('button', { name: '展开未归类材料' })).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: '打开 示例书' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '展开未归类材料' }));
+    expect(screen.getByRole('button', { name: '打开 示例书' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '收起未归类材料' }));
 
     const search = screen.getByRole('searchbox', { name: '筛选书库' });
     await user.type(search, '示例书');
@@ -799,8 +799,8 @@ describe('阅读工作台外壳', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
-    const source = screen.getByRole('treeitem', { name: '示例书' });
+    await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
+    const source = screen.getByRole('listitem', { name: '示例书' });
     expect(source).toHaveAttribute('draggable', 'true');
     const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
     expect(folderTarget).not.toHaveAttribute('draggable', 'true');
@@ -860,6 +860,180 @@ describe('阅读工作台外壳', () => {
     expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
   });
 
+  it('混合指针设备仍允许使用精确鼠标拖动材料', async () => {
+    const previousMatchMedia = window.matchMedia;
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query === '(pointer: coarse)' || query === '(any-pointer: fine)',
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList),
+    });
+    try {
+      const { unmount } = renderApp(services);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+      await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
+
+      expect(screen.getByRole('listitem', { name: '示例书' })).toHaveAttribute('draggable', 'true');
+      unmount();
+    } finally {
+      if (previousMatchMedia) {
+        Object.defineProperty(window, 'matchMedia', {
+          configurable: true,
+          value: previousMatchMedia,
+        });
+      } else {
+        Reflect.deleteProperty(window, 'matchMedia');
+      }
+    }
+  });
+
+  it('浏览器未报告精确指针时仍可用鼠标拖到文件夹', async () => {
+    const previousMatchMedia = window.matchMedia;
+    const previousElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query === '(pointer: coarse)',
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList),
+    });
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const folder = await folderRepository.createFolder('文史', null);
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    try {
+      const { unmount } = renderApp(services);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+      await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
+
+      const source = screen.getByRole('listitem', { name: '示例书' });
+      const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: () => folderTarget,
+      });
+      fireEvent.pointerDown(source, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 100,
+        clientY: 300,
+      });
+      fireEvent.pointerMove(window, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 150,
+      });
+      expect(folderTarget).toHaveAttribute('data-drop-state', 'valid');
+      fireEvent.pointerUp(window, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 200,
+        clientY: 150,
+      });
+      await waitFor(async () => {
+        expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
+      });
+      unmount();
+    } finally {
+      if (previousElementFromPoint) {
+        Object.defineProperty(document, 'elementFromPoint', {
+          configurable: true,
+          value: previousElementFromPoint,
+        });
+      } else {
+        Reflect.deleteProperty(document, 'elementFromPoint');
+      }
+      if (previousMatchMedia) {
+        Object.defineProperty(window, 'matchMedia', {
+          configurable: true,
+          value: previousMatchMedia,
+        });
+      } else {
+        Reflect.deleteProperty(window, 'matchMedia');
+      }
+    }
+  });
+
+  it('鼠标指针拖动到文件夹空白区域时完成材料归类', async () => {
+    const folderRepository = createInMemoryLibraryFolderRepository();
+    const folder = await folderRepository.createFolder('文史', null);
+    services = createAppServices({
+      workspaceRepository: repository,
+      libraryFolderRepository: folderRepository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const { unmount } = renderApp(services);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
+
+    const source = screen.getByRole('listitem', { name: '示例书' });
+    const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
+    const previousElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: () => folderTarget,
+    });
+    try {
+      fireEvent.pointerDown(source, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 100,
+        clientY: 300,
+      });
+      fireEvent.pointerMove(window, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 150,
+      });
+
+      expect(folderTarget).toHaveAttribute('data-drop-state', 'valid');
+      fireEvent.pointerUp(window, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 200,
+        clientY: 150,
+      });
+      await waitFor(async () => {
+        expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
+      });
+    } finally {
+      if (previousElementFromPoint) {
+        Object.defineProperty(document, 'elementFromPoint', {
+          configurable: true,
+          value: previousElementFromPoint,
+        });
+      } else {
+        Reflect.deleteProperty(document, 'elementFromPoint');
+      }
+      unmount();
+    }
+  });
+
   it('拖到未归类复用移动 Command,非法拖拽不产生副作用', async () => {
     const folderRepository = createInMemoryLibraryFolderRepository();
     const folder = await folderRepository.createFolder('文史', null);
@@ -872,10 +1046,10 @@ describe('阅读工作台外壳', () => {
     const { unmount } = renderApp(services);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
 
     const materialId = (await services.importRepository.listMaterials())[0]!.id;
-    const source = screen.getByRole('treeitem', { name: '示例书' });
+    const source = screen.getByRole('listitem', { name: '示例书' });
     const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
     const toFolder = createDataTransfer();
     writeLibraryMaterialDragPayload(toFolder, materialId);
@@ -885,14 +1059,17 @@ describe('阅读工作台外壳', () => {
       expect((await services.importRepository.listMaterials())[0]?.folderId).toBe(folder.id);
     });
 
-    const unfiledTarget = screen.getByRole('treeitem', { name: '未归类材料' });
+    const unfiledTarget = screen
+      .getByRole('button', { name: '收起未归类材料' })
+      .closest<HTMLElement>('[data-library-drop-target="unfiled"]');
+    expect(unfiledTarget).not.toBeNull();
     const movedSource = screen.getByRole('treeitem', { name: '示例书' });
     const toUnfiled = createDataTransfer();
     writeLibraryMaterialDragPayload(toUnfiled, materialId);
     fireEvent.dragStart(movedSource, { dataTransfer: toUnfiled });
-    fireEvent.dragOver(unfiledTarget, { dataTransfer: toUnfiled });
+    fireEvent.dragOver(unfiledTarget!, { dataTransfer: toUnfiled });
     expect(unfiledTarget).toHaveAttribute('data-drop-state', 'valid');
-    fireEvent.drop(unfiledTarget, { dataTransfer: toUnfiled });
+    fireEvent.drop(unfiledTarget!, { dataTransfer: toUnfiled });
     await waitFor(async () => {
       expect((await services.importRepository.listMaterials())[0]?.folderId).toBeNull();
     });
@@ -917,7 +1094,7 @@ describe('阅读工作台外壳', () => {
     ).toHaveLength(moveCalls);
     expect((await services.importRepository.listMaterials())[0]?.folderId).toBeNull();
 
-    const nonTargetMaterial = screen.getByRole('treeitem', { name: '示例书' });
+    const nonTargetMaterial = screen.getByRole('listitem', { name: '示例书' });
     fireEvent.dragEnter(nonTargetMaterial, { dataTransfer: invalidTransfer });
     fireEvent.dragOver(nonTargetMaterial, { dataTransfer: invalidTransfer });
     expect(nonTargetMaterial).toHaveAttribute('data-drop-state', 'invalid');
@@ -938,7 +1115,7 @@ describe('阅读工作台外壳', () => {
 
     const cancelTransfer = createDataTransfer();
     writeLibraryMaterialDragPayload(cancelTransfer, materialId);
-    const currentSource = screen.getByRole('treeitem', { name: '示例书' });
+    const currentSource = screen.getByRole('listitem', { name: '示例书' });
     fireEvent.dragStart(currentSource, { dataTransfer: cancelTransfer });
     fireEvent.dragOver(folderTarget, { dataTransfer: cancelTransfer });
     expect(folderTarget).toHaveAttribute('data-drop-state', 'valid');
@@ -962,10 +1139,10 @@ describe('阅读工作台外壳', () => {
     renderApp(services);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
 
     const materialId = (await services.importRepository.listMaterials())[0]!.id;
-    const source = screen.getByRole('treeitem', { name: '示例书' });
+    const source = screen.getByRole('listitem', { name: '示例书' });
     const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
     const transfer = createDataTransfer();
     writeLibraryMaterialDragPayload(transfer, materialId);
@@ -990,10 +1167,10 @@ describe('阅读工作台外壳', () => {
     renderApp(services);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '示例书' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('listitem', { name: '示例书' })).toBeInTheDocument());
 
     const materialId = (await services.importRepository.listMaterials())[0]!.id;
-    const source = screen.getByRole('treeitem', { name: '示例书' });
+    const source = screen.getByRole('listitem', { name: '示例书' });
     const folderTarget = screen.getByRole('treeitem', { name: '文件夹 文史' });
     const transfer = createDataTransfer();
     writeLibraryMaterialDragPayload(transfer, materialId);
@@ -1256,6 +1433,15 @@ describe('回收站:安全删除资料', () => {
     expect(screen.getByRole('status', { name: '状态栏' })).toHaveTextContent(/已移入回收站/);
   });
 
+  it('未归类区固定显示在回收站上方', async () => {
+    const user = userEvent.setup();
+    await importAndOpenTrash(user);
+
+    const unfiledToggle = screen.getByRole('button', { name: '收起未归类材料' });
+    const trashToggle = screen.getByRole('button', { name: /回收站/ });
+    expect(unfiledToggle.compareDocumentPosition(trashToggle)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it('从回收站恢复后重新回到活跃书库', async () => {
     const user = userEvent.setup();
     await importAndOpenTrash(user);
@@ -1366,6 +1552,40 @@ describe('打开 EPUB 并重启续读', () => {
     await waitFor(() => {
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
       expect(screen.getAllByRole('toolbar', { name: /示例书/ })).toHaveLength(1);
+    });
+  });
+
+  it('材料更多操作支持编辑书名并将当前材料移入回收站', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
+    await user.click(openButton);
+
+    const readingToolbar = await screen.findByRole('toolbar', { name: /示例书/ });
+    await user.click(within(readingToolbar).getByRole('button', { name: '材料更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '编辑元数据' }));
+
+    const metadataDialog = screen.getByRole('dialog', { name: '编辑 示例书 的元数据' });
+    const titleInput = within(metadataDialog).getAllByRole('textbox')[0]!;
+    await user.clear(titleInput);
+    await user.type(titleInput, '整理后的书名');
+    await user.click(within(metadataDialog).getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(useLibraryStore.getState().materials[0]?.title).toBe('整理后的书名');
+      expect(screen.getByRole('toolbar', { name: /整理后的书名/ })).toBeInTheDocument();
+    });
+
+    const updatedToolbar = screen.getByRole('toolbar', { name: /整理后的书名/ });
+    await user.click(within(updatedToolbar).getByRole('button', { name: '材料更多操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '移入回收站' }));
+
+    await waitFor(() => {
+      expect(useLibraryStore.getState().materials).toHaveLength(0);
+      expect(useLibraryStore.getState().trashedMaterials).toHaveLength(1);
+      expect(useLibraryStore.getState().trashedMaterials[0]?.title).toBe('整理后的书名');
     });
   });
 

@@ -340,7 +340,7 @@ export function App() {
     <div
       className="app-shell workbench-prototype"
       data-variant="C"
-      data-theme="dark"
+      data-theme="midnight"
       data-tone="4"
       data-glow="1.4"
     >

@@ -4,12 +4,12 @@ status: accepted
 
 # 书库树搜索只临时展开命中路径
 
-书库搜索同时匹配文件夹名称、阅读材料有效标题和作者。搜索结果保留命中节点的层级上下文；命中材料显示从未归类/根文件夹到材料归属的完整路径，并自动展开其祖先。搜索期间的展开属于界面投影，清空或取消搜索后恢复搜索前的用户展开状态，不把搜索产生的变化写回 Workspace State。
+书库搜索同时匹配文件夹名称、阅读材料有效标题和作者。文件夹结果保留命中节点的层级上下文；命中材料显示从未归类/根文件夹到材料归属的完整路径，并自动展开其祖先。未归类材料位于文件夹树下方、回收站上方的独立可折叠区块，命中时显示在该区块中。搜索期间的展开属于界面投影，清空或取消搜索后恢复搜索前的用户展开状态，不把搜索产生的变化写回 Workspace State。
 
 ## 决策
 
 - `libraryFilter.ts` 生成书库树搜索投影：直接命中的材料与文件夹子树可见，祖先节点始终保留；临时展开集合与材料完整路径属于运行时结果。
-- `expandedLibraryFolderIds` 保存用户对具体文件夹的展开偏好；`unfiledMaterialsExpanded` 保存树底部未归类区域的展开偏好。二者由 Workspace Repository 持久化。
+- `expandedLibraryFolderIds` 保存用户对具体文件夹的展开偏好；`unfiledMaterialsExpanded` 保存文件夹树下方未归类区块的展开偏好。二者由 Workspace Repository 持久化。
 - `PrimarySidebar` 用搜索期间的局部覆盖记录响应用户对临时树的收起/展开；搜索清空后丢弃覆盖记录，恢复持久偏好。紧凑布局只销毁侧栏呈现，不销毁这些工作区状态。
 - 书库刷新完成后，以 `LibraryFolderRepository` 返回的 FolderId 集合裁剪恢复状态中的失效展开 ID。裁剪的持久化失败不得阻塞材料、标签或阅读位置恢复。
 - 树使用 `tree`、`treeitem` 和 `group` 语义，并在可见节点上提供 roving focus、方向键、Home/End、Enter/Space 与 Escape；书库筛选输入保留自身焦点并不触发阅读快捷键。

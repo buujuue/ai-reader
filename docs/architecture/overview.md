@@ -78,7 +78,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Workbench
 
-拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。书库树的用户展开集合 `expandedLibraryFolderIds` 与未归类区域状态 `unfiledMaterialsExpanded` 同属 Workspace State；书库搜索投影、命中路径和搜索期间的临时展开覆盖只存在于 `PrimarySidebar` 运行时，清空搜索后回到搜索前状态。材料更多菜单位于阅读工具栏右侧，仅提供查看/导出材料批注与设置主要阅读材料；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
+拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态，但释放 Foliate/PDF/加载任务/搜索等活对象。书库文件夹树的用户展开集合 `expandedLibraryFolderIds` 与位于树下方、回收站上方的未归类区块状态 `unfiledMaterialsExpanded` 同属 Workspace State；书库搜索投影、命中路径和搜索期间的临时展开覆盖只存在于 `PrimarySidebar` 运行时，清空搜索后回到搜索前状态。材料更多菜单位于阅读工具栏右侧，提供查看/导出材料批注、设置主要阅读材料、编辑材料元数据和移入回收站；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
 ### Command Registry
 
@@ -177,7 +177,7 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 22 切片**：书库文件夹树（独立 `LibraryFolderRepository` 的内存/Tauri Adapter 与真实 SQLite 持久化、稳定文件夹 ID、显式父子关系、五层和名称规则、生产树 UI、创建/取消/改名 Command、树展开状态恢复）。对应工单 #47，具体决策见 ADR-0034、ADR-0035、ADR-0036、ADR-0037。
 - **第 23 切片**：单本材料归类（`ReadingMaterial.folderId` 与 nullable SQLite 外键、导入默认未归类、文件夹叶子节点与稳定标题排序、“移动到……”菜单、移回未归类、内存/Tauri Repository 契约、回收站恢复保留归属）；完整备份随 SQLite 快照保留归属，文件夹删除继续由既有规则将材料转为未归类。对应工单 #48，具体决策见 ADR-0038。
 - **第 24 切片**：安全删除书库文件夹子树（一次明确确认、内存/Tauri `LibraryFolderRepository.deleteFolder` 契约、SQLite 事务内递归删除与活跃/回收站材料转未归类、展开状态清理、失败回滚和打开 ReadingView/用户数据保留）。对应工单 #49，具体决策见 ADR-0035、ADR-0038。
-- **第 25 切片**：书库文件夹树搜索与展开状态恢复（同时匹配文件夹/有效标题/作者、命中材料完整路径、祖先自动展开、搜索临时展开隔离与清空恢复；未归类折叠状态持久化；启动清理失效 FolderId；tree 键盘与触控语义）。对应工单 #50，具体决策见 ADR-0039。
+- **第 25 切片**：书库文件夹树搜索与展开状态恢复（同时匹配文件夹/有效标题/作者、命中材料完整路径、祖先自动展开、搜索临时展开隔离与清空恢复；未归类区块位于树下方、回收站上方且其折叠状态持久化；启动清理失效 FolderId；文件夹树键盘与触控语义）。对应工单 #50，具体决策见 ADR-0039。
 - **第 26 切片**：单本材料拖放归类快捷方式（桌面精确指针下从材料叶子节点拖到已有文件夹或未归类；与“移动到……”共用 `library.moveMaterial` Command；单材料载荷、无效目标、失败回滚、非拖放输入和重启归属测试）。对应工单 #51，具体决策见 ADR-0038。
 - **第 27 切片**：完整书库备份与树型书库总验收（manifest v2 明确保存文件夹/材料归属，恢复前校验树关系、外键和 Workspace 树展开引用；v1 旧备份安全降级为未归类；前端顶栏入口与 Rust 整库切换保持一致）。对应工单 #52，具体决策见 ADR-0037。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。

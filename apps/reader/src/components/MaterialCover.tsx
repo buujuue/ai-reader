@@ -103,6 +103,7 @@ export function MaterialCover({
         src={coverUrl}
         alt=""
         aria-hidden
+        draggable={false}
         onError={() => {
           if (objectUrlRef.current) {
             URL.revokeObjectURL(objectUrlRef.current);

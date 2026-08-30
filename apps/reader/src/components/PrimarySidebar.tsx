@@ -5,6 +5,7 @@ import {
   useState,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
 import {
@@ -40,7 +41,6 @@ import {
   type LibraryTreeSearchResult,
 } from '../domain/library/libraryFilter';
 import type { ReadingMaterial } from '../domain/library/material';
-import { formatFromSourceFileName, formatLabel } from '../domain/library/materialFormat';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
@@ -48,7 +48,6 @@ import {
   readLibraryMaterialDragMaterialId,
   writeLibraryMaterialDragPayload,
 } from './libraryDragDrop';
-import { MaterialCover } from './MaterialCover';
 import { SidebarPanelHeader } from './SidebarPanelHeader';
 
 type FolderEditorState =
@@ -61,7 +60,7 @@ interface MoveFolderOption {
   depth: number;
 }
 
-type LibraryTreeItemKind = 'folder' | 'material' | 'unfiled';
+type LibraryTreeItemKind = 'folder' | 'material';
 type LibraryDropState = 'valid' | 'same' | 'invalid';
 type LibraryDropDestination =
   | { kind: 'folder'; folderId: string }
@@ -76,6 +75,15 @@ interface LibraryTreeItem {
   parentKey: string | null;
   expandable: boolean;
   expanded: boolean;
+}
+
+interface PointerMaterialDragState {
+  pointerId: number;
+  materialId: string;
+  source: HTMLLIElement;
+  startX: number;
+  startY: number;
+  active: boolean;
 }
 
 function folderErrorMessage(error: unknown, fallback = '文件夹操作失败,请重试'): string {
@@ -99,7 +107,12 @@ function libraryDropStateLabel(state: LibraryDropState): string {
 
 function canDragLibraryMaterials(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
-  return !window.matchMedia('(pointer: coarse)').matches;
+  // 混合设备可能把主指针报告为 coarse,但仍连接了鼠标或触控板;
+  // 只要存在精确指针就保留拖放快捷方式,纯触控设备仍交给“移动到…”菜单。
+  return (
+    window.matchMedia('(any-pointer: fine)').matches ||
+    !window.matchMedia('(pointer: coarse)').matches
+  );
 }
 
 function flattenMoveFolderOptions(folders: readonly LibraryFolder[]): MoveFolderOption[] {
@@ -143,7 +156,7 @@ function flattenMoveFolderOptions(folders: readonly LibraryFolder[]): MoveFolder
 }
 
 /**
- * 书库侧栏:持久化文件夹树、未归类封面网格、标题/作者即时筛选 + 回收站区块。
+ * 书库侧栏:持久化文件夹树、底部未归类区块、标题/作者即时筛选 + 回收站区块。
  * 迭代规则:读取领域对象(ReadingMaterial),封面按可见范围懒加载;
  * 点击或键盘激活卡片均执行既有命令,不绕过工作区状态所有者。
  */
@@ -176,9 +189,12 @@ export function PrimarySidebar() {
     key: string;
     state: LibraryDropState;
   } | null>(null);
+  const [pointerMaterialDragActive, setPointerMaterialDragActive] = useState(false);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const treeItemRefs = useRef(new Map<string, HTMLLIElement>());
   const draggedMaterialIdRef = useRef<string | null>(null);
+  const pointerMaterialDragRef = useRef<PointerMaterialDragState | null>(null);
+  const suppressMaterialClickRef = useRef(false);
   const materialDraggingEnabled = canDragLibraryMaterials();
 
   const searchResult: LibraryTreeSearchResult = useMemo(
@@ -266,27 +282,6 @@ export function PrimarySidebar() {
       }
     };
     for (const folder of rootFolders) addFolder(folder, null);
-    if (queryKey === '' || unfiledMaterials.length > 0) {
-      items.push({
-        key: 'unfiled',
-        kind: 'unfiled',
-        parentKey: null,
-        expandable: unfiledMaterials.length > 0,
-        expanded: unfiledExpanded,
-      });
-      if (unfiledExpanded) {
-        for (const material of unfiledMaterials) {
-          items.push({
-            key: `material:${material.id}`,
-            kind: 'material',
-            materialId: material.id,
-            parentKey: 'unfiled',
-            expandable: false,
-            expanded: false,
-          });
-        }
-      }
-    }
     return items;
   }, [
     expandedFolderIds,
@@ -297,7 +292,6 @@ export function PrimarySidebar() {
     rootFolders,
     searchExpansionOverrides,
     searchResult,
-    unfiledExpanded,
     unfiledMaterials,
     visibleMaterialIds,
   ]);
@@ -335,7 +329,6 @@ export function PrimarySidebar() {
       event.preventDefault();
       if (item.kind === 'material' && item.materialId) handleOpen(item.materialId);
       else if (item.kind === 'folder' && item.folderId) toggleFolder(item.folderId, !item.expanded);
-      else if (item.kind === 'unfiled') toggleUnfiled(!item.expanded);
       return;
     }
     if (event.key === 'Escape') {
@@ -361,7 +354,6 @@ export function PrimarySidebar() {
       event.preventDefault();
       if (!item.expanded) {
         if (item.kind === 'folder' && item.folderId) toggleFolder(item.folderId, true);
-        else if (item.kind === 'unfiled') toggleUnfiled(true);
       } else {
         const child = visibleTreeItems[index + 1];
         if (child?.parentKey === item.key) focusTreeItem(child.key);
@@ -372,7 +364,6 @@ export function PrimarySidebar() {
       event.preventDefault();
       if (item.expandable && item.expanded) {
         if (item.kind === 'folder' && item.folderId) toggleFolder(item.folderId, false);
-        else if (item.kind === 'unfiled') toggleUnfiled(false);
       } else if (item.parentKey) {
         focusTreeItem(item.parentKey);
       }
@@ -529,8 +520,29 @@ export function PrimarySidebar() {
     return material.folderId === folderId ? 'same' : 'valid';
   };
 
+  const getPointerDropTarget = (
+    clientX: number,
+    clientY: number,
+  ): { key: string; destination: LibraryDropDestination } | null => {
+    const element = document.elementFromPoint(clientX, clientY);
+    if (!element) return null;
+    const folderElement = element.closest<HTMLElement>('[data-library-drop-target="folder"]');
+    const folderId = folderElement?.dataset.libraryFolderId;
+    if (folderElement && folderId) {
+      return {
+        key: `folder:${folderId}`,
+        destination: { kind: 'folder', folderId },
+      };
+    }
+    const unfiledElement = element.closest<HTMLElement>('[data-library-drop-target="unfiled"]');
+    if (unfiledElement) {
+      return { key: 'unfiled', destination: { kind: 'unfiled' } };
+    }
+    return null;
+  };
+
   const updateDropTarget = (
-    event: ReactDragEvent<HTMLLIElement>,
+    event: ReactDragEvent<HTMLElement>,
     key: string,
     destination: LibraryDropDestination,
   ) => {
@@ -541,7 +553,7 @@ export function PrimarySidebar() {
     event.dataTransfer.dropEffect = state === 'valid' ? 'move' : 'none';
   };
 
-  const handleDropLeave = (event: ReactDragEvent<HTMLLIElement>, key: string) => {
+  const handleDropLeave = (event: ReactDragEvent<HTMLElement>, key: string) => {
     event.stopPropagation();
     const relatedTarget = event.relatedTarget;
     if (
@@ -556,7 +568,7 @@ export function PrimarySidebar() {
   };
 
   const handleLibraryDrop = async (
-    event: ReactDragEvent<HTMLLIElement>,
+    event: ReactDragEvent<HTMLElement>,
     destination: LibraryDropDestination,
   ) => {
     event.preventDefault();
@@ -591,6 +603,106 @@ export function PrimarySidebar() {
     setDraggedMaterialId(material.id);
     setDropTarget(null);
     writeLibraryMaterialDragPayload(event.dataTransfer, material.id);
+  };
+
+  const handleMaterialPointerDown = (
+    event: ReactPointerEvent<HTMLLIElement>,
+    material: ReadingMaterial,
+  ) => {
+    if (
+      (event.pointerType !== 'mouse' && event.pointerType !== 'pen') ||
+      event.button !== 0 ||
+      pointerMaterialDragRef.current
+    ) {
+      return;
+    }
+
+    const source = event.currentTarget;
+    const drag: PointerMaterialDragState = {
+      pointerId: event.pointerId,
+      materialId: material.id,
+      source,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+    pointerMaterialDragRef.current = drag;
+    source.draggable = false;
+    setPointerMaterialDragActive(true);
+
+    const cleanup = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+      source.draggable = materialDraggingEnabled;
+      document.body.classList.remove('is-library-material-dragging');
+      setPointerMaterialDragActive(false);
+      if (pointerMaterialDragRef.current === drag) pointerMaterialDragRef.current = null;
+    };
+
+    const handlePointerMove = (nativeEvent: PointerEvent) => {
+      const current = pointerMaterialDragRef.current;
+      if (!current || current.pointerId !== nativeEvent.pointerId) return;
+      const distance = Math.hypot(
+        nativeEvent.clientX - current.startX,
+        nativeEvent.clientY - current.startY,
+      );
+      if (!current.active && distance < 6) return;
+      nativeEvent.preventDefault();
+      if (!current.active) {
+        current.active = true;
+        suppressMaterialClickRef.current = true;
+        document.body.classList.add('is-library-material-dragging');
+        setDraggedMaterialId(current.materialId);
+      }
+      const pointerTarget = getPointerDropTarget(nativeEvent.clientX, nativeEvent.clientY);
+      if (!pointerTarget) {
+        setDropTarget(null);
+        return;
+      }
+      setDropTarget({
+        key: pointerTarget.key,
+        state: resolveDropState(current.materialId, pointerTarget.destination),
+      });
+    };
+
+    const handlePointerUp = (nativeEvent: PointerEvent) => {
+      const current = pointerMaterialDragRef.current;
+      if (!current || current.pointerId !== nativeEvent.pointerId) return;
+      const wasActive = current.active;
+      cleanup();
+      if (!wasActive) return;
+      nativeEvent.preventDefault();
+      const pointerTarget = getPointerDropTarget(nativeEvent.clientX, nativeEvent.clientY);
+      const destination = pointerTarget?.destination;
+      const state = destination ? resolveDropState(current.materialId, destination) : 'invalid';
+      window.setTimeout(() => {
+        suppressMaterialClickRef.current = false;
+      }, 0);
+      if (state !== 'valid' || !destination) {
+        clearMaterialDrag();
+        return;
+      }
+      const folderId = destination.kind === 'folder' ? destination.folderId : null;
+      void handleMoveMaterial(current.materialId, folderId).finally(clearMaterialDrag);
+    };
+
+    const handlePointerCancel = (nativeEvent: PointerEvent) => {
+      const current = pointerMaterialDragRef.current;
+      if (!current || current.pointerId !== nativeEvent.pointerId) return;
+      const wasActive = current.active;
+      cleanup();
+      if (wasActive) {
+        window.setTimeout(() => {
+          suppressMaterialClickRef.current = false;
+        }, 0);
+      }
+      clearMaterialDrag();
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
   };
 
   const handleMaterialDragEnd = (event: ReactDragEvent<HTMLLIElement>) => {
@@ -713,7 +825,7 @@ export function PrimarySidebar() {
     level: number,
     parentKey: string | null,
   ): ReactNode => {
-    const format = formatFromSourceFileName(material.sourceFileName);
+    const isUnfiledMaterial = parentKey === 'unfiled';
     const treeKey = `material:${material.id}`;
     const dropState = dropTarget?.key === treeKey ? dropTarget.state : undefined;
     const materialPath = searchResult.materialFolderPaths.get(material.id) ?? ['未归类'];
@@ -727,21 +839,23 @@ export function PrimarySidebar() {
           else treeItemRefs.current.delete(treeKey);
         }}
         className="library-material-tree-node"
-        role="treeitem"
-        aria-level={level}
-        aria-label={`${material.title}${showSearchPath ? `, 路径 ${accessiblePath}` : ''}`}
-        tabIndex={activeTreeItemKey === treeKey ? 0 : -1}
+        data-material-display={isUnfiledMaterial ? 'unfiled' : 'folder'}
+        role={isUnfiledMaterial ? undefined : 'treeitem'}
+        aria-level={isUnfiledMaterial ? undefined : level}
+        aria-label={`${material.title}${material.managedFileAvailable === false ? '，正文不可用' : ''}${showSearchPath ? `，路径 ${accessiblePath}` : ''}`}
+        tabIndex={isUnfiledMaterial ? undefined : activeTreeItemKey === treeKey ? 0 : -1}
         data-drop-state={dropState}
-        draggable={materialDraggingEnabled}
+        draggable={materialDraggingEnabled && !pointerMaterialDragActive}
         data-dragging={draggedMaterialId === material.id ? 'true' : undefined}
-        onFocus={() => setFocusedTreeItemKey(treeKey)}
+        onFocus={isUnfiledMaterial ? undefined : () => setFocusedTreeItemKey(treeKey)}
+        onPointerDown={(event) => handleMaterialPointerDown(event, material)}
         onDragStart={(event) => handleMaterialDragStart(event, material)}
         onDragEnd={handleMaterialDragEnd}
         onDragEnter={(event) => updateDropTarget(event, treeKey, { kind: 'invalid' })}
         onDragOver={(event) => updateDropTarget(event, treeKey, { kind: 'invalid' })}
         onDragLeave={(event) => handleDropLeave(event, treeKey)}
         onDrop={(event) => void handleLibraryDrop(event, { kind: 'invalid' })}
-        onKeyDown={(event) => handleTreeItemKeyDown(event, {
+        onKeyDown={isUnfiledMaterial ? undefined : (event) => handleTreeItemKeyDown(event, {
           key: treeKey,
           kind: 'material',
           materialId: material.id,
@@ -751,7 +865,9 @@ export function PrimarySidebar() {
         })}
       >
         <div
-          className="group relative library-material-tree-item"
+          className={isUnfiledMaterial
+            ? 'relative library-unfiled-material-shell'
+            : 'library-folder-material-shell'}
           onPointerEnter={() => {
             focusMaterial(material.id);
             setMoreMenuOpen(false);
@@ -761,6 +877,10 @@ export function PrimarySidebar() {
           <button
             type="button"
             onClick={() => {
+              if (suppressMaterialClickRef.current) {
+                suppressMaterialClickRef.current = false;
+                return;
+              }
               focusMaterial(material.id);
               handleOpen(material.id);
             }}
@@ -781,38 +901,42 @@ export function PrimarySidebar() {
                 : `打开 ${material.title}`
             }
             aria-label={`打开 ${material.title}`}
-            className="flex w-full flex-col gap-1.5 rounded-md text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+            className={isUnfiledMaterial ? 'library-unfiled-material' : 'library-folder-material'}
           >
-            <MaterialCover materialId={material.id} title={material.title} />
-            <div className="min-w-0">
-              <p className="truncate text-[11px] font-medium text-zinc-300 group-hover:text-sky-300">
-                {material.title}
-              </p>
-              <p className="truncate text-[10px] text-zinc-500">
-                {material.author ?? '未知作者'}
-              </p>
-              {showSearchPath ? (
-                <p className="library-material-path truncate" title={`路径：${accessiblePath}`}>
-                  路径：{accessiblePath}
-                </p>
-              ) : null}
-              <p
-                className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium tracking-wide ${
-                  material.managedFileAvailable === false
-                    ? 'text-amber-300'
-                    : 'uppercase text-zinc-500'
-                }`}
-              >
-                {material.managedFileAvailable === false ? (
-                  <>
-                    <FileWarning size={10} aria-hidden />
-                    正文不可用
-                  </>
-                ) : (
-                  formatLabel(format)
-                )}
-              </p>
-            </div>
+            {isUnfiledMaterial ? (
+              <>
+                <div className="min-w-0 flex-1">
+                  <p className="library-unfiled-material-title truncate text-[11px] font-medium text-zinc-400">
+                    {material.title}
+                  </p>
+                  <p className="truncate text-[10px] text-zinc-600">
+                    {material.author ?? '未知作者'}
+                  </p>
+                  {showSearchPath ? (
+                    <p className="library-material-path truncate" title={`路径：${accessiblePath}`}>
+                      路径：{accessiblePath}
+                    </p>
+                  ) : null}
+                  {material.managedFileAvailable === false ? (
+                    <p className="mt-0.5 flex items-center gap-1 text-[10px] font-medium text-amber-300">
+                      <FileWarning size={10} aria-hidden />
+                      正文不可用
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <span className="library-folder-material-copy">
+                <span className="library-folder-material-title" title={material.title}>
+                  {material.title}
+                </span>
+                {showSearchPath ? (
+                  <span className="library-folder-material-path" title={`路径：${accessiblePath}`}>
+                    路径：{accessiblePath}
+                  </span>
+                ) : null}
+              </span>
+            )}
           </button>
           {dropState ? (
             <span className="library-drop-feedback" role="status" aria-live="polite">
@@ -856,6 +980,8 @@ export function PrimarySidebar() {
         aria-expanded={expanded}
         tabIndex={activeTreeItemKey === treeKey ? 0 : -1}
         data-drop-state={dropState}
+        data-library-drop-target="folder"
+        data-library-folder-id={folder.id}
         onFocus={() => setFocusedTreeItemKey(treeKey)}
         onDragEnter={(event) => updateDropTarget(event, treeKey, { kind: 'folder', folderId: folder.id })}
         onDragOver={(event) => updateDropTarget(event, treeKey, { kind: 'folder', folderId: folder.id })}
@@ -924,7 +1050,7 @@ export function PrimarySidebar() {
             {folderMaterials.map((material) => renderMaterialNode(material, level + 1, treeKey))}
             {editingChild ? renderFolderEditor(level + 1) : null}
             {children.length === 0 && folderMaterials.length === 0 ? (
-              <li className="library-tree-empty">文件夹为空</li>
+              <li className="library-tree-empty library-folder-empty">文件夹为空</li>
             ) : null}
           </ul>
         ) : null}
@@ -1119,72 +1245,6 @@ export function PrimarySidebar() {
         <ul className="library-tree" role="tree" aria-label="书库文件夹树">
           {folderEditor?.kind === 'create' && folderEditor.parentId === null ? renderFolderEditor(1) : null}
           {rootFolders.map((folder) => renderFolderNode(folder, 1, null))}
-          {queryKey === '' || unfiledMaterials.length > 0 ? (
-            <li
-              className="library-unfiled-tree-item"
-              role="treeitem"
-              aria-level={1}
-              aria-label="未归类材料"
-              aria-expanded={unfiledExpanded}
-              tabIndex={activeTreeItemKey === 'unfiled' ? 0 : -1}
-              data-drop-state={unfiledDropState}
-              ref={(element) => {
-                if (element) treeItemRefs.current.set('unfiled', element);
-                else treeItemRefs.current.delete('unfiled');
-              }}
-              onFocus={() => setFocusedTreeItemKey('unfiled')}
-              onDragEnter={(event) => updateDropTarget(event, 'unfiled', { kind: 'unfiled' })}
-              onDragOver={(event) => updateDropTarget(event, 'unfiled', { kind: 'unfiled' })}
-              onDragLeave={(event) => handleDropLeave(event, 'unfiled')}
-              onDrop={(event) => void handleLibraryDrop(event, { kind: 'unfiled' })}
-              onKeyDown={(event) => handleTreeItemKeyDown(event, {
-                key: 'unfiled',
-                kind: 'unfiled',
-                parentKey: null,
-                expandable: unfiledMaterials.length > 0,
-                expanded: unfiledExpanded,
-              })}
-            >
-              <button
-                type="button"
-                className="library-unfiled-row"
-                aria-label={`${unfiledExpanded ? '收起' : '展开'}未归类材料`}
-                aria-expanded={unfiledExpanded}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
-                    event.stopPropagation();
-                  }
-                }}
-                onClick={() => toggleUnfiled(!unfiledExpanded)}
-              >
-                <ChevronRight className={unfiledExpanded ? 'library-folder-chevron expanded' : 'library-folder-chevron'} size={14} aria-hidden />
-                {unfiledExpanded ? <FolderOpen size={16} aria-hidden /> : <Folder size={16} aria-hidden />}
-                <span>未归类</span>
-                {unfiledDropState ? (
-                  <span className="library-drop-feedback" role="status" aria-live="polite">
-                    {libraryDropStateLabel(unfiledDropState)}
-                  </span>
-                ) : null}
-              </button>
-              {unfiledExpanded && (unfiledMaterials.length > 0 || materials.length === 0) ? (
-                <ul className="library-material-group" role="group">
-                  {materials.length === 0 ? (
-                    <li className="library-tree-empty">
-                      <p>尚未导入阅读材料</p>
-                      <span>点击右上角导入按钮选择 EPUB、PDF 或 Markdown。外部原文件不会被修改或删除。</span>
-                    </li>
-                  ) : unfiledMaterials.length === 0 && queryKey !== '' ? (
-                    <li className="library-tree-empty">
-                      <p>没有匹配的材料</p>
-                      <span>换个文件夹、标题或作者试试。</span>
-                    </li>
-                  ) : (
-                    unfiledMaterials.map((material) => renderMaterialNode(material, 2, 'unfiled'))
-                  )}
-                </ul>
-              ) : null}
-            </li>
-          ) : null}
           {queryKey !== '' && visibleFolderIds.size === 0 && unfiledMaterials.length === 0 ? (
             <li className="library-tree-empty">
               <p>没有匹配的材料</p>
@@ -1194,13 +1254,56 @@ export function PrimarySidebar() {
         </ul>
       </div>
 
+      {queryKey === '' || unfiledMaterials.length > 0 ? (
+        <div
+          className="border-t border-zinc-800 library-unfiled-section"
+          data-drop-state={unfiledDropState}
+          data-library-drop-target="unfiled"
+          onDragEnter={(event) => updateDropTarget(event, 'unfiled', { kind: 'unfiled' })}
+          onDragOver={(event) => updateDropTarget(event, 'unfiled', { kind: 'unfiled' })}
+          onDragLeave={(event) => handleDropLeave(event, 'unfiled')}
+          onDrop={(event) => void handleLibraryDrop(event, { kind: 'unfiled' })}
+        >
+          <button
+            type="button"
+            onClick={() => toggleUnfiled(!unfiledExpanded)}
+            aria-expanded={unfiledExpanded}
+            aria-label={`${unfiledExpanded ? '收起' : '展开'}未归类材料`}
+            className="library-bottom-section-toggle flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
+          >
+            <FolderOpen size={14} aria-hidden />
+            未归类
+            <span className="ml-auto rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+              {unfiledMaterials.length}
+            </span>
+            {unfiledDropState ? (
+              <span className="library-drop-feedback" role="status" aria-live="polite">
+                {libraryDropStateLabel(unfiledDropState)}
+              </span>
+            ) : null}
+          </button>
+          {unfiledExpanded && (unfiledMaterials.length > 0 || materials.length === 0) ? (
+            <ul className="max-h-56 overflow-y-auto border-t border-zinc-800/60 px-2 py-1">
+              {materials.length === 0 ? (
+                <li className="library-tree-empty">
+                  <p>尚未导入阅读材料</p>
+                  <span>点击右上角导入按钮选择 EPUB、PDF 或 Markdown。外部原文件不会被修改或删除。</span>
+                </li>
+              ) : (
+                unfiledMaterials.map((material) => renderMaterialNode(material, 0, 'unfiled'))
+              )}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
       {trashedMaterials.length > 0 ? (
         <div className="border-t border-zinc-800">
           <button
             type="button"
             onClick={() => setShowTrash((visible) => !visible)}
             aria-expanded={showTrash}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
+            className="library-bottom-section-toggle flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
           >
             <Archive size={14} aria-hidden />
             回收站
