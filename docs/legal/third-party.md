@@ -74,6 +74,8 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - 工单 #35 的范围传输采用 Readest `packages/foliate-js/pdf.js` 的并发队列思路作为行为参考，未直接复制其代码；AI Reader 保持自己的 `ManagedFileSource` 缓存、PDF.js 窄接口与生命周期实现。
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/pdfjs-dist@5.7.284/node_modules/pdfjs-dist/LICENSE`。
 
+- Issue #57 的跨格式 Runtime 缓存总验收未引入新的第三方依赖，也未直接移植 Readest 代码；真实 PDF.js/Canvas/范围读取证据继续使用上述 `pdfjs-dist` 记录及本项目 `domain/reader/pdf/` 的独立实现。
+
 ## marked 引入记录
 
 - 已于第 7 个切片(Markdown 安全导入并阅读, 工单 #17)经 npm 引入上游 `marked@18`(MIT), 来源 [markedjs/marked](https://github.com/markedjs/marked)。

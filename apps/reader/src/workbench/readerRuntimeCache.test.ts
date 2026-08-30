@@ -40,7 +40,7 @@ describe('ReaderRuntimeCache', () => {
     expect(key).toContain('view-a');
     expect(key).toContain('material-a');
     expect(key).toContain('fingerprint-a');
-    expect(key).toContain('reader-runtime-cache-v1');
+    expect(key).toContain('reader-runtime-cache-v2');
     expect(buildReaderRuntimeCacheKey({ ...base, viewId: 'view-b' })).not.toBe(key);
     expect(buildReaderRuntimeCacheKey({ ...base, materialId: 'material-b' })).not.toBe(key);
     expect(buildReaderRuntimeCacheKey({ ...base, contentFingerprint: 'fingerprint-b' })).not.toBe(key);
@@ -48,10 +48,50 @@ describe('ReaderRuntimeCache', () => {
     expect(buildReaderRuntimeCacheKey({ ...base, contentAlgorithmVersion: 'future-v2' })).not.toBe(key);
   });
 
-  it('只准入 EPUB/Markdown，PDF 明确拒绝缓存', () => {
+  it('PDF 也可在当前页资源预算内进入缓存', () => {
     const cache = new ReaderRuntimeCache<{ id: string }>({ budget: makeBudget() });
     const result = cache.suspend({ ...makeEntry('pdf'), format: 'pdf' });
-    expect(result).toEqual({ admitted: false, reason: 'unsupported-format', evicted: [] });
+    expect(result).toEqual({ admitted: true, reason: 'admitted', evicted: [] });
+    expect(cache.getEntries()[0]?.format).toBe('pdf');
+  });
+
+  it('PDF 挂起时超过 Canvas 或解码页预算会安全拒绝', () => {
+    const cache = new ReaderRuntimeCache<{ id: string }>({
+      budget: makeBudget({ maxSuspendedCanvases: 1, maxSuspendedDecodedPages: 1 }),
+    });
+    const result = cache.suspend({
+      ...makeEntry('large-pdf'),
+      format: 'pdf',
+      usage: {
+        iframeCount: 0,
+        canvasCount: 2,
+        decodedPageCount: 2,
+        rangeCacheBytes: 0,
+        estimatedBytes: 1024,
+      },
+    });
+    expect(result).toMatchObject({ admitted: false, reason: 'resource-budget' });
+    expect(cache.getEntries()).toHaveLength(0);
+  });
+
+  it('挂起时仍有在途范围读取会安全退化为重建', () => {
+    const cache = new ReaderRuntimeCache<{ id: string }>({
+      budget: makeBudget({ maxSuspendedInFlightRangeReads: 0 }),
+    });
+    const result = cache.suspend({
+      ...makeEntry('pdf-in-flight'),
+      format: 'pdf',
+      usage: {
+        iframeCount: 0,
+        canvasCount: 1,
+        decodedPageCount: 1,
+        rangeCacheBytes: 0,
+        estimatedBytes: 1024,
+        inFlightRangeReadCount: 1,
+      },
+    });
+
+    expect(result).toMatchObject({ admitted: false, reason: 'resource-budget' });
     expect(cache.getEntries()).toHaveLength(0);
   });
 

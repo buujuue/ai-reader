@@ -43,6 +43,12 @@ export interface ConcurrentRangeTransport {
   runtime: ConcurrentRangeRuntime;
   /** 取消排队范围并忽略已在途读取的结果。 */
   cancel(): void;
+  /** 暂停挂起 Runtime 的排队读取；已在途读取安全完成，恢复后可继续请求。 */
+  pause(): void;
+  /** 恢复挂起 Runtime 的范围请求调度。 */
+  resume(): void;
+  /** 等待已经暂停的传输收敛到没有在途读取；超时返回 false。 */
+  waitForIdle(timeoutMs?: number): Promise<boolean>;
   /** 订阅底层范围读取失败;失败后传输会停止提交后续数据。 */
   onFailure(listener: (error: PdfRangeReadError) => void): () => void;
 }
@@ -83,8 +89,16 @@ export function createConcurrentRangeTransport(
   let active = 0;
   const queue: Array<[number, number]> = [];
   let cancelled = false;
+  let paused = false;
   let failure: PdfRangeReadError | null = null;
   const failureListeners = new Set<(error: PdfRangeReadError) => void>();
+  const idleWaiters = new Set<(settled: boolean) => void>();
+
+  const resolveIdleWaiters = (): void => {
+    if (active !== 0) return;
+    for (const resolve of idleWaiters) resolve(true);
+    idleWaiters.clear();
+  };
 
   const baseAbort = transport.abort;
   const cancel = (): void => {
@@ -106,7 +120,7 @@ export function createConcurrentRangeTransport(
   };
 
   const pump = (): void => {
-    while (!cancelled && active < maxConcurrent && queue.length > 0) {
+    while (!cancelled && !paused && active < maxConcurrent && queue.length > 0) {
       const [begin, end] = queue.shift() as [number, number];
       active += 1;
       file
@@ -124,6 +138,7 @@ export function createConcurrentRangeTransport(
         })
         .finally(() => {
           active -= 1;
+          resolveIdleWaiters();
           pump();
         });
     }
@@ -159,6 +174,35 @@ export function createConcurrentRangeTransport(
       },
     },
     cancel,
+    pause: () => {
+      if (cancelled) return;
+      paused = true;
+    },
+    resume: () => {
+      if (cancelled) return;
+      paused = false;
+      pump();
+    },
+    waitForIdle(timeoutMs = 1_000) {
+      if (active === 0) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+          timer = null;
+          idleWaiters.delete(resolveIdle);
+          resolve(false);
+        }, Math.max(0, timeoutMs));
+        const resolveIdle = (settled: boolean): void => {
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          idleWaiters.delete(resolveIdle);
+          resolve(settled);
+        };
+        idleWaiters.add(resolveIdle);
+        resolveIdleWaiters();
+      });
+    },
     onFailure(listener) {
       if (failure) {
         listener(failure);

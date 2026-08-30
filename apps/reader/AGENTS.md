@@ -23,7 +23,7 @@ pnpm verify:ipados # 校验 iPadOS 原生核心冒烟配置
 pnpm verify:android # 校验 Android 平板原生核心冒烟配置
 pnpm test:real-epub-p0 # 真实 Chrome 验证 EPUB 2/3 P0 阅读矩阵
 pnpm test:reading-performance # 真实 Chrome 验证大型 EPUB/PDF 范围读取性能
-pnpm test:reader-runtime-cache # 真实 Chrome 验证 EPUB/Markdown Reader Runtime A→B→A 缓存基线
+pnpm test:reader-runtime-cache # 真实 Chrome 验证 EPUB/PDF/Markdown Reader Runtime 总验收
 pnpm test         # Vitest
 pnpm typecheck    # TypeScript 严格模式类型检查
 pnpm tauri dev    # Vite + Tauri 完整桌面开发
@@ -34,6 +34,6 @@ pnpm tauri dev    # Vite + Tauri 完整桌面开发
 ## 约定
 
 - 新增能力必须复用既有 Command Registry、Repository Interface 与 typed Tauri 命令边界，不另起交互或持久化通道；文件夹删除必须通过 `library.deleteFolder` 的确认/事务语义；TS/Rust 职责划分见根 `AGENTS.md` 的“架构边界”。
-- 标签切换由 `reader.activateView` 统一编排：已完成的 EPUB/Markdown Runtime 按 ReadingView 身份进入 ADR-0040 的单槽位有界缓存；回收站只清除挂起对象，材料版本替换/重新关联/永久删除和整库恢复则关闭相关活对象。
+- 标签切换由 `reader.activateView` 统一编排：已完成的 EPUB/Markdown/PDF Runtime 按 ReadingView 身份进入 ADR-0040 的单槽位有界缓存；PDF 挂起只保留 PDF.js 文档和当前页的预算内结果，并断开观察器、输入与后台调度；回收站只清除挂起对象，材料版本替换/重新关联/永久删除和整库恢复则关闭相关活对象。
 - Markdown 源码模式切换由 Markdown Command 编排：CodeMirror 独占可见编辑区时挂起 Foliate，缓冲区、正式版本和恢复快照变化先使全部相关 Runtime 失效，再按共享会话文本恢复非源码视图。
 - 实现任何功能前，先看 Readest 对应部分怎么实现；有能直接复制的代码直接复制移植，尽量少重复造轮子，并按根 `AGENTS.md` 的“重点参考对象：Readest”完成许可登记。

@@ -27,6 +27,7 @@ const tauriImportAdapter = read('apps/reader/src/domain/library/tauriImportRepos
 const tauriCommands = read('apps/reader/src-tauri/src/lib.rs');
 const readerCommands = read('apps/reader/src/workbench/readerCommands.ts');
 const performanceScript = read('apps/reader/scripts/verify-reading-performance.mjs');
+const runtimeCacheScript = read('apps/reader/scripts/verify-reader-runtime-cache.mjs');
 const appStyles = read('apps/reader/src/index.css');
 
 const checks = [
@@ -117,6 +118,21 @@ const checks = [
     pass:
       workflow.includes('pnpm --dir apps/reader test:reading-performance') &&
       workflow.includes('ai-reader-reading-performance-${{ github.sha }}'),
+  },
+  {
+    name: 'Issue #57 跨格式 Reader Runtime 总验收入口已接入',
+    pass:
+      runtimeCacheScript.includes('issue: 57') &&
+      runtimeCacheScript.includes("schemaVersion: 'reader-runtime-cache.v2'") &&
+      runtimeCacheScript.includes('EPUB↔EPUB') &&
+      runtimeCacheScript.includes('Markdown↔Markdown') &&
+      runtimeCacheScript.includes('PDF↔PDF') &&
+      runtimeCacheScript.includes('formatMatrix') &&
+      runtimeCacheScript.includes('shutdownCleanup') &&
+      runtimeCacheScript.includes('buildLargePdfFixture') &&
+      runtimeCacheScript.includes('pdfDocumentLoads') &&
+      workflow.includes('pnpm --dir apps/reader test:reader-runtime-cache') &&
+      workflow.includes('ai-reader-reader-runtime-cache-${{ github.sha }}'),
   },
   {
     name: 'TypeScript Repository 与 Tauri Adapter 共用契约测试',

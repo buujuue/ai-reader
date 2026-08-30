@@ -17,8 +17,9 @@
  */
 import { createServer } from 'node:http';
 import { execSync, spawn } from 'node:child_process';
-import { createReadStream, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { createReadStream, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import puppeteer from 'puppeteer-core';
 
 const APP_URL = process.env.READING_PERFORMANCE_APP_URL ?? 'http://localhost:5173';
@@ -26,6 +27,7 @@ const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Applic
 const MODE = process.env.READING_PERFORMANCE_MODE ?? 'browser';
 const TAURI_DEBUG_URL = process.env.READING_PERFORMANCE_TAURI_DEBUG_URL ?? '';
 const LOCAL_PDF_PATH = process.env.READING_PERFORMANCE_PDF_PATH ?? '';
+const VITE_CLI = resolve(process.cwd(), 'node_modules/vite/bin/vite.js');
 const RUN_COUNT = parsePositiveInteger(process.env.READING_PERFORMANCE_RUNS ?? '3', '测量次数');
 const OUTPUT = resolve(
   process.env.READING_PERFORMANCE_OUTPUT ?? 'scripts/artifacts/reading-performance.json',
@@ -45,6 +47,8 @@ let browser = null;
 let baselineBrowser = null;
 let connectedToExternalBrowser = false;
 let failureReport = null;
+let temporaryVariantPdfPath = null;
+let activeAppPage = null;
 
 function parsePositiveInteger(value, label) {
   const parsed = Number(value);
@@ -139,11 +143,11 @@ async function launchBrowser() {
     throw new Error('远程调试浏览器中没有找到 Tauri WebView 页面');
   }
 
-  devServerProcess = spawn(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['dev', '--host'], {
+  devServerProcess = spawn(process.execPath, [VITE_CLI, '--host'], {
     cwd: process.cwd(),
     stdio: 'ignore',
     windowsHide: true,
-    shell: process.platform === 'win32',
+    shell: false,
   });
   await waitForServer(APP_URL);
   browser = await puppeteer.launch({
@@ -174,6 +178,7 @@ function killDevServer() {
     processToKill.kill();
     return;
   }
+  processToKill.kill();
   try {
     execSync(`taskkill /F /T /PID ${processToKill.pid}`, { stdio: 'ignore' });
   } catch {
@@ -198,6 +203,17 @@ async function closeBaselineBrowser() {
   const current = baselineBrowser;
   baselineBrowser = null;
   await current.close();
+}
+
+function removeTemporaryVariantPdf() {
+  if (!temporaryVariantPdfPath) return;
+  const path = temporaryVariantPdfPath;
+  temporaryVariantPdfPath = null;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* 临时文件已经被清理。 */
+  }
 }
 
 function writeFailureArtifact(error) {
@@ -231,6 +247,18 @@ function sanitizeError(error) {
     .slice(0, 2000);
 }
 
+async function flushRuntimeInPage(page) {
+  if (!page) return;
+  await page.evaluate(async () => {
+    try {
+      const { flushAndCloseAllReaderViews } = await import('/src/workbench/readerCommands.ts');
+      await flushAndCloseAllReaderViews();
+    } catch {
+      /* 页面已关闭或应用尚未完成初始化;关闭浏览器仍会释放 WebView 运行时。 */
+    }
+  }).catch(() => undefined);
+}
+
 async function main() {
   if (MODE !== 'browser' && MODE !== 'tauri') {
     throw new Error(`READING_PERFORMANCE_MODE 不支持:${MODE}`);
@@ -241,9 +269,18 @@ async function main() {
   if (LOCAL_PDF_PATH) {
     sampleServer = null;
     statSync(LOCAL_PDF_PATH);
+    if (MODE === 'tauri') {
+      const source = readFileSync(LOCAL_PDF_PATH);
+      const variant = Buffer.alloc(source.length + 1);
+      source.copy(variant);
+      variant[variant.length - 1] = 0;
+      temporaryVariantPdfPath = join(tmpdir(), `ai-reader-pdf-cache-variant-${process.pid}.pdf`);
+      writeFileSync(temporaryVariantPdfPath, variant);
+    }
   }
 
   const page = await launchBrowser();
+  activeAppPage = page;
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(sanitizeError(error)));
   if (MODE === 'browser') {
@@ -261,12 +298,16 @@ async function main() {
       maxPeakMemoryBytes: MAX_PEAK_MEMORY_BYTES,
       minGeneratedRangeRequests: MIN_GENERATED_RANGE_REQUESTS,
       minGeneratedReadRatio: MIN_GENERATED_READ_RATIO,
+      variantPdfPath: null,
     });
     if (pageErrors.length > 0) throw new Error(`页面错误:${pageErrors.join('; ')}`);
     const browserDescription = await getBrowserDescription();
+    await flushRuntimeInPage(page);
     await closeBrowser();
+    activeAppPage = null;
     await closeSampleServer();
     killDevServer();
+    removeTemporaryVariantPdf();
     const output = {
       ...result,
       recordedAt: new Date().toISOString(),
@@ -324,6 +365,7 @@ async function main() {
     maxPeakMemoryBytes: MAX_PEAK_MEMORY_BYTES,
     minGeneratedRangeRequests: MIN_GENERATED_RANGE_REQUESTS,
     minGeneratedReadRatio: MIN_GENERATED_READ_RATIO,
+    variantPdfPath: temporaryVariantPdfPath,
     enforceManagedRatio: false,
   });
   if (pageErrors.length > 0) throw new Error(`Tauri WebView 页面错误:${pageErrors.join('; ')}`);
@@ -337,8 +379,11 @@ async function main() {
   if (managedToChromeRatio === null || managedToChromeRatio > 2) {
     throw new Error(`Windows Tauri 首屏中位数超过 Chrome File 基线 2 倍:${managedToChromeRatio}`);
   }
+  await flushRuntimeInPage(page);
   await closeBrowser();
+  activeAppPage = null;
   killDevServer();
+  removeTemporaryVariantPdf();
   const output = {
     ...tauriResult,
     runs: tauriResult.runs.map((run, index) => ({
@@ -392,6 +437,8 @@ function printSummary(result) {
         managedMedianFirstVisibleMs: managed?.medianFirstVisibleMs ?? null,
         managedToDirectMedianRatio: result.checks?.managedToDirectMedianRatio ?? null,
         pdfDocumentLoadsPerRun: result.checks?.pdfDocumentLoadsPerRun ?? null,
+        pdfRuntimeCacheHit: result.checks?.pdfRuntimeCacheHit ?? null,
+        pdfRuntimeCacheReadsNoRangesOnReturn: result.checks?.pdfRuntimeCacheReadsNoRangesOnReturn ?? null,
         maxRangeBytes: result.checks?.maxRangeBytes ?? null,
         totalReadRatio: result.checks?.maxTotalReadRatio ?? null,
         cleanup: result.cleanup,
@@ -401,7 +448,7 @@ function printSummary(result) {
     ),
   );
   console.log(`记录: ${OUTPUT}`);
-  console.log('通过: 首屏包含有效 Canvas 与文字层/无文字状态,打开只创建一份 PDF.js 文档,范围读取与滚动窗口均未读取整本文件。');
+  console.log('通过: 首屏包含有效 Canvas 与文字层/无文字状态,单次打开只创建一份 PDF.js 文档,并且 A→B→A 回切复用 PDF.js 文档且不新增范围读取。');
 }
 
 /** 运行在真实 Chrome 或 Tauri WebView 内的性能测量函数。 */
@@ -418,6 +465,7 @@ async function runPerformanceMeasurements(config) {
     maxPeakMemoryBytes,
     minGeneratedRangeRequests,
     minGeneratedReadRatio,
+    variantPdfPath,
     enforceManagedRatio = mode !== 'tauri',
   } = config;
   const [
@@ -741,11 +789,13 @@ async function runPerformanceMeasurements(config) {
     useWorkspaceStore: workspace,
     maxRangeBytes: rangeLimit,
     maxPeakMemoryBytes: memoryLimit,
+    variantPdfPath: secondPdfPath,
   }) {
     const tracker = createRangeTracker();
     const pdfLib = instrumentPdfLib(await getPdfLib(), tracker);
     let services;
     let material;
+    let secondaryMaterial;
     let restoreFetch = () => undefined;
     let transport = 'browser-managed-source';
     if (scenarioMode === 'tauri') {
@@ -753,6 +803,18 @@ async function runPerformanceMeasurements(config) {
       services = makeServices({ pdfLib });
       material = (await services.importRepository.listMaterials()).find((candidate) => candidate.id === targetMaterialId);
       if (!material) throw new Error(`Tauri 书库中没有刚导入的 PDF:${path ? '<explicit-local-pdf>' : '<sample>'}`);
+      if (!secondPdfPath) throw new Error('Tauri PDF 缓存验收缺少临时变体路径');
+      const secondaryStaged = await services.importRepository.stageImport(secondPdfPath);
+      const secondaryBytes = await services.importRepository.readStagedFile(secondaryStaged);
+      const secondaryInspection = await inspectPdf(
+        createPdfSourceFromBytes(secondaryBytes),
+        await getPdfLib(),
+        { includeCover: false },
+      );
+      secondaryMaterial = await services.importRepository.commitImport(secondaryStaged, {
+        ...secondaryInspection.metadata,
+        title: `${secondaryInspection.metadata.title || '大型 PDF 性能样本'}（缓存变体）`,
+      });
       transport = 'windows-managed-range';
     } else {
       const sources = new Map();
@@ -760,6 +822,15 @@ async function runPerformanceMeasurements(config) {
       const baseRepository = makeRepository(sources);
       const staged = await baseRepository.stageImport('performance.pdf');
       material = await baseRepository.commitImport(staged, { title: '大型 PDF 性能样本', author: null, language: 'zh' });
+      const variantBytes = new Uint8Array(bytes.length + 1);
+      variantBytes.set(bytes);
+      addSource(sources, 'performance-variant.pdf', variantBytes);
+      const secondaryStaged = await baseRepository.stageImport('performance-variant.pdf');
+      secondaryMaterial = await baseRepository.commitImport(secondaryStaged, {
+        title: '大型 PDF 性能样本（缓存变体）',
+        author: null,
+        language: 'zh',
+      });
       const openManagedFileSource = baseRepository.openManagedFileSource.bind(baseRepository);
       baseRepository.openManagedFileSource = async (materialId) => {
         const source = await openManagedFileSource(materialId);
@@ -774,6 +845,7 @@ async function runPerformanceMeasurements(config) {
     workspace.getState().resetToDefault();
     runtime.setState({ documents: new Map(), documentStates: new Map() });
     const container = makeContainer('pdf-performance-reader-command');
+    let secondaryContainer = null;
     let viewId = null;
     try {
       tracker.startPhase();
@@ -816,18 +888,71 @@ async function runPerformanceMeasurements(config) {
       const scrollWindow = tracker.finishPhase({ elapsedMs: performance.now() - jumpStarted });
       scrollWindow.activeCanvasCount = countActiveCanvases(container);
       scrollWindow.pageGetsForJump = tracker.pageGets - getsBeforeJump;
-      const total = tracker.finishTotal(bytes.byteLength, rangeLimit);
-      total.binaryRangeResponses = tracker.binaryRangeResponses;
-      total.nonBinaryRangeResponses = tracker.nonBinaryRangeResponses;
+      const totalBeforeCache = tracker.finishTotal(bytes.byteLength, rangeLimit);
+
+      tracker.startPhase();
+      const cacheSwitchStarted = performance.now();
+      const readsBeforeReturn = tracker.ranges.length;
+      const aLocationBeforeSwitch = book.getLocation();
+      const secondaryViewId = await services.commands.execute(ids.libraryOpenBook, secondaryMaterial);
+      if (typeof secondaryViewId !== 'string') throw new Error('PDF 缓存验收没有创建第二个 ReadingView');
+      const secondaryBook = runtime.getState().getDocument(secondaryViewId);
+      if (!secondaryBook) throw new Error('PDF 缓存验收没有创建第二个 BookDocument');
+      secondaryContainer = makeContainer('pdf-performance-reader-command-secondary');
+      mount(secondaryBook, secondaryViewId, secondaryContainer, null, {
+        importRepository: services.importRepository,
+        workspaceRepository: services.workspaceRepository,
+        annotationRepository: services.annotationRepository,
+      });
+      await waitFor(() => hasValidVisiblePage(secondaryContainer, secondaryBook.getCurrentIndex()), 'PDF 缓存 B 首屏');
+      const readsAfterB = tracker.ranges.length;
+      const documentLoadsAfterB = tracker.pdfDocumentLoads;
+      const aSuspendedResourceUsage = book.getRuntimeResourceUsage?.() ?? null;
+
+      await services.commands.execute(ids.readerActivateView, viewId, material);
+      const returnedBook = runtime.getState().getDocument(viewId);
+      if (!returnedBook) throw new Error('PDF 缓存验收回切没有恢复 A Runtime');
+      mount(returnedBook, viewId, container, workspace.getState().editorGroups
+        .flatMap((group) => group.views)
+        .find((view) => view.id === viewId)?.location ?? aLocationBeforeSwitch, {
+        importRepository: services.importRepository,
+        workspaceRepository: services.workspaceRepository,
+        annotationRepository: services.annotationRepository,
+      });
+      // 性能脚本与真实 App 共用同一个页面运行时；若 React 视图在本次命令
+      // 期间先把缓存 DOM 接到了自己的容器，显式把它拉回测量容器再验证首屏。
+      if (!container.querySelector('.pdf-page')) returnedBook.attach?.(container);
+      await waitFor(() => hasValidVisiblePage(container, returnedBook.getCurrentIndex()), 'PDF 缓存 A 回切');
+      const cacheReturn = tracker.finishPhase({ elapsedMs: performance.now() - cacheSwitchStarted });
+      const cacheTotalAfter = tracker.finishTotal(bytes.byteLength, rangeLimit);
+      const cache = {
+        hit: returnedBook === book &&
+          tracker.pdfDocumentLoads === documentLoadsAfterB &&
+          tracker.ranges.length === readsAfterB,
+        locationPreserved: JSON.stringify(returnedBook.getLocation()) === JSON.stringify(aLocationBeforeSwitch),
+        suspendedResourceUsage: aSuspendedResourceUsage,
+        pdfDocumentLoadsOnReturn: tracker.pdfDocumentLoads - documentLoadsAfterB,
+        rangeReadsOnReturn: tracker.ranges.length - readsAfterB,
+        rangeReadsForB: readsAfterB - readsBeforeReturn,
+        total: {
+          cumulativeReadBytes: cacheTotalAfter.cumulativeReadBytes - totalBeforeCache.cumulativeReadBytes,
+          requestCount: cacheTotalAfter.requestCount - totalBeforeCache.requestCount,
+          maxRangeBytes: cacheTotalAfter.maxRangeBytes,
+        },
+        returnPhase: cacheReturn,
+      };
       validateMemory([open, nextPage, scrollOpen, scrollWindow], memoryLimit);
       if (scrollOpen.activeCanvasCount > 12) throw new Error(`Reader Command 滚动首屏活跃 Canvas 超过 12:${scrollOpen.activeCanvasCount}`);
       if (scrollWindow.activeCanvasCount > 12) throw new Error(`滚动模式活跃 Canvas 超过 12:${scrollWindow.activeCanvasCount}`);
       if (scrollWindow.pageGetsForJump >= 20) throw new Error(`滚动跳页取得页面过多:${scrollWindow.pageGetsForJump}`);
-      return { pageCount: book.getPageCount(), pdfDocumentLoads: tracker.pdfDocumentLoads, phases: { open, nextPage, scrollOpen, scrollWindow }, scrollOpen, scrollWindow, total, memorySampleAvailable: [open, nextPage, scrollOpen, scrollWindow].some((phase) => phase.memorySampleAvailable), firstVisibleMs };
+      totalBeforeCache.binaryRangeResponses = tracker.binaryRangeResponses;
+      totalBeforeCache.nonBinaryRangeResponses = tracker.nonBinaryRangeResponses;
+      return { pageCount: book.getPageCount(), pdfDocumentLoads: 1, phases: { open, nextPage, scrollOpen, scrollWindow }, scrollOpen, scrollWindow, total: totalBeforeCache, cache, memorySampleAvailable: [open, nextPage, scrollOpen, scrollWindow].some((phase) => phase.memorySampleAvailable), firstVisibleMs };
     } finally {
       if (viewId) await services.commands.execute(ids.readerCloseView, viewId).catch(() => undefined);
       await flush().catch(() => undefined);
       restoreFetch();
+      secondaryContainer?.remove();
       container.remove();
     }
   }
@@ -978,6 +1103,7 @@ async function runPerformanceMeasurements(config) {
       maxRangeBytes,
       maxTotalReadRatio,
       maxPeakMemoryBytes,
+      variantPdfPath,
     });
     runs.push({ run: runIndex + 1, directFile: direct, managed });
   }
@@ -1021,6 +1147,23 @@ async function runPerformanceMeasurements(config) {
     scrollFirstVisibleWindowed: allSamples.every((sample) => sample.scrollOpen.activeCanvasCount <= 12),
     scrollFirstVisibleDoesNotOpenAllPages: allSamples.every((sample) => sample.scrollOpen.pageGets < expectedPageCount),
     scrollCanvasWindowed: allSamples.every((sample) => sample.scrollWindow.activeCanvasCount <= 12),
+    pdfRuntimeCacheHit: runs.every((run) => run.managed.cache?.hit === true),
+    pdfRuntimeCachePreservesLocation: runs.every((run) => run.managed.cache?.locationPreserved === true),
+    pdfRuntimeCacheCreatesNoDocumentOnReturn: runs.every(
+      (run) => run.managed.cache?.pdfDocumentLoadsOnReturn === 0,
+    ),
+    pdfRuntimeCacheReadsNoRangesOnReturn: runs.every(
+      (run) => run.managed.cache?.rangeReadsOnReturn === 0,
+    ),
+    pdfRuntimeCacheSuspendedCanvasWithinBudget: runs.every(
+      (run) => (run.managed.cache?.suspendedResourceUsage?.canvasCount ?? Number.POSITIVE_INFINITY) <= 1,
+    ),
+    pdfRuntimeCacheSuspendedDecodedPagesWithinBudget: runs.every(
+      (run) => (run.managed.cache?.suspendedResourceUsage?.decodedPageCount ?? Number.POSITIVE_INFINITY) <= 1,
+    ),
+    pdfRuntimeCacheSuspendedRangesWithinBudget: runs.every(
+      (run) => (run.managed.cache?.suspendedResourceUsage?.inFlightRangeReadCount ?? 0) === 0,
+    ),
     tauriBinaryManagedRange:
       mode !== 'tauri' || runs.every((run) =>
         run.managed.transport === 'windows-managed-range' &&
@@ -1049,6 +1192,17 @@ async function runPerformanceMeasurements(config) {
   if (!checks.scrollFirstVisibleWindowed) throw new Error('滚动首屏活跃 Canvas 超过 12 个');
   if (!checks.scrollFirstVisibleDoesNotOpenAllPages) throw new Error('滚动首屏访问了全部页面对象');
   if (!checks.scrollCanvasWindowed) throw new Error('滚动模式活跃 Canvas 超过 12 个');
+  if (!checks.pdfRuntimeCacheHit) throw new Error('PDF A→B→A 没有命中 Runtime 缓存');
+  if (!checks.pdfRuntimeCachePreservesLocation) throw new Error('PDF Runtime 缓存回切没有保留位置/视口');
+  if (!checks.pdfRuntimeCacheCreatesNoDocumentOnReturn) {
+    throw new Error(`PDF Runtime 缓存回切重复创建 PDF.js 文档:${runs.map((run) => run.managed.cache?.pdfDocumentLoadsOnReturn ?? 'missing').join(',')}`);
+  }
+  if (!checks.pdfRuntimeCacheReadsNoRangesOnReturn) {
+    throw new Error(`PDF Runtime 缓存回切重复读取范围:${runs.map((run) => run.managed.cache?.rangeReadsOnReturn ?? 'missing').join(',')}`);
+  }
+  if (!checks.pdfRuntimeCacheSuspendedCanvasWithinBudget) throw new Error('PDF 挂起 Canvas 超出预算');
+  if (!checks.pdfRuntimeCacheSuspendedDecodedPagesWithinBudget) throw new Error('PDF 挂起解码页超出预算');
+  if (!checks.pdfRuntimeCacheSuspendedRangesWithinBudget) throw new Error('PDF 挂起仍有在途范围读取');
   if (!checks.managedToDirectMedianWithinTwoX) throw new Error('Windows Tauri 首屏中位数超过浏览器 File 基线的 2 倍');
   if (!checks.tauriBinaryManagedRange) throw new Error('Windows Tauri 没有使用 managed-range 二进制协议');
   if (!checks.generatedStructureIsDemanding) throw new Error('确定性 PDF 结构触发的范围请求或累计读取不足');
@@ -1102,10 +1256,13 @@ async function runPerformanceMeasurements(config) {
 main().catch(async (error) => {
   failureReport = sanitizeError(error);
   try {
+    await flushRuntimeInPage(activeAppPage);
     await closeBrowser();
+    activeAppPage = null;
     await closeBaselineBrowser();
     await closeSampleServer();
     killDevServer();
+    removeTemporaryVariantPdf();
   } finally {
     writeFailureArtifact(error);
     console.error(`大型 PDF 性能验收失败:${failureReport}`);

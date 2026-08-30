@@ -36,7 +36,7 @@ import type { ReadingMaterial } from '../domain/library/material';
 import { formatFromSourceFileName, type MaterialFormat } from '../domain/library/materialFormat';
 import type { ReadingLocation } from '../domain/reader/readingLocation';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
-import { cancelAllSearches, clearSearch, runSearch } from './searchRunner';
+import { cancelAllSearches, cancelSearch, clearSearch, runSearch } from './searchRunner';
 import { useSearchStore } from './searchStore';
 import { ThrottledPositionPersister } from './positionPersister';
 import { loadAnnotationsForView } from './annotationCommands';
@@ -491,7 +491,7 @@ function getOrCreatePendingDocument(
 /**
  * 释放失活标签的界面接线，但把已完成的 EPUB/Markdown Runtime 放入有限缓存。
  * 位置先 flush；搜索、输入焦点和临时覆盖层必须在挂起前清理，防止隐藏 Runtime
- * 继续响应用户输入。PDF 没有 attach/detach 能力，会由缓存准入规则安全关闭。
+ * 继续响应用户输入。PDF 摘下窗口后只保留 PDF.js 文档与当前页的预算内结果。
  */
 async function suspendViewRuntime(
   dependencies: ReaderCommandDependencies,
@@ -499,7 +499,7 @@ async function suspendViewRuntime(
 ): Promise<void> {
   // flush 失败时保留当前 Runtime 和接线，阻止切换覆盖最后位置。
   const locationAtSuspendStart = useReaderRuntime.getState().getDocument(viewId)?.getLocation();
-  await flushAndClearViewRuntimeBindings(viewId, dependencies);
+  await flushAndClearViewRuntimeBindings(viewId, dependencies, { preservePdfSearch: true });
 
   // Foliate 的迟到 relocate 可能在 persister flush 前把 Workspace 写成章节
   // 起点;切换事务以挂起瞬间 BookDocument 的位置为准再写一次,确保回切恢复
@@ -547,6 +547,9 @@ async function suspendViewRuntime(
 
   let result: ReturnType<ReaderRuntimeCache['suspend']>;
   try {
+    // 先让格式实现主动收缩页面/范围资源，再按收缩后的快照执行缓存准入；
+    // 这样 PDF 不会因为活动窗口的多页 Canvas 被错误判定为超出挂起预算。
+    await document.detach!();
     result = cache.suspend({
       viewId,
       materialId: material!.id,
@@ -563,7 +566,6 @@ async function suspendViewRuntime(
 
   if (result.admitted) {
     try {
-      document.detach!();
       useReaderRuntime.getState().setDocumentLifecycle(viewId, 'suspended');
     } catch (error) {
       // attach/detach 是可选宿主能力;若挂起时宿主拒绝摘下,安全关闭并让
@@ -572,7 +574,7 @@ async function suspendViewRuntime(
       closeReaderRuntime(viewId, cache);
     }
   } else {
-    // 未完成加载、PDF、超出硬预算或未知材料均回到确定性的关闭路径。
+    // 未完成加载、超出硬预算或未知材料均回到确定性的关闭路径。
     closeReaderRuntime(viewId, cache);
   }
   for (const evicted of result.evicted) {
@@ -594,6 +596,7 @@ async function disposeViewRuntime(
 async function flushAndClearViewRuntimeBindings(
   viewId: string,
   dependencies?: ReaderCommandDependencies,
+  options: { preservePdfSearch?: boolean } = {},
 ): Promise<void> {
   const activeMount = activeMounts.get(viewId);
   const persister = persisters.get(viewId);
@@ -616,7 +619,14 @@ async function flushAndClearViewRuntimeBindings(
   navigationIntents.delete(viewId);
   viewMountReadiness.get(viewId)?.resolve();
   viewMountReadiness.delete(viewId);
-  clearSearch(viewId);
+  const document = useReaderRuntime.getState().getDocument(viewId);
+  if (options.preservePdfSearch && document?.format === 'pdf') {
+    // PDF Runtime 缓存保留搜索高亮的绘制结果；只取消异步搜索任务，避免挂起
+    // 期间继续产生页面读取，同时不清空可随 renderer 一起恢复的结果。
+    cancelSearch(viewId);
+  } else {
+    clearSearch(viewId);
+  }
   useSearchStore.getState().close(viewId);
 }
 

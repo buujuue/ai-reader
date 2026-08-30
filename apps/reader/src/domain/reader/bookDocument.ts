@@ -39,6 +39,8 @@ export interface ReaderRuntimeResourceUsage {
   decodedPageCount: number;
   rangeCacheBytes: number;
   estimatedBytes: number;
+  /** 当前 PDF.js 范围来源仍在途的读取数；已挂起 Runtime 应为 0。 */
+  inFlightRangeReadCount?: number;
 }
 
 /**
@@ -64,12 +66,12 @@ export interface BookDocument {
 
   /**
    * 把已经打开但被挂起的 renderer 重新接回新容器；返回 false 表示仍需 open()。
-   * 该能力只用于 EPUB/Markdown 有界 Runtime 缓存，PDF 不实现所以继续重建。
+   * 该能力用于有界 Runtime 缓存；PDF 只保留 PDF.js 文档代理和预算内的页面结果。
    */
   attach?(container: HTMLElement): boolean;
 
   /** 从界面容器摘下 renderer，但不销毁 BookDocument 或其派生运行时。 */
-  detach?(): void;
+  detach?(): void | Promise<void>;
 
   /** 返回文档是否已完成首次打开，可用于阻止缓存未完成的加载任务。 */
   isRuntimeReady?(): boolean;

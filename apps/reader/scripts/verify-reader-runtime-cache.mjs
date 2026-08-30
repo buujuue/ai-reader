@@ -1,23 +1,26 @@
 /**
- * Reader Runtime 有界缓存的真实浏览器基线（工单 #53/#54/#55）。
+ * Reader Runtime 有界缓存的真实浏览器总验收（工单 #57）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
- * EPUB 与 Markdown 的 A→B→A 流程，分别记录冷启动与缓存回切的可交互时间、
- * 文档/renderer 创建、ManagedFileSource 范围读取、Runtime 资源和可获得的堆内存。
+ * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，记录冷启动与缓存回切的
+ * 可交互时间、文档/renderer 创建、ManagedFileSource 范围读取、Runtime 资源和可获得的堆内存。
  * 门槛从同一台机器的冷启动中位数派生，不写死毫秒数。
  *
  * 运行：pnpm test:reader-runtime-cache
  */
 import { execSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
 
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const APP_URL = 'http://localhost:5173';
 const ARTIFACT = 'scripts/artifacts/reader-runtime-cache.json';
+const VITE_CLI = resolve(process.cwd(), 'node_modules/vite/bin/vite.js');
 const runCount = Math.max(3, Number.parseInt(process.env.READER_RUNTIME_CACHE_RUNS ?? '5', 10) || 5);
 let dev = null;
 let failureReport = null;
+let appPage = null;
 
 function waitForServer(url, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
@@ -50,13 +53,24 @@ function percentile(values, fraction) {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
 }
 
+async function flushRuntimeInPage(page) {
+  if (!page) return;
+  await page.evaluate(async () => {
+    try {
+      const { flushAndCloseAllReaderViews } = await import('/src/workbench/readerCommands.ts');
+      await flushAndCloseAllReaderViews();
+    } catch {
+      /* 页面已关闭或应用尚未完成初始化;关闭浏览器仍会释放 WebView 运行时。 */
+    }
+  }).catch(() => undefined);
+}
+
 async function main() {
-  const isWin = process.platform === 'win32';
-  dev = spawn(isWin ? 'pnpm.cmd' : 'pnpm', ['dev', '--host'], {
+  dev = spawn(process.execPath, [VITE_CLI, '--host'], {
     cwd: process.cwd(),
     stdio: 'ignore',
     windowsHide: true,
-    shell: isWin,
+    shell: false,
   });
 
   let browser = null;
@@ -67,19 +81,19 @@ async function main() {
       headless: true,
       args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--enable-precise-memory-info'],
     });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    appPage = await browser.newPage();
+    await appPage.setViewport({ width: 1280, height: 800 });
     const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.stack ?? String(error)));
-    await page.goto(APP_URL, { waitUntil: 'networkidle0' });
+    appPage.on('pageerror', (error) => pageErrors.push(error.stack ?? String(error)));
+    await appPage.goto(APP_URL, { waitUntil: 'networkidle0' });
     // 等待应用自身的异步工作区恢复完成，避免测量 harness 与启动恢复争用全局 Runtime Store。
     await new Promise((resolve) => setTimeout(resolve, 1_000));
 
-    const result = await page.evaluate(async ({ runCount: requestedRuns }) => {
+    const result = await appPage.evaluate(async ({ runCount: requestedRuns }) => {
       const [commandModule, commandRegistryModule, importModule, epubWriterModule, epubInspectorModule,
-        markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeCacheModule,
-        managedSourceModule, hostModule, markdownCommandsModule, libraryStoreModule,
-        markdownSessionModule, workbenchCommandsModule] = await Promise.all([
+        markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeModule, readerRuntimeCacheModule,
+        managedSourceModule, hostModule, bootstrapModule, filePickerModule, libraryStoreModule,
+        markdownSessionModule, workbenchCommandsModule, pdfLibraryModule, pdfFixtureModule] = await Promise.all([
         import('/src/workbench/readerCommands.ts'),
         import('/src/commands/commandRegistry.ts'),
         import('/src/domain/library/inMemoryImportRepository.ts'),
@@ -88,13 +102,17 @@ async function main() {
         import('/src/domain/reader/markdown/markdownInspector.ts'),
         import('/src/domain/workspace/inMemoryWorkspaceRepository.ts'),
         import('/src/workbench/workspaceStore.ts'),
+        import('/src/workbench/readerRuntime.ts'),
         import('/src/workbench/readerRuntimeCache.ts'),
         import('/src/domain/library/managedFileSource.ts'),
         import('/src/domain/reader/foliateViewHost.ts'),
-        import('/src/workbench/markdownCommands.ts'),
+        import('/src/app/bootstrap.ts'),
+        import('/src/app/filePicker.ts'),
         import('/src/workbench/libraryStore.ts'),
         import('/src/workbench/markdownSessionStore.ts'),
         import('/src/workbench/workbenchCommands.ts'),
+        import('/src/domain/reader/pdf/pdfLibrary.ts'),
+        import('/src/test/fixtures/pdf/pdfFixtures.ts'),
       ]);
       const {
         addInMemorySource,
@@ -105,36 +123,62 @@ async function main() {
       const { inspectMarkdown } = markdownInspectorModule;
       const { createInMemoryWorkspaceRepository } = workspaceRepoModule;
       const { useWorkspaceStore } = workspaceStoreModule;
+      const { useReaderRuntime } = readerRuntimeModule;
       const { useLibraryStore } = libraryStoreModule;
       const { useMarkdownSessionStore } = markdownSessionModule;
       const { serializeWorkspaceState } = workbenchCommandsModule;
       const { ManagedFileSource } = managedSourceModule;
       const { createFoliateViewHostFactory } = hostModule;
-      const { COMMAND_IDS, CommandRegistry } = commandRegistryModule;
+      const { createAppServices } = bootstrapModule;
+      const { createInMemoryFilePicker } = filePickerModule;
+      const { loadPdfLib } = pdfLibraryModule;
+      const { buildLargePdfFixture } = pdfFixtureModule;
+      const { COMMAND_IDS } = commandRegistryModule;
       const {
-        registerReaderCommands,
         flushAndCloseAllReaderViews,
-        invalidateReaderRuntimeMaterial,
-        reloadMaterialViews,
-        restoreReaderViewRuntime,
-        suspendReaderViewRuntime,
       } = commandModule;
-      const { registerMarkdownCommands } = markdownCommandsModule;
 
       const bytes = new Map();
       addInMemorySource(bytes, 'cache-a.epub', buildEpub({ title: '缓存基线 EPUB' }));
       addInMemorySource(bytes, 'cache-b.md', new TextEncoder().encode(
         '# 缓存基线 Markdown\n\n这是用于 A→B→A Runtime 测量的正文。',
       ));
+      addInMemorySource(bytes, 'cache-b.epub', buildEpub({ title: '缓存矩阵 EPUB' }));
+      addInMemorySource(bytes, 'cache-c.md', new TextEncoder().encode(
+        '# 缓存矩阵 Markdown\n\n这是用于同格式回切的第二份正文。',
+      ));
+      addInMemorySource(
+        bytes,
+        'cache-a.pdf',
+        buildLargePdfFixture({ pageCount: 4, contentBytesPerPage: 1024 }),
+      );
+      addInMemorySource(
+        bytes,
+        'cache-b.pdf',
+        buildLargePdfFixture({ pageCount: 4, contentBytesPerPage: 1025 }),
+      );
       const importRepository = createInMemoryImportRepository(bytes);
       const workspaceRepository = createInMemoryWorkspaceRepository();
       const materials = [];
-      for (const name of ['cache-a.epub', 'cache-b.md']) {
+      for (const name of [
+        'cache-a.epub',
+        'cache-b.md',
+        'cache-b.epub',
+        'cache-c.md',
+        'cache-a.pdf',
+        'cache-b.pdf',
+      ]) {
         const staged = await importRepository.stageImport(name);
         const content = await importRepository.readStagedFile(staged);
         const metadata = name.endsWith('.epub')
           ? (await inspectEpub(content)).metadata
-          : (await inspectMarkdown(content, name)).metadata;
+          : name.endsWith('.md')
+            ? (await inspectMarkdown(content, name)).metadata
+            : {
+                title: name === 'cache-a.pdf' ? '缓存基线 PDF' : '缓存矩阵 PDF',
+                author: null,
+                language: 'zh',
+              };
         materials.push(await importRepository.commitImport(staged, metadata));
       }
       useLibraryStore.setState({ materials, trashedMaterials: [] });
@@ -144,6 +188,8 @@ async function main() {
         rangeReads: 0,
         rangeBytes: 0,
         rendererCreates: 0,
+        pdfDocumentLoads: 0,
+        pdfPageGets: 0,
       };
       const originalOpenManagedFileSource = importRepository.openManagedFileSource.bind(importRepository);
       importRepository.openManagedFileSource = async (materialId) => {
@@ -165,24 +211,50 @@ async function main() {
         counters.rendererCreates += 1;
         return nativeFactory(container);
       };
+      const pdfLib = new Proxy(await loadPdfLib(), {
+        get(target, property, receiver) {
+          if (property !== 'getDocument') return Reflect.get(target, property, receiver);
+          return (options) => {
+            counters.pdfDocumentLoads += 1;
+            const loadingTask = target.getDocument(options);
+            return {
+              ...loadingTask,
+              promise: loadingTask.promise.then((pdfDocument) => new Proxy(pdfDocument, {
+                get(documentTarget, documentProperty, documentReceiver) {
+                  if (documentProperty === 'getPage') {
+                    return async (pageNumber) => {
+                      counters.pdfPageGets += 1;
+                      return documentTarget.getPage(pageNumber);
+                    };
+                  }
+                  const value = Reflect.get(documentTarget, documentProperty, documentReceiver);
+                  return typeof value === 'function' ? value.bind(documentTarget) : value;
+                },
+              })),
+              destroy: loadingTask.destroy?.bind(loadingTask),
+            };
+          };
+        },
+      });
       const cache = new readerRuntimeCacheModule.ReaderRuntimeCache();
-      const registry = new CommandRegistry();
-      const readerDependencies = {
+      // 使用应用正式服务组装器，确保总验收走与实际应用相同的 Command/Repository
+      // 注册路径，而不是只手工注册阅读命令。
+      const services = createAppServices({
         importRepository,
+        filePicker: createInMemoryFilePicker([
+          'cache-a.epub',
+          'cache-b.md',
+          'cache-b.epub',
+          'cache-c.md',
+          'cache-a.pdf',
+          'cache-b.pdf',
+        ]),
         workspaceRepository,
         viewHostFactory,
+        pdfLib,
         readerRuntimeCache: cache,
-      };
-      registerReaderCommands(registry, readerDependencies);
-      registerMarkdownCommands(registry, {
-        importRepository,
-        workspaceRepository,
-        invalidateMaterialRuntime: invalidateReaderRuntimeMaterial,
-        reloadMaterialViews: (materialId) => reloadMaterialViews(readerDependencies, materialId),
-        suspendReaderView: (viewId) => suspendReaderViewRuntime(readerDependencies, viewId),
-        restoreReaderView: (viewId) =>
-          restoreReaderViewRuntime(readerDependencies, viewId).then(() => undefined),
       });
+      const registry = services.commands;
 
       const waitFor = async (predicate, label, timeoutMs = 20_000) => {
         const started = performance.now();
@@ -206,6 +278,8 @@ async function main() {
         rangeReads: counters.rangeReads - before.rangeReads,
         rangeBytes: counters.rangeBytes - before.rangeBytes,
         rendererCreates: counters.rendererCreates - before.rendererCreates,
+        pdfDocumentLoads: counters.pdfDocumentLoads - before.pdfDocumentLoads,
+        pdfPageGets: counters.pdfPageGets - before.pdfPageGets,
         heapDeltaBytes:
           before.heapBytes === null || heap() === null ? null : heap() - before.heapBytes,
       });
@@ -228,6 +302,9 @@ async function main() {
           () => {
             const status = commandModule.getReaderRuntimeStatusForMeasurement(viewId);
             if (status?.status === 'error') throw new Error(`${material.title} 首次打开失败:${status.message}`);
+            if (book.format === 'pdf') {
+              return Boolean(book.isRuntimeReady?.()) && book.getCurrentIndex() !== null;
+            }
             return Boolean(book.isRuntimeReady?.()) && book.getContentDocs().some((content) => Boolean(content.body?.textContent?.trim()));
           },
           `${material.title} 首次可见`,
@@ -241,7 +318,71 @@ async function main() {
           book,
           locationBeforeSwitch: workspaceLocation ?? book.getLocation(),
           tocBeforeSwitch: book.getTOC(),
+          format: book.format,
           firstVisibleMs: performance.now() - started,
+        };
+      };
+
+      const waitForInteractive = async (sample, label) => {
+        await waitFor(() => {
+          const status = commandModule.getReaderRuntimeStatusForMeasurement(sample.viewId);
+          if (status?.status === 'error') throw new Error(`${label} 打开失败:${status.message}`);
+          if (sample.book.format === 'pdf') {
+            const container = document.querySelector(`[data-view-id="${sample.viewId}"]`);
+            return Boolean(sample.book.isRuntimeReady?.()) &&
+              sample.book.getCurrentIndex() !== null &&
+              Boolean(container?.querySelector('.pdf-page canvas'));
+          }
+          return status?.status === 'ready' &&
+            sample.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected);
+        }, label);
+      };
+
+      const resetHarness = async () => {
+        await waitFrames(4);
+        await flushAndCloseAllReaderViews();
+        await waitFrames();
+        cache.reset();
+        useWorkspaceStore.getState().resetToDefault();
+      };
+
+      const measurePair = async (firstMaterial, secondMaterial, label) => {
+        await resetHarness();
+        const first = await openAndWait(firstMaterial, COMMAND_IDS.libraryOpenBook);
+        if (first.book.format === 'pdf') {
+          await first.book.goToLocation({ kind: 'pdf', page: 2, scrollTop: 0, zoom: 125, fit: 'page' });
+        }
+        const firstLocation = first.book.getLocation();
+        const second = await openAndWait(secondMaterial, COMMAND_IDS.libraryOpenBook);
+        const hitBefore = cache.getDiagnostics().hits;
+        const suspendedBefore = cache.getDiagnostics().entries.find(
+          (entry) => entry.viewId === first.viewId && entry.state === 'suspended',
+        );
+        const countersBefore = snapshotCounters();
+        const returnStarted = performance.now();
+        await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
+        await waitForInteractive(first, `${label} 缓存回切`);
+        const countersAfter = diffCounters(countersBefore);
+        const diagnostics = cache.getDiagnostics();
+        return {
+          label,
+          firstFormat: first.book.format,
+          secondFormat: second.book.format,
+          firstVisibleMs: first.firstVisibleMs,
+          secondVisibleMs: second.firstVisibleMs,
+          cacheReturnInteractiveMs: performance.now() - returnStarted,
+          cacheHit: diagnostics.hits - hitBefore === 1,
+          locationBefore: firstLocation,
+          locationAfter: first.book.getLocation(),
+          locationPreserved: firstLocation !== null &&
+            JSON.stringify(first.book.getLocation()) === JSON.stringify(firstLocation),
+          noNewSourceOpen: countersAfter.sourceOpens === 0,
+          noNewFoliateRenderer: countersAfter.rendererCreates === 0,
+          noNewPdfDocument: countersAfter.pdfDocumentLoads === 0,
+          noNewRanges: countersAfter.rangeReads === 0,
+          suspendedResourceUsage: suspendedBefore?.usage ?? null,
+          counters: countersAfter,
+          budget: cache.getBudget(),
         };
       };
 
@@ -353,6 +494,19 @@ async function main() {
             coldDiagnostics,
           },
         });
+      }
+
+      const pairCases = [
+        [materials[0], materials[2], 'EPUB↔EPUB'],
+        [materials[1], materials[3], 'Markdown↔Markdown'],
+        [materials[4], materials[5], 'PDF↔PDF'],
+        [materials[0], materials[4], 'EPUB↔PDF'],
+        [materials[4], materials[1], 'PDF↔Markdown'],
+        [materials[1], materials[0], 'Markdown↔EPUB'],
+      ];
+      const formatMatrix = [];
+      for (const [firstMaterial, secondMaterial, label] of pairCases) {
+        formatMatrix.push(await measurePair(firstMaterial, secondMaterial, label));
       }
 
       // 在真实 Chrome 中验证 Markdown 源码模式的 Runtime 生命周期：进入源码模式
@@ -489,12 +643,27 @@ async function main() {
       await waitFrames(4);
       await flushAndCloseAllReaderViews();
       await waitFrames();
+      const shutdownCleanup = {
+        runtimeStoreEmpty: useReaderRuntime.getState().documents.size === 0,
+        cacheEmpty: cache.getEntries().length === 0,
+        noOrphanReaderDom: document.querySelectorAll('.pdf-page, foliate-view').length === 0,
+        workspaceStateSerializable: (() => {
+          try {
+            JSON.stringify(serializeWorkspaceState());
+            return true;
+          } catch {
+            return false;
+          }
+        })(),
+      };
       return {
-        schemaVersion: 'reader-runtime-cache.v1',
-        issue: 55,
+        schemaVersion: 'reader-runtime-cache.v2',
+        issue: 57,
         status: 'measured',
         runCount: requestedRuns,
         samples,
+        formatMatrix,
+        shutdownCleanup,
         sourceMode: {
           entered: sourceModeEntered,
           runtimeSuspended: sourceRuntimeSuspended,
@@ -546,6 +715,31 @@ async function main() {
       epubHitP95WithinSameMachineColdP95: percentile(hitValues, 0.95) <= thresholds.epub.hitReturnInteractiveP95Ms,
       markdownHitMedianWithinSameMachineColdMedian: median(markdownHitValues) <= thresholds.markdown.hitReturnInteractiveMedianMs,
       markdownHitP95WithinSameMachineColdP95: percentile(markdownHitValues, 0.95) <= thresholds.markdown.hitReturnInteractiveP95Ms,
+      formatMatrixCovered: result.formatMatrix.length === 6,
+      everyFormatPairHitsCache: result.formatMatrix.every((pair) => pair.cacheHit),
+      everyFormatPairPreservesLocation: result.formatMatrix.every((pair) => pair.locationPreserved),
+      everyFormatPairAvoidsNewSource: result.formatMatrix.every((pair) => pair.noNewSourceOpen),
+      everyFormatPairAvoidsNewRenderer: result.formatMatrix.every((pair) => pair.noNewFoliateRenderer),
+      everyFormatPairAvoidsNewPdfDocument: result.formatMatrix.every((pair) => pair.noNewPdfDocument),
+      everyFormatPairAvoidsNewRanges: result.formatMatrix.every((pair) => pair.noNewRanges),
+      sameFormatPairsCovered: result.formatMatrix
+        .filter((pair) => pair.firstFormat === pair.secondFormat)
+        .length === 3,
+      mixedFormatPairsCovered: result.formatMatrix
+        .filter((pair) => pair.firstFormat !== pair.secondFormat)
+        .length === 3,
+      pdfSuspendedUsageWithinBudget: result.formatMatrix
+        .filter((pair) => pair.firstFormat === 'pdf')
+        .every((pair) =>
+          pair.suspendedResourceUsage !== null &&
+          pair.suspendedResourceUsage.canvasCount <= pair.budget.maxSuspendedCanvases &&
+          pair.suspendedResourceUsage.decodedPageCount <= pair.budget.maxSuspendedDecodedPages &&
+          (pair.suspendedResourceUsage.inFlightRangeReadCount ?? 0) === 0,
+        ),
+      shutdownCleanup: result.shutdownCleanup.runtimeStoreEmpty &&
+        result.shutdownCleanup.cacheEmpty &&
+        result.shutdownCleanup.noOrphanReaderDom &&
+        result.shutdownCleanup.workspaceStateSerializable,
       sourceModeLifecycle: result.sourceMode.entered &&
         result.sourceMode.runtimeSuspended &&
         result.sourceMode.runtimeInvalidated &&
@@ -569,6 +763,7 @@ async function main() {
     result.checks = checks;
     if (Object.values(checks).some((value) => value !== true)) {
       console.error(`Reader Runtime 缓存附加验收详情:${JSON.stringify(result.sourceMode)}`);
+      console.error(`Reader Runtime 格式矩阵详情:${JSON.stringify(result.formatMatrix)}`);
       throw new Error(`Reader Runtime 缓存门禁失败:${JSON.stringify(checks)}`);
     }
     mkdirSync('scripts/artifacts', { recursive: true });
@@ -576,11 +771,13 @@ async function main() {
     console.log('Reader Runtime 缓存真实浏览器基线结果:');
     console.log(JSON.stringify(result, null, 2));
     console.log(`报告:${ARTIFACT}`);
-    console.log('通过:EPUB/Markdown A→B→A 缓存命中不重复创建 BookDocument、renderer 或范围读取。');
+    console.log('通过:EPUB/PDF/Markdown 同格式与跨格式 A→B→A 缓存命中不重复创建文档、renderer 或范围读取。');
   } catch (error) {
     failureReport = error instanceof Error ? error.message : String(error);
     throw error;
   } finally {
+    await flushRuntimeInPage(appPage);
+    appPage = null;
     await browser?.close().catch(() => undefined);
     killDevServer();
   }
@@ -592,6 +789,7 @@ function killDevServer() {
     dev.kill();
     return;
   }
+  dev.kill();
   try {
     execSync(`taskkill /F /T /PID ${dev.pid}`, { stdio: 'ignore' });
   } catch {

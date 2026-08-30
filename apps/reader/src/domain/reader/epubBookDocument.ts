@@ -436,7 +436,8 @@ function isCoarserCfi(candidate: string, specific: string): boolean {
   if (candidate === specific) return false;
   const coarseCfi = candidate.endsWith(')') ? candidate.slice(0, -1) : candidate;
   const nextCharacter = specific[coarseCfi.length];
-  return specific.startsWith(coarseCfi) && (nextCharacter === ',' || nextCharacter === '!');
+  return specific.startsWith(coarseCfi) &&
+    (nextCharacter === ',' || nextCharacter === '!' || nextCharacter === '/' || nextCharacter === '[');
 }
 
 export { sanitizeEpubContent };

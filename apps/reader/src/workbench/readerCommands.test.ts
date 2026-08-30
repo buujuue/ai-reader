@@ -15,6 +15,7 @@ import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from '../domain/reader/pdf/pdfTestFakes';
 import { useMarkdownSessionStore } from './markdownSessionStore';
 import {
+  flushAndCloseAllReaderViews,
   invalidateReaderRuntimeMaterial,
   mountViewDocument,
   registerReaderCommands,
@@ -370,14 +371,30 @@ describe('Reader 命令', () => {
       fit: 'page',
     };
     await pdfDocument.goToLocation(paginatedLocation);
+    const annotationValue = 'pdf-text:4:0.1:0.2:0.3:0.1';
+    pdfDocument.addAnnotation({ value: annotationValue, color: '#ffd54f' });
+    (pdfDocument as unknown as { searchHighlights: Map<number, unknown[]> }).searchHighlights.set(
+      4,
+      [{ rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.1 }, color: '#2196f3' }],
+    );
 
     await registry.execute(COMMAND_IDS.libraryOpenBook, epub);
     expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(paginatedLocation);
+    expect(useReaderRuntime.getState().getDocument(pdfViewId)).toBe(pdfDocument);
+    expect(
+      (pdfDocument as unknown as { annotationHighlights: Map<string, unknown> }).annotationHighlights.has(
+        annotationValue,
+      ),
+    ).toBe(true);
+    expect(
+      (pdfDocument as unknown as { searchHighlights: Map<number, unknown[]> }).searchHighlights.has(4),
+    ).toBe(true);
     const persistedAfterSwitch = await workspaceRepository.loadState();
     expect(persistedAfterSwitch.editorGroups[0]!.views[0]!.location).toEqual(paginatedLocation);
 
     await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
     const reopenedPaginated = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    expect(reopenedPaginated).toBe(pdfDocument);
     const secondPersister = mountViewDocument(
       reopenedPaginated,
       pdfViewId,
@@ -405,6 +422,7 @@ describe('Reader 命令', () => {
 
     await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
     const reopened = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    expect(reopened).toBe(pdfDocument);
     const thirdPersister = mountViewDocument(
       reopened,
       pdfViewId,
@@ -433,7 +451,7 @@ describe('Reader 命令', () => {
     );
     await vi.waitFor(() => expect((restoredAfterRestart as PdfBookDocument).getPageCount()).toBe(8));
     expect(restoredAfterRestart.getLocation()).toEqual(scrolledLocation);
-    expect(pdfLib.getDocument).toHaveBeenCalledTimes(4);
+    expect(pdfLib.getDocument).toHaveBeenCalledTimes(2);
 
     await firstPersister.dispose();
     await secondPersister.dispose();
@@ -957,6 +975,51 @@ describe('Reader 命令', () => {
     expect(useReaderRuntime.getState().getDocument(firstViewId)).toBeUndefined();
     expect(useReaderRuntime.getState().getDocument(secondViewId)).toBe(secondDocument);
     expect(readerRuntimeCache.getEntries().some((entry) => entry.viewId === firstViewId)).toBe(false);
+  });
+
+  it('应用关闭先清理全部 Runtime 与缓存,但不把活对象写入 Workspace State', async () => {
+    const materials = await setupWithEpubMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = { ...createFakeViewHost(), close: vi.fn() };
+        hosts.push(host);
+        return host;
+      },
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, materials[0]);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, materials[1]);
+    const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    mountViewDocument(secondDocument, secondViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
+
+    expect(useReaderRuntime.getState().getDocumentLifecycle(firstViewId)).toBe('suspended');
+    const serializableWorkspace = JSON.stringify(useWorkspaceStore.getState());
+    expect(serializableWorkspace).not.toContain('EpubBookDocument');
+
+    await flushAndCloseAllReaderViews();
+
+    expect(useReaderRuntime.getState().documents.size).toBe(0);
+    expect(readerRuntimeCache.getEntries()).toHaveLength(0);
+    expect(hosts[0]!.close).toHaveBeenCalledOnce();
+    expect(hosts[1]!.close).toHaveBeenCalledOnce();
   });
 
   it('closes the active tab and rebuilds the next tab runtime', async () => {

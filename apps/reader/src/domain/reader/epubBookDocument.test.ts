@@ -223,6 +223,22 @@ describe('EpubBookDocument', () => {
     expect(host.detach).toHaveBeenCalledOnce();
   });
 
+  it('重新挂载时忽略 Foliate 补发的较粗位置,保留切出前的精确 CFI', async () => {
+    const host = createFakeHost();
+    host.attach = vi.fn();
+    host.detach = vi.fn();
+    const book = createDocument(() => host);
+    const exact = 'epubcfi(/6/2!/4/2[section],,/4/1:25)';
+
+    await book.open(document.createElement('div'));
+    host.emitRelocate(exact);
+    book.detach?.();
+    book.attach?.(document.createElement('div'));
+    host.emitRelocate('epubcfi(/6/2!/4)');
+
+    expect(book.getLocation()).toEqual({ kind: 'epub', cfi: exact });
+  });
+
   it('打开时复用调用方提供的来源', async () => {
     const host = createFakeHost();
     const source = new File([new Uint8Array([1, 2, 3])], 'book.epub', {

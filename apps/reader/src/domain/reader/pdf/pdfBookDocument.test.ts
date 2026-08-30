@@ -66,6 +66,37 @@ describe('PdfBookDocument', () => {
     expect(book.getLocation()).toBeNull();
   });
 
+  it('挂起只保留当前页资源,重新挂载复用同一个 PDF.js 文档', async () => {
+    const { book, lib, document } = createDocument({ pageCount: 8 });
+    const firstContainer = makeContainer();
+    await book.open(firstContainer);
+    await book.goToLocation({ kind: 'pdf', page: 4, scrollTop: 0, zoom: 125, fit: 'page' });
+
+    await book.detach();
+
+    expect(book.getContentDocs()).toEqual([]);
+    expect(book.getLocation()).toEqual({
+      kind: 'pdf',
+      page: 4,
+      scrollTop: 0,
+      zoom: 125,
+      fit: 'page',
+    });
+    expect(book.getRuntimeResourceUsage()).toMatchObject({
+      canvasCount: 1,
+      decodedPageCount: 1,
+      inFlightRangeReadCount: 0,
+    });
+
+    const secondContainer = makeContainer();
+    expect(book.attach(secondContainer)).toBe(true);
+    await book.goToLocation({ kind: 'pdf', page: 4, scrollTop: 0, zoom: 125, fit: 'page' });
+    expect(lib.getDocument).toHaveBeenCalledTimes(1);
+    expect(document.destroy).not.toHaveBeenCalled();
+    expect(secondContainer.querySelector('.pdf-page')).toBeTruthy();
+    book.close();
+  });
+
   it('PDF.js 结构损坏时打开失败会提供简体中文诊断', async () => {
     const { book, lib } = createDocument();
     (lib.getDocument as ReturnType<typeof vi.fn>).mockImplementation(() => ({

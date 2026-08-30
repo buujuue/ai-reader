@@ -44,6 +44,7 @@ pnpm tauri build
 | 系统文件选择与托管导入 | 点击导入，使用 macOS 文件选择器选择 EPUB；确认书库出现材料，原文件未被修改 | 记录文件选择器、书库卡片和原文件校验值 |
 | EPUB 阅读与位置恢复 | 打开 EPUB，翻到下一页，关闭应用，再启动并确认位置恢复 | 记录关闭前后章节/页码 |
 | PDF 与 Markdown 冒烟 | 分别导入并打开 PDF、Markdown，确认阅读视图出现且未创建平台专用分支 | 记录各自打开后的原生窗口 |
+| Runtime 缓存与后台返回 | 打开 EPUB、PDF、Markdown，执行两两 A→B→A，再隐藏窗口并恢复 | 记录命中时位置/视口立即恢复、超预算安全重建、后台返回后的 flush 结果和无孤儿页面 |
 | 外部链接与权限 | 点击书内外部链接，确认先出现确认对话框，再由系统默认浏览器打开；不要把 URL 导航到阅读 WebView | 记录默认浏览器打开结果；检查内容页没有 Tauri IPC 能力 |
 
 ## 证据边界
@@ -56,7 +57,7 @@ pnpm test
 pnpm --filter @ai-reader/app test:real-render
 ```
 
-Windows 上的 `pnpm tauri dev` 只能证明 Windows 原生壳仍可启动；本仓库当前开发主机不是 macOS，因此本次实现不虚报真实 macOS 运行证据。完成原生验收后，将主机信息、命令、时间、结果和截图路径补充到本表对应行。
+Windows 上的 `pnpm tauri dev` 只能证明 Windows 原生壳仍可启动；本仓库当前开发主机不是 macOS，因此本次实现不虚报真实 macOS 运行证据。Issue #57 的 `test:reader-runtime-cache` 结果不能替代上表的 macOS Runtime 缓存证据。完成原生验收后，将主机信息、命令、时间、结果和截图路径补充到本表对应行。
 
 ## 安全边界检查
 

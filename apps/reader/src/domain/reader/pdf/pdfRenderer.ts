@@ -1,5 +1,5 @@
 import type { PdfFitMode } from '../readingLocation';
-import type { AreaSelection } from '../bookDocument';
+import type { AreaSelection, ReaderRuntimeResourceUsage } from '../bookDocument';
 import type { PdfDocumentProxy, PdfJsLib, PdfPage } from './pdfLibrary';
 import { PdfPageRenderer, type PdfPageRasterizer } from './pdfPageRenderer';
 import type { PdfHighlight } from './pdfTextAnchor';
@@ -85,7 +85,7 @@ interface CachedPageRender {
  */
 export class PdfRenderer {
   private readonly document: PdfDocumentProxy;
-  private readonly container: HTMLElement;
+  private container: HTMLElement;
   private readonly pages: HTMLElement;
   private readonly rasterize: PdfPageRasterizer;
   private readonly maxDecodedPages: number;
@@ -118,6 +118,7 @@ export class PdfRenderer {
   /** 只允许最新一次异步重排提交 DOM,避免尺寸/翻页竞态写回过期页面。 */
   private layoutGeneration = 0;
   private disposed = false;
+  private suspended = false;
 
   constructor(
     options: PdfRendererOptions,
@@ -180,17 +181,59 @@ export class PdfRenderer {
     this.getPageRenderer(pageNumber)?.setHighlights(highlights);
   }
 
+  /** 返回当前 PDF 页面窗口所占用的可获得资源快照。 */
+  getRuntimeResourceUsage(): ReaderRuntimeResourceUsage {
+    let canvasCount = 0;
+    let estimatedBytes = 0;
+    for (const renderer of this.pageRenderers.values()) {
+      const bitmapArea = renderer.getBitmapArea();
+      if (bitmapArea <= 0) continue;
+      canvasCount += 1;
+      estimatedBytes += bitmapArea * 4;
+    }
+    const decodedPageCount = this.pageCache.size;
+    // PDF.js 页面对象的内部结构由引擎决定，不能读取私有字段；用保守的
+    // 固定页对象开销计入估算，只把硬上限交给页面数和 Canvas 像素预算。
+    estimatedBytes += decodedPageCount * 128 * 1024;
+    return {
+      iframeCount: 0,
+      canvasCount,
+      decodedPageCount,
+      rangeCacheBytes: 0,
+      estimatedBytes,
+    };
+  }
+
   /** 挂载并开始监听容器尺寸。 */
   async mount(): Promise<void> {
-    this.resizeObserver = new ResizeObserver(() => {
-      this.invalidateLayout();
-      void this.relayout();
-    });
-    this.resizeObserver.observe(this.container);
-    // 滚动模式依赖浏览器原生滚动;如果不监听 scroll,只有目录跳转等
-    // 显式调用 setScrollTop 的路径会触发窗口重排,用户直接上下滚动时就会露出空白。
-    this.container.addEventListener('scroll', this.handleScroll, { passive: true });
+    this.attachObservers();
     await this.relayout();
+  }
+
+  /**
+   * 从当前 ReadingView 摘下页面 DOM 和活动观察器，但保留 PDF.js 文档、当前页
+   * 的 Canvas/文本层以及可恢复位置。只在重新 attach 或 dispose 时继续拥有它们。
+   */
+  detach(): void {
+    if (this.disposed || this.suspended) return;
+    this.suspended = true;
+    this.detachObservers();
+    this.shrinkToSuspendedWindow();
+    this.pages.remove();
+  }
+
+  /** 将同一 PDF.js 文档的页面窗口重新挂回新的 ReadingView 容器。 */
+  attach(container: HTMLElement): boolean {
+    if (this.disposed) return false;
+    this.pages.remove();
+    this.container = container;
+    this.container.classList.add('pdf-renderer');
+    this.container.style.position = 'relative';
+    this.container.appendChild(this.pages);
+    this.suspended = false;
+    this.attachObservers();
+    if (!this.suspended) void this.relayout();
+    return true;
   }
 
   setFlow(flow: 'paginated' | 'scrolled'): void {
@@ -203,7 +246,7 @@ export class PdfRenderer {
     this.flow = flow;
     this.invalidateLayout();
     this.container.style.overflow = flow === 'scrolled' ? 'auto' : 'hidden';
-    void this.relayout();
+    if (!this.suspended) void this.relayout();
   }
 
   setViewport(zoom: number, fit: PdfFitMode): void {
@@ -212,7 +255,7 @@ export class PdfRenderer {
     // 适配模式/缩放会改变滚动模式下每一页的尺寸和 top 偏移。旧布局
     // 不能用于恢复页码,否则会把保存的 scrollTop 映射到旧页面几何上。
     this.invalidateLayout();
-    void this.relayout();
+    if (!this.suspended) void this.relayout();
   }
 
   async goToPage(page: number, scrollTop?: number): Promise<void> {
@@ -253,7 +296,7 @@ export class PdfRenderer {
 
   /** 重新计算布局与渲染窗口。 */
   async relayout(): Promise<void> {
-    if (this.disposed) {
+    if (this.disposed || this.suspended) {
       return;
     }
     const generation = ++this.layoutGeneration;
@@ -621,7 +664,7 @@ export class PdfRenderer {
 
   /** 参考 Readest 的最近页优先计划,但只在 PdfRenderer 内部操作页面状态。 */
   private async scheduleScrollPages(): Promise<void> {
-    if (this.disposed || this.flow !== 'scrolled' || this.scrolledPages.length === 0) {
+    if (this.disposed || this.suspended || this.flow !== 'scrolled' || this.scrolledPages.length === 0) {
       return;
     }
     this.refreshFallbackScrollVisibility();
@@ -735,6 +778,7 @@ export class PdfRenderer {
   private isCurrentScrolledPage(state: ScrolledPageState, generation: number): boolean {
     return (
       !this.disposed &&
+      !this.suspended &&
       this.flow === 'scrolled' &&
       state.generation === generation &&
       this.scrolledPages[state.pageNumber - 1] === state
@@ -792,6 +836,7 @@ export class PdfRenderer {
   private isCurrentLayout(generation: number, pageNumber?: number): boolean {
     return (
       !this.disposed &&
+      !this.suspended &&
       generation === this.layoutGeneration &&
       (pageNumber === undefined || pageNumber === this.currentPage)
     );
@@ -903,12 +948,57 @@ export class PdfRenderer {
     this.pages.replaceChildren();
   }
 
-  dispose(): void {
-    this.disposed = true;
+  /** 活动视图切换时只保留当前页，避免隐藏 PDF 长期占用整套 Canvas。 */
+  private shrinkToSuspendedWindow(): void {
+    const keepPage = Math.min(Math.max(1, this.currentPage), this.pageCount);
+    for (const [pageNumber, renderer] of this.pageRenderers) {
+      if (pageNumber !== keepPage) {
+        this.releasePageRenderer(pageNumber, renderer);
+      }
+    }
+    for (const [pageNumber, pagePromise] of this.pageCache) {
+      if (pageNumber === keepPage) continue;
+      this.pageCache.delete(pageNumber);
+      void pagePromise.then((page) => page.cleanup()).catch(() => undefined);
+    }
+    for (const pageNumber of this.paginatedRenders.keys()) {
+      if (pageNumber !== keepPage) this.paginatedRenders.delete(pageNumber);
+    }
+    for (const pageNumber of this.scrolledRenders.keys()) {
+      if (pageNumber !== keepPage) this.scrolledRenders.delete(pageNumber);
+    }
+    for (const state of this.scrolledPages) {
+      if (state.pageNumber === keepPage) continue;
+      state.generation += 1;
+      state.page = null;
+      state.renderer = null;
+      state.state = 'idle';
+      state.element.replaceChildren();
+    }
+  }
+
+  private attachObservers(): void {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.suspended || this.disposed) return;
+      this.invalidateLayout();
+      void this.relayout();
+    });
+    this.resizeObserver.observe(this.container);
+    this.container.removeEventListener('scroll', this.handleScroll);
+    this.container.addEventListener('scroll', this.handleScroll, { passive: true });
+  }
+
+  private detachObservers(): void {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.container.removeEventListener('scroll', this.handleScroll);
     this.destroyScrollObserver();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.detachObservers();
     for (const state of this.scrolledPages) {
       state.generation += 1;
     }

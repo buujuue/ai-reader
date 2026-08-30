@@ -1,4 +1,9 @@
-import type { AreaSelection, BookDocument, BookDocumentMetadata } from '../bookDocument';
+import type {
+  AreaSelection,
+  BookDocument,
+  BookDocumentMetadata,
+  ReaderRuntimeResourceUsage,
+} from '../bookDocument';
 import type { ReadingLocation } from '../readingLocation';
 import type { SearchEvent, SearchOptions } from '../search';
 import type { Toc, TocItem } from '../toc';
@@ -216,6 +221,57 @@ export class PdfBookDocument implements BookDocument {
 
   getLocation(): ReadingLocation | null {
     return this.currentLocation;
+  }
+
+  /** PDF.js 文档已完成打开且页面渲染器仍可恢复。 */
+  isRuntimeReady(): boolean {
+    return this.pdf !== null && this.renderer !== null;
+  }
+
+  /** 返回 PDF.js 文档、窗口化页面和范围来源的资源快照。 */
+  getRuntimeResourceUsage(): ReaderRuntimeResourceUsage {
+    const usage = this.renderer?.getRuntimeResourceUsage() ?? {
+      iframeCount: 0,
+      canvasCount: 0,
+      decodedPageCount: 0,
+      rangeCacheBytes: 0,
+      estimatedBytes: 0,
+    };
+    return {
+      ...usage,
+      inFlightRangeReadCount: this.rangeTransport?.runtime.active ?? 0,
+    };
+  }
+
+  /** 挂起时保留 PDF.js 文档和当前页的最小渲染结果。 */
+  async detach(): Promise<void> {
+    if (!this.pdf || !this.renderer) return;
+    this.syncLocationFromRenderer();
+    const rangeTransport = this.rangeTransport;
+    rangeTransport?.pause();
+    this.container?.removeEventListener('click', this.handleContainerClick, true);
+    this.renderer.detach();
+    this.container = null;
+    // 挂起缓存的硬预算要求没有范围读取继续占用并发槽位。读取不收敛时
+    // 由上层根据 false 结果拒绝缓存并走 close()，而不是留下半挂起 Runtime。
+    const settled = await rangeTransport?.waitForIdle();
+    if (settled === false) rangeTransport?.cancel();
+  }
+
+  /** 复用原 PDF.js 文档，把页面窗口重新挂回新的 ReadingView。 */
+  attach(container: HTMLElement): boolean {
+    if (!this.pdf || !this.renderer) return false;
+    this.container?.removeEventListener('click', this.handleContainerClick, true);
+    this.container = container;
+    if (!this.renderer.attach(container)) {
+      this.container = null;
+      return false;
+    }
+    this.rangeTransport?.resume();
+    this.applyTheme(this.typography.theme);
+    this.wireHighlightClick();
+    this.redrawHighlights();
+    return true;
   }
 
   onReadError(listener: (error: unknown) => void): () => void {
@@ -489,6 +545,20 @@ export class PdfBookDocument implements BookDocument {
   }
 
   // ---- 内部 ----
+
+  /** 从 PDF 渲染器同步最后的页码、滚动位移与视口状态。 */
+  private syncLocationFromRenderer(): void {
+    if (!this.renderer) return;
+    const viewport = this.renderer.getViewportState();
+    const page = this.renderer.getCurrentPage();
+    this.currentLocation = {
+      kind: 'pdf',
+      page,
+      scrollTop: this.typography.flow === 'paginated' ? 0 : this.renderer.getScrollTop(),
+      zoom: viewport.zoom,
+      fit: viewport.fit,
+    };
+  }
 
   /** 找到 Range 所在页面,避免滚动模式下误用当前页码。 */
   private pageRendererForRange(range: Range) {

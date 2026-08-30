@@ -167,6 +167,53 @@ describe('createConcurrentRangeTransport 范围读取并发上限', () => {
     expect(onDataRange).not.toHaveBeenCalled();
   });
 
+  it('挂起时暂停排队范围,恢复后继续调度原有与新的范围读取', async () => {
+    const { file, ranges } = makeTrackingFile(1);
+    const onDataRange = vi.fn();
+    const rangeTransport = createConcurrentRangeTransport(
+      file,
+      (size, _initial) => ({ length: size, onDataRange }),
+      1,
+    );
+
+    rangeTransport.transport.requestDataRange?.(0, 10);
+    rangeTransport.transport.requestDataRange?.(10, 20);
+    rangeTransport.pause();
+    expect(rangeTransport.runtime.queued).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(ranges).toEqual([[0, 10]]);
+
+    rangeTransport.resume();
+    rangeTransport.transport.requestDataRange?.(20, 30);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(ranges).toContainEqual([10, 20]);
+    expect(ranges).toContainEqual([20, 30]);
+  });
+
+  it('挂起可等待在途范围读取归零,超时则返回未收敛', async () => {
+    let release!: (value: ArrayBuffer) => void;
+    const rangeTransport = createConcurrentRangeTransport(
+      {
+        size: 100,
+        slice: () => ({
+          arrayBuffer: () => new Promise<ArrayBuffer>((resolve) => {
+            release = resolve;
+          }),
+        }),
+      },
+      (size, _initial) => ({ length: size, onDataRange: vi.fn() }),
+      1,
+    );
+
+    rangeTransport.transport.requestDataRange?.(0, 10);
+    rangeTransport.pause();
+    const settled = rangeTransport.waitForIdle(10);
+    await expect(settled).resolves.toBe(false);
+
+    release(new ArrayBuffer(10));
+    await expect(rangeTransport.waitForIdle()).resolves.toBe(true);
+  });
+
   it('越界范围在触发底层读取前被拒绝', () => {
     const { file, ranges } = makeTrackingFile();
     const { transport } = createConcurrentRangeTransport(

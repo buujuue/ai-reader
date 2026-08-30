@@ -67,6 +67,10 @@ jobs:
         if: matrix.native-build == 'windows'
         run: pnpm --dir apps/reader test:reading-performance
 
+      - name: 跨格式 Reader Runtime 缓存总验收
+        if: matrix.native-build == 'windows'
+        run: pnpm --dir apps/reader test:reader-runtime-cache
+
       - name: 上传大型阅读范围性能记录
         if: always() && matrix.native-build == 'windows'
         uses: actions/upload-artifact@v7
@@ -74,6 +78,14 @@ jobs:
           name: ai-reader-reading-performance-${{ github.sha }}
           if-no-files-found: warn
           path: apps/reader/scripts/artifacts/reading-performance.json
+
+      - name: 上传跨格式 Reader Runtime 缓存记录
+        if: always() && matrix.native-build == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-reader-reader-runtime-cache-${{ github.sha }}
+          if-no-files-found: warn
+          path: apps/reader/scripts/artifacts/reader-runtime-cache.json
 
       - name: Rust 测试
         run: cargo test

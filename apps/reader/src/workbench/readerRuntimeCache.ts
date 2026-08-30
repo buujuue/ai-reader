@@ -6,10 +6,12 @@ import { EPUB_SANITIZER_VERSION } from '../domain/reader/sanitizer';
 import { MARKDOWN_PARSER_VERSION } from '../domain/reader/markdown/markdownParser';
 
 /** Reader Runtime 缓存协议版本。改变状态机或键结构时必须递增。 */
-export const READER_RUNTIME_CACHE_ALGORITHM_VERSION = 'reader-runtime-cache-v1';
+export const READER_RUNTIME_CACHE_ALGORITHM_VERSION = 'reader-runtime-cache-v2';
 /** EPUB/Markdown 解析、清洗或展示辅助节点规则的版本集合。 */
 export const READER_RUNTIME_CONTENT_ALGORITHM_VERSION =
   [EPUB_CANONICAL_TRANSFORM_VERSION, MARKDOWN_PARSER_VERSION, EPUB_SANITIZER_VERSION].join('|');
+/** PDF.js 文档与窗口化页面资源的缓存规则版本。 */
+export const PDF_RUNTIME_CONTENT_ALGORITHM_VERSION = 'pdfjs-windowed-runtime-v1';
 const MAX_RUNTIME_TRANSITION_RECORDS = 256;
 
 export type ReaderRuntimeCacheProfile = 'desktop' | 'tablet';
@@ -35,7 +37,10 @@ export function buildReaderRuntimeCacheKey(input: ReaderRuntimeCacheKeyInput): s
   return JSON.stringify({
     algorithm: READER_RUNTIME_CACHE_ALGORITHM_VERSION,
     contentAlgorithm:
-      input.contentAlgorithmVersion ?? READER_RUNTIME_CONTENT_ALGORITHM_VERSION,
+      input.contentAlgorithmVersion ??
+      (input.format === 'pdf'
+        ? PDF_RUNTIME_CONTENT_ALGORITHM_VERSION
+        : READER_RUNTIME_CONTENT_ALGORITHM_VERSION),
     viewId: input.viewId,
     materialId: input.materialId,
     contentFingerprint: input.contentFingerprint,
@@ -66,15 +71,17 @@ export interface ReaderRuntimeCacheBudget {
   maxSuspendedIframes: number;
   maxSuspendedCanvases: number;
   maxSuspendedDecodedPages: number;
+  /** 挂起 Runtime 不允许继续占用范围读取并发槽位。 */
+  maxSuspendedInFlightRangeReads: number;
   maxSuspendedRangeCacheBytes: number;
   maxSuspendedEstimatedBytes: number;
 }
 
-const MIB = 1024 * 1024;
+const BYTES_PER_MEBIBYTE = 1024 * 1024;
 
 /**
- * 初始资源硬预算。PDF 暂不进入该缓存，因此缓存中的 Canvas/解码页为零；PDF 自身
- * 的活动窗口预算仍由 PdfRenderer/ADR-0033 管理。
+ * Reader Runtime 缓存的资源硬预算。PDF 挂起时只保留当前页的最小结果；活动 PDF
+ * 的窗口和解码页上限仍由 PdfRenderer 管理。
  */
 export const READER_RUNTIME_CACHE_BUDGETS: Readonly<
   Record<ReaderRuntimeCacheProfile, ReaderRuntimeCacheBudget>
@@ -84,20 +91,22 @@ export const READER_RUNTIME_CACHE_BUDGETS: Readonly<
     maxActiveRuntimes: 2,
     maxSuspendedRuntimes: 1,
     maxSuspendedIframes: 4,
-    maxSuspendedCanvases: 0,
-    maxSuspendedDecodedPages: 0,
-    maxSuspendedRangeCacheBytes: 16 * MIB,
-    maxSuspendedEstimatedBytes: 64 * MIB,
+    maxSuspendedCanvases: 1,
+    maxSuspendedDecodedPages: 1,
+    maxSuspendedInFlightRangeReads: 0,
+    maxSuspendedRangeCacheBytes: 16 * BYTES_PER_MEBIBYTE,
+    maxSuspendedEstimatedBytes: 16 * BYTES_PER_MEBIBYTE,
   }),
   tablet: Object.freeze({
     profile: 'tablet',
     maxActiveRuntimes: 2,
     maxSuspendedRuntimes: 1,
     maxSuspendedIframes: 2,
-    maxSuspendedCanvases: 0,
-    maxSuspendedDecodedPages: 0,
-    maxSuspendedRangeCacheBytes: 8 * MIB,
-    maxSuspendedEstimatedBytes: 32 * MIB,
+    maxSuspendedCanvases: 1,
+    maxSuspendedDecodedPages: 1,
+    maxSuspendedInFlightRangeReads: 0,
+    maxSuspendedRangeCacheBytes: 8 * BYTES_PER_MEBIBYTE,
+    maxSuspendedEstimatedBytes: 8 * BYTES_PER_MEBIBYTE,
   }),
 });
 
@@ -195,8 +204,8 @@ export class ReaderRuntimeCache<T = BookDocument> {
   }
 
   registerActive(entry: Omit<ReaderRuntimeCacheEntry<T>, 'state' | 'lastUsedAt'>): void {
-    // PDF/unknown Runtime 不进入该缓存，避免“活动登记”留下一个看似可命中的条目。
-    if (entry.format !== 'epub' && entry.format !== 'markdown') return;
+    // 未知格式不进入该缓存，避免“活动登记”留下一个看似可命中的条目。
+    if (entry.format !== 'epub' && entry.format !== 'markdown' && entry.format !== 'pdf') return;
     const existing = this.entries.get(entry.viewId);
     if (existing?.document !== entry.document) {
       this.entries.delete(entry.viewId);
@@ -204,6 +213,7 @@ export class ReaderRuntimeCache<T = BookDocument> {
     this.recordTransition(entry.viewId, existing?.state ?? null, 'active', 'register');
     this.entries.set(entry.viewId, {
       ...entry,
+      usage: normalizeUsage(entry.usage),
       state: 'active',
       lastUsedAt: this.now(),
     });
@@ -232,7 +242,7 @@ export class ReaderRuntimeCache<T = BookDocument> {
   suspend(
     entry: Omit<ReaderRuntimeCacheEntry<T>, 'state' | 'lastUsedAt'>,
   ): ReaderRuntimeCacheSuspendResult<T> {
-    if (entry.format !== 'epub' && entry.format !== 'markdown') {
+    if (entry.format !== 'epub' && entry.format !== 'markdown' && entry.format !== 'pdf') {
       this.rejectedAdmissions += 1;
       return { admitted: false, reason: 'unsupported-format', evicted: [] };
     }
@@ -240,14 +250,15 @@ export class ReaderRuntimeCache<T = BookDocument> {
       this.rejectedAdmissions += 1;
       return { admitted: false, reason: 'not-ready', evicted: [] };
     }
-    if (!fitsBudget(entry.usage, this.budget)) {
+    const existing = this.entries.get(entry.viewId);
+    const usage = normalizeUsage(entry.usage);
+    if (!fitsBudget(usage, this.budget)) {
       this.rejectedAdmissions += 1;
       return { admitted: false, reason: 'resource-budget', evicted: [] };
     }
-
-    const existing = this.entries.get(entry.viewId);
     this.entries.set(entry.viewId, {
       ...entry,
+      usage,
       state: 'suspended',
       lastUsedAt: this.now(),
     });
@@ -374,6 +385,7 @@ export function estimateReaderRuntimeResourceUsage(
     decodedPageCount: 0,
     rangeCacheBytes: 0,
     estimatedBytes: canvasBytes,
+    inFlightRangeReadCount: 0,
   });
 }
 
@@ -384,6 +396,7 @@ function normalizeUsage(usage: ReaderRuntimeResourceUsage): ReaderRuntimeResourc
     decodedPageCount: Math.max(0, Math.floor(usage.decodedPageCount)),
     rangeCacheBytes: Math.max(0, Math.floor(usage.rangeCacheBytes)),
     estimatedBytes: Math.max(0, Math.floor(usage.estimatedBytes)),
+    inFlightRangeReadCount: Math.max(0, Math.floor(usage.inFlightRangeReadCount ?? 0)),
   };
 }
 
@@ -395,6 +408,7 @@ function fitsBudget(
     usage.iframeCount <= budget.maxSuspendedIframes &&
     usage.canvasCount <= budget.maxSuspendedCanvases &&
     usage.decodedPageCount <= budget.maxSuspendedDecodedPages &&
+    (usage.inFlightRangeReadCount ?? 0) <= budget.maxSuspendedInFlightRangeReads &&
     usage.rangeCacheBytes <= budget.maxSuspendedRangeCacheBytes &&
     usage.estimatedBytes <= budget.maxSuspendedEstimatedBytes
   );
@@ -411,10 +425,19 @@ function fitsSuspendedBudget<T>(
       iframeCount: sum.iframeCount + entry.usage.iframeCount,
       canvasCount: sum.canvasCount + entry.usage.canvasCount,
       decodedPageCount: sum.decodedPageCount + entry.usage.decodedPageCount,
+      inFlightRangeReadCount:
+        sum.inFlightRangeReadCount + (entry.usage.inFlightRangeReadCount ?? 0),
       rangeCacheBytes: sum.rangeCacheBytes + entry.usage.rangeCacheBytes,
       estimatedBytes: sum.estimatedBytes + entry.usage.estimatedBytes,
     }),
-    { iframeCount: 0, canvasCount: 0, decodedPageCount: 0, rangeCacheBytes: 0, estimatedBytes: 0 },
+    {
+      iframeCount: 0,
+      canvasCount: 0,
+      decodedPageCount: 0,
+      inFlightRangeReadCount: 0,
+      rangeCacheBytes: 0,
+      estimatedBytes: 0,
+    },
   );
   return fitsBudget(total, budget);
 }

@@ -44,6 +44,24 @@ pnpm --filter @ai-reader/app test:real-annotations
 - v1 旧备份通过同一恢复协议读取；恢复前只在暂存数据库清除文件夹数据，材料归入未归类，书籍、封面、设置、位置、批注和标签保持不变。
 - 应用级入口由 `apps/reader/src/app/App.test.tsx` 验证，Rust 的同版/旧版恢复、损坏层级和原子回滚由 `apps/reader/src-tauri/src/db/backup.rs` 验证；Windows Tauri 的真实导入、树操作、导出/恢复和重启冒烟仍需按本机可用材料执行，不能以浏览器降级测试代替。
 
+## Issue #57 有界 Reader Runtime 总验收补充
+
+Issue #57 的自动化验收由两条互补命令组成：
+
+```powershell
+pnpm --dir apps/reader test:reader-runtime-cache
+pnpm --dir apps/reader test:reading-performance
+```
+
+前一条在真实 Chrome 中通过应用 `library.openBook`、`reader.activateView` 和 Markdown Command 覆盖：
+
+- EPUB↔EPUB、Markdown↔Markdown、PDF↔PDF 及 EPUB/PDF/Markdown 三组跨格式 A→B→A；
+- 两个 Editor Group 的 ReadingView/位置隔离、快速连续切换、缓存命中无新文档/renderer/范围读取；
+- PDF 挂起的 Canvas、解码页、在途范围读取硬预算；LRU 淘汰、关闭清理和重启恢复；
+- Markdown 源码模式、共享会话、编辑失效、正式保存、Recovery Snapshot 和放弃修改。
+
+后一条在浏览器中运行 640 页以上结构型 PDF，并在 Windows Tauri 模式验证同一流程的 `managed-range` 二进制响应、PDF.js 单文档、滚动窗口和 Canvas/范围预算。两条脚本成功和失败路径都写脱敏报告并清理辅助进程；浏览器设备模拟不计作 macOS、iPadOS 或 Android 原生证据。原生平台仍按 `macos-core-smoke.md`、`ipados-core-smoke.md` 和 `android-core-smoke.md` 采集启动、后台返回、位置恢复与重启证据。
+
 ## 当前结论
 
 截至 Issue #52 实现提交：
