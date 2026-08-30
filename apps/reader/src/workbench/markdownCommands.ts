@@ -23,6 +23,12 @@ export interface MarkdownCommandDependencies {
   viewHostFactory?: FoliateViewHostFactory;
   /** Markdown 正式版本递增后清掉旧材料版本的活 Runtime。 */
   invalidateMaterialRuntime?: (materialId: string) => Promise<void>;
+  /** 失效并重建当前材料所有非源码模式的活动 ReadingView。 */
+  reloadMaterialViews?: (materialId: string) => Promise<void>;
+  /** 进入源码模式前摘下并挂起对应 ReadingView Runtime。 */
+  suspendReaderView?: (viewId: string) => Promise<void>;
+  /** 退出源码模式后恢复对应 ReadingView Runtime。 */
+  restoreReaderView?: (viewId: string) => Promise<void>;
 }
 
 const RECOVERY_WRITE_DELAY_MS = 1_000;
@@ -53,12 +59,24 @@ async function rebuildMarkdownDocuments(
   dependencies: MarkdownCommandDependencies,
   activeViewIds?: readonly string[],
 ): Promise<void> {
-  const text = await readManagedMarkdownText(dependencies.importRepository, material.id);
+  const session = getSession(material.id);
+  let text = session?.savedVersion === material.documentVersion ? session.text : null;
+  if (text === null) {
+    text = await readManagedMarkdownText(dependencies.importRepository, material.id);
+    useMarkdownSessionStore
+      .getState()
+      .replaceFormalText(material.id, text, material.documentVersion);
+  }
   const runtime = useReaderRuntime.getState();
   const state = useWorkspaceStore.getState();
   const viewIds = activeViewIds ?? state.editorGroups
     .flatMap((group) => group.views)
-    .filter((view) => view.materialId === material.id && isViewActive(view.id))
+    .filter(
+      (view) =>
+        view.materialId === material.id &&
+        isViewActive(view.id) &&
+        !view.sourceMode,
+    )
     .map((view) => view.id);
   const factory = dependencies.viewHostFactory ?? createFoliateViewHostFactory();
   for (const viewId of viewIds) {
@@ -80,6 +98,21 @@ async function rebuildMarkdownDocuments(
       { cacheKey: buildReaderRuntimeCacheKeyForMaterial(viewId, material) },
     );
   }
+}
+
+/** 让活动阅读视图看到共享 Markdown 会话的最新正文。 */
+async function refreshMarkdownRuntime(
+  materialId: string,
+  dependencies: MarkdownCommandDependencies,
+): Promise<void> {
+  if (dependencies.reloadMaterialViews) {
+    await dependencies.reloadMaterialViews(materialId);
+    return;
+  }
+
+  await dependencies.invalidateMaterialRuntime?.(materialId);
+  const material = useLibraryStore.getState().materials.find((item) => item.id === materialId);
+  if (material) await rebuildMarkdownDocuments(material, dependencies);
 }
 
 export function registerMarkdownCommands(
@@ -177,7 +210,6 @@ export function registerMarkdownCommands(
       .editorGroups.flatMap((group) => group.views)
       .filter((view) => view.materialId === materialId && isViewActive(view.id))
       .map((view) => view.id);
-    await dependencies.invalidateMaterialRuntime?.(materialId);
 
     let recoveryCleared = false;
     if (bufferUnchanged) {
@@ -185,7 +217,12 @@ export function registerMarkdownCommands(
     } else {
       await flushRecoveryWrite(materialId);
     }
-    await rebuildMarkdownDocuments(updated, dependencies, activeViewIds);
+    if (dependencies.reloadMaterialViews) {
+      await dependencies.reloadMaterialViews(materialId);
+    } else {
+      await dependencies.invalidateMaterialRuntime?.(materialId);
+      await rebuildMarkdownDocuments(updated, dependencies, activeViewIds);
+    }
 
     if (bufferUnchanged && getSession(materialId)?.dirty) {
       bufferUnchanged = false;
@@ -202,6 +239,7 @@ export function registerMarkdownCommands(
     if (!view) return;
     useMarkdownSessionStore.getState().updateText(view.materialId, text);
     scheduleRecoveryWrite(view.materialId);
+    await refreshMarkdownRuntime(view.materialId, dependencies);
   });
 
   registry.register(COMMAND_IDS.markdownCheckRecoveries, async () => {
@@ -237,6 +275,7 @@ export function registerMarkdownCommands(
       useMarkdownSessionStore
         .getState()
         .restoreRecovery(materialId, snapshot.content, material.documentVersion);
+      await refreshMarkdownRuntime(materialId, dependencies);
       useShellUiStore.getState().removeMarkdownRecoverySnapshot(materialId);
       useShellUiStore
         .getState()
@@ -278,7 +317,15 @@ export function registerMarkdownCommands(
       }
     }
 
+    if (!view.sourceMode && next) {
+      // CodeMirror 接管当前 ReadingView 后,不可见 Foliate 不应继续接收输入、
+      // 选区或搜索事件;已打开对象仍可按缓存预算无损挂起。
+      await dependencies.suspendReaderView?.(viewId);
+    }
     useWorkspaceStore.getState().setViewSourceMode(viewId, next);
+    if (view.sourceMode && !next) {
+      await dependencies.restoreReaderView?.(viewId);
+    }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
@@ -322,12 +369,7 @@ export function registerMarkdownCommands(
     );
     useMarkdownSessionStore.getState().discard(view.materialId, savedText);
     const recoveryCleared = await clearRecoverySnapshot(view.materialId);
-    await rebuildMarkdownDocuments(
-      useLibraryStore
-        .getState()
-        .materials.find((material) => material.id === view.materialId)!,
-      dependencies,
-    );
+    await refreshMarkdownRuntime(view.materialId, dependencies);
     useShellUiStore
       .getState()
       .setStatusMessage(
@@ -375,11 +417,13 @@ export function registerMarkdownCommands(
       );
       useMarkdownSessionStore.getState().discard(view.materialId, savedText);
       await clearRecoverySnapshot(view.materialId);
+      await refreshMarkdownRuntime(view.materialId, dependencies);
     }
 
     useShellUiStore.getState().closeMarkdownDirtyClose();
     if (action === 'exitSource') {
       useWorkspaceStore.getState().setViewSourceMode(viewId, false);
+      await dependencies.restoreReaderView?.(viewId);
     } else {
       await registry.execute(COMMAND_IDS.readerCloseView, viewId);
     }

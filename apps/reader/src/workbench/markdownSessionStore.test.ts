@@ -20,6 +20,20 @@ describe('MarkdownDocumentSession Store', () => {
     });
   });
 
+  it('正式版本不一致时可用托管正文校准会话并清除旧脏内容', () => {
+    useMarkdownSessionStore.getState().openSession('mat-1', '旧版本', 0);
+    useMarkdownSessionStore.getState().updateText('mat-1', '未保存旧修改');
+
+    useMarkdownSessionStore.getState().replaceFormalText('mat-1', '正式版本 1', 1);
+
+    expect(useMarkdownSessionStore.getState().getSession('mat-1')).toEqual({
+      materialId: 'mat-1',
+      text: '正式版本 1',
+      dirty: false,
+      savedVersion: 1,
+    });
+  });
+
   it('更新文本会标记为脏', () => {
     useMarkdownSessionStore.getState().openSession('mat-1', '第一版', 0);
 

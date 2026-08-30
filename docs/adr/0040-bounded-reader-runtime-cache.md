@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-08-30
-- 关联工单：#53
+- 关联工单：#53、#54、#55
 - 替代范围：替代 ADR-0004 与 ADR-0005 中“所有非活动 ReadingView 立即释放 Reader Runtime”的生命周期约束；保留其中关于 `BookDocument` 边界、Workspace State 可序列化、每个可见 Editor Group 最多一个活动渲染器和全局最多两个活动渲染器的决定。
 
 ## 背景
@@ -32,6 +32,8 @@ active ──挂起前 flush/清理──> suspended ──LRU/失效──> evi
 
 `EpubBookDocument.attach/detach` 只负责把已打开的 Foliate renderer 移入/移出界面容器；挂起节点暂时放入固定不可见缓存根，防止 Foliate paginator 的未完成帧在 DOM 断开后访问空文档。恢复使用同一对象，不再次调用 `open()`。PDF 没有这组能力，因此仍然在失活时关闭并在重新激活时重建。
 
+Markdown 源码模式沿用同一生命周期：CodeMirror 独占 ReadingView 的可见区域时，Markdown Foliate Runtime 先清理输入/搜索/选区接线并按预算挂起；没有修改的会话在退出源码模式或切回标签时可命中原 Runtime。共享 `MarkdownDocumentSession` 的缓冲区一旦变化，或正式保存/放弃/恢复 Recovery Snapshot 完成，相关 Runtime 必须先失效；阅读模式只按当前会话文本重建，不能恢复旧渲染结果。双 Editor Group 仍各自拥有 ReadingView Runtime，但通过同一个材料级 Markdown 会话共享文本。
+
 ### 缓存准入与资源硬预算
 
 首版只准入已经完成首次打开的 EPUB 和 Markdown。PDF、未知格式、打开未完成、单项超限和任意无法证明安全一致性的对象都不准入。当前配置如下；活动 Runtime 上限继续由最多两个 Editor Group 约束。
@@ -59,7 +61,7 @@ active ──挂起前 flush/清理──> suspended ──LRU/失效──> evi
 - `contentAlgorithmVersion`：`epub-canonical-v1|markdown-parser-v1|sanitizer-v1`；
 - `format` 与 `reader-runtime-cache-v1` 状态机版本。
 
-键不完全相等就安全 miss 并关闭旧对象。Markdown 正式保存、EPUB 显式版本迁移、材料重新关联或材料永久清理会失效该 MaterialId 的全部缓存；普通移入回收站只失效挂起条目，保留当前活动 ReadingView 的可逆旧正文，直到用户切换/关闭时关闭而不再重新准入缓存。恢复迁移快照同样先清除旧 Runtime，禁止旧指纹继续响应输入。
+键不完全相等就安全 miss 并关闭旧对象。Markdown 共享缓冲区发生变化、正式保存、放弃修改或恢复 Recovery Snapshot，以及 EPUB 显式版本迁移、材料重新关联或材料永久清理，都会失效该 MaterialId 的全部缓存；普通移入回收站只失效挂起条目，保留当前活动 ReadingView 的可逆旧正文，直到用户切换/关闭时关闭而不再重新准入缓存。恢复迁移快照同样先清除旧 Runtime，禁止旧指纹继续响应输入。
 
 ### 错误恢复
 
@@ -67,7 +69,7 @@ active ──挂起前 flush/清理──> suspended ──LRU/失效──> evi
 
 ## 性能基线与门槛
 
-`apps/reader/scripts/verify-reader-runtime-cache.mjs` 在真实 Chrome 中通过真实 `library.openBook` 和 `reader.activateView` Command 创建 EPUB/Markdown，执行 A→B→A；脚本由应用真实 `ReadingView` 挂载 renderer，并记录：切出时间、首次可见、回切首次可交互、缓存命中/未命中、托管 Source 范围读取、BookDocument 来源打开次数、renderer 工厂创建次数、iframe/Canvas/解码页/范围缓存资源以及 `performance.memory.usedJSHeapSize`（浏览器可提供时）。
+`apps/reader/scripts/verify-reader-runtime-cache.mjs` 在真实 Chrome 中通过真实 `library.openBook`、`reader.activateView` 和 Markdown Commands 创建 EPUB/Markdown，执行 A→B→A，并验证源码模式的挂起、缓冲区变化失效、放弃修改后的安全重建；脚本由应用真实 `ReadingView` 挂载 renderer，并记录：切出时间、首次可见、回切首次可交互、缓存命中/未命中、托管 Source 范围读取、BookDocument 来源打开次数、renderer 工厂创建次数、iframe/Canvas/解码页/范围缓存资源以及 `performance.memory.usedJSHeapSize`（浏览器可提供时）。
 
 每轮随后清空 Runtime 和缓存，在同一 Chrome 进程、同一材料、同一机器测一次冷回切。默认至少五轮（命令会把小于三轮的配置提升到三轮），报告同时给出缓存命中和冷回切的中位数/P95。门槛不采用固定毫秒数：
 

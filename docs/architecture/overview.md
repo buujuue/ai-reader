@@ -106,7 +106,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Reader Runtime
 
-按每个 Editor Group 的活动 ReadingView 持有当前 Foliate/PDF View、加载任务、选区和搜索；全应用最多保留两个活动渲染器；按 MaterialId 持有共享的 MarkdownDocumentSession。ADR-0040 替代“所有非活动标签立即释放”的旧约束：EPUB/Markdown 首次打开完成后可按 ReadingView 身份进入一个有界 `suspended` Runtime 缓存，挂起时只保留已解析对象和不可见 renderer，不保留输入接线；缓存命中只重新挂载同一 renderer，PDF、未完成加载、版本/指纹/算法不一致或超出桌面/平板硬预算时进入 `evicted` 并关闭。Workspace State 仍只保存位置、视口、模式和历史，完整生命周期与资源预算见 `docs/adr/0040-bounded-reader-runtime-cache.md`。
+按每个 Editor Group 的活动 ReadingView 持有当前 Foliate/PDF View、加载任务、选区和搜索；全应用最多保留两个活动渲染器；按 MaterialId 持有共享的 MarkdownDocumentSession。ADR-0040 替代“所有非活动标签立即释放”的旧约束：EPUB/Markdown 首次打开完成后可按 ReadingView 身份进入一个有界 `suspended` Runtime 缓存，挂起时只保留已解析对象和不可见 renderer，不保留输入接线；缓存命中只重新挂载同一 renderer，PDF、未完成加载、版本/指纹/算法不一致或超出桌面/平板硬预算时进入 `evicted` 并关闭。Markdown 源码模式进入时同样挂起 Foliate，缓冲区、正式保存、放弃或恢复快照变化会先失效材料的全部 Runtime，再按共享会话文本重建非源码视图。Workspace State 仍只保存位置、视口、模式和历史，完整生命周期与资源预算见 `docs/adr/0040-bounded-reader-runtime-cache.md`。
 
 ### Annotation
 
@@ -120,7 +120,7 @@ SQLite 保存材料、批注、阅读位置、工作区和设置；材料表的 
 
 ### Markdown
 
-阅读模式复用 BookDocument/Foliate View；源码模式按需加载 CodeMirror 6。同一材料只有一个共享文档缓冲区。打开、放弃和保存后的重建通过 `ManagedFileSource` 按受控分块读取，完整文本只在 Markdown 领域内物化；正式保存由 Rust 原子替换，之后增加文档版本并恢复锚点。增量 Markdown 解析不在当前范围内。
+阅读模式复用 BookDocument/Foliate View；源码模式按需加载 CodeMirror 6。同一材料只有一个共享文档缓冲区。未修改会话可复用挂起的 Foliate Runtime；缓冲区变化、放弃、恢复快照和正式保存先使旧渲染结果失效，返回阅读模式时从最新共享会话安全重建，避免显示过期正文。没有可复用会话时，打开/重建通过 `ManagedFileSource` 按受控分块读取，完整文本只在 Markdown 领域内物化；正式保存由 Rust 原子替换，之后增加文档版本并恢复锚点。增量 Markdown 解析不在当前范围内。
 
 ### Backup
 
@@ -181,12 +181,13 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 26 切片**：单本材料拖放归类快捷方式（桌面精确指针下从材料叶子节点拖到已有文件夹或未归类；与“移动到……”共用 `library.moveMaterial` Command；单材料载荷、无效目标、失败回滚、非拖放输入和重启归属测试）。对应工单 #51，具体决策见 ADR-0038。
 - **第 27 切片**：完整书库备份与树型书库总验收（manifest v2 明确保存文件夹/材料归属，恢复前校验树关系、外键和 Workspace 树展开引用；v1 旧备份安全降级为未归类；前端顶栏入口与 Rust 整库切换保持一致）。对应工单 #52，具体决策见 ADR-0037。
 - **第 28 切片**：有限活 Reader Runtime 缓存与 EPUB/Markdown A→B→A 真实浏览器基线（active/suspended/evicted/closed 生命周期、按视图与材料内容版本隔离的缓存键、桌面/平板 LRU 硬预算、挂起前 flush 与输入清理、PDF 禁止准入及同机冷路径性能门槛）。对应工单 #53，具体决策见 ADR-0040。
+- **第 29 切片**：Markdown ReadingView 缓存与编辑一致性（源码模式挂起/恢复 Foliate，按共享会话失效脏渲染结果，正式保存/放弃/Recovery Snapshot 后安全重建，双 Editor Group 保持独立 Runtime，真实 Chrome 脚本覆盖编辑失效与回切）。对应工单 #55，具体决策见 ADR-0040。
 - **第 29 切片**：EPUB ReadingView 回切即时恢复（真实标签 Command 切换复用同一 BookDocument/Foliate 宿主，挂起时断开输入与焦点、LRU/材料失效只关闭一次，回收站与整库恢复清理旧 Runtime，并覆盖跨组隔离与缓存命中状态）。对应工单 #54，具体决策见 ADR-0040。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 - **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 导入检查和阅读均经 `PDFDataRangeTransport` 按需加载，但已导入阅读路径不再先检查后重建 PDF.js 文档；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。Windows Tauri 的 PDF Source 可通过 `managed-range.localhost` 以 MaterialId + 半开范围接收二进制响应；非 Windows、非 PDF 和浏览器降级继续使用现有受控范围回退，Windows 协议授权或读取失败则直接报告可诊断错误，禁止路径暴露或静默全量读取。具体决策见 ADR-0028、ADR-0029、ADR-0030、ADR-0031 与 ADR-0032。
 - **阅读读取性能验收**：`apps/reader/scripts/verify-reading-performance.mjs` 默认在真实 Chrome 中运行三次浏览器直接 `File` 基线和完整 `library.openBook → mountViewDocument → ManagedFileSource → BookDocument` 路径；PDF 夹具为 640 页、每页 16 KiB 被引用内容流、超过 8 MiB，不依赖未引用尾部填充。脚本记录首次有效 Canvas 且文字层/无文字状态收敛的耗时、PDF.js 解析轮次、页面对象轮次、范围请求、累计读取、峰值 JS 内存和滚动活跃 Canvas，并验证单次打开只创建一份 PDF.js 文档、范围不超过 8 MiB、累计读取不超过文件大小的 110%、滚动窗口不超过 12 个 Canvas。通过 `READING_PERFORMANCE_MODE=tauri`、WebView2 远程调试地址和显式 `READING_PERFORMANCE_PDF_PATH`，同一脚本连接 Windows Tauri 生产 WebView，要求使用 `managed-range` 二进制响应且首屏中位数不超过浏览器 File 基线 2 倍；报告与失败诊断均脱敏并在 finally 清理浏览器、Vite、样本服务器和阅读运行时。
-- **Reader Runtime 缓存验收**：`apps/reader/scripts/verify-reader-runtime-cache.mjs` 在真实 Chrome 中通过真实 `library.openBook`/`reader.activateView` Command 构造 EPUB 与 Markdown A→B→A，默认五轮记录切出、首次可见、回切首次可交互、缓存命中、BookDocument 来源打开、renderer 创建、范围读取、iframe/Canvas/解码页/范围缓存和可获得的 JS 堆内存；每轮用同机冷回切中位数/P95 作为动态门槛，要求命中不新建对象或读取范围且命中中位数/P95 不超过冷路径。报告写入 `apps/reader/scripts/artifacts/reader-runtime-cache.json`，具体预算与失效规则见 ADR-0040。该脚本同时作为工单 #54 的 EPUB 回切 tracer bullet 验收。
+- **Reader Runtime 缓存验收**：`apps/reader/scripts/verify-reader-runtime-cache.mjs` 在真实 Chrome 中通过真实 `library.openBook`/`reader.activateView` 与 Markdown Command 构造 EPUB/Markdown A→B→A，默认五轮记录切出、首次可见、回切首次可交互、缓存命中、BookDocument 来源打开、renderer 创建、范围读取、iframe/Canvas/解码页/范围缓存和可获得的 JS 堆内存；每轮用同机冷回切中位数/P95 作为动态门槛，要求命中不新建对象或读取范围且命中中位数/P95 不超过冷路径；脚本另验源码模式挂起、编辑失效和放弃后重建。报告写入 `apps/reader/scripts/artifacts/reader-runtime-cache.json`，具体预算与失效规则见 ADR-0040。该脚本同时作为工单 #54/#55 的 EPUB 与 Markdown 回切 tracer bullet 验收。
 
 macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/architecture/macos-core-smoke.md`；iPadOS 的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`；Android 平板的配置、模拟器启动证据和人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。Tauri 使用宿主平台全部打包目标，macOS 最低版本为 12.0，Capability 只向 `main` 窗口授予系统打开/保存对话框和外部 URL 打开权限。真实 macOS/iPadOS/Android 启动、导入、阅读与重启恢复不计入浏览器降级证据，统一由 `.github/workflows/cross-platform.yml` 承载对应平台的自动校验；未能在 CI 自动完成的移动系统交互按冒烟文档记录人工证据。
 

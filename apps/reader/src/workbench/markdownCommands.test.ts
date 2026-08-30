@@ -7,7 +7,14 @@ import {
 } from '../domain/library/inMemoryImportRepository';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryWorkspaceRepository';
-import { registerReaderCommands } from './readerCommands';
+import {
+  invalidateReaderRuntimeMaterial,
+  reloadMaterialViews,
+  registerReaderCommands,
+  restoreReaderViewRuntime,
+  suspendReaderViewRuntime,
+} from './readerCommands';
+import { ReaderRuntimeCache } from './readerRuntimeCache';
 import { useLibraryStore } from './libraryStore';
 import { useMarkdownSessionStore } from './markdownSessionStore';
 import { registerMarkdownCommands } from './markdownCommands';
@@ -80,6 +87,7 @@ describe('Markdown 命令', () => {
   let importRepository: ReturnType<typeof createInMemoryImportRepository>;
   let workspaceRepository: ReturnType<typeof createInMemoryWorkspaceRepository>;
   let materialId: string;
+  let readerRuntimeCache: ReaderRuntimeCache;
 
   async function setupWithMarkdown() {
     const sources = new Map<string, Uint8Array>();
@@ -97,6 +105,7 @@ describe('Markdown 命令', () => {
   beforeEach(async () => {
     registry = new CommandRegistry();
     workspaceRepository = createInMemoryWorkspaceRepository();
+    readerRuntimeCache = new ReaderRuntimeCache();
     useWorkspaceStore.getState().resetToDefault();
     useReaderRuntime.setState({ documents: new Map() });
     useMarkdownSessionStore.getState().resetToDefault();
@@ -107,16 +116,23 @@ describe('Markdown 命令', () => {
     });
     const material = await setupWithMarkdown();
     useLibraryStore.setState({ materials: [material], trashedMaterials: [] });
-    registerReaderCommands(registry, {
+    const readerDependencies = {
       importRepository,
       workspaceRepository,
       viewHostFactory: () => createFakeViewHost(),
-    });
+      readerRuntimeCache,
+    };
+    registerReaderCommands(registry, readerDependencies);
     // 注册 reader 命令后,再注册 markdown 命令(依赖 readerCloseView)。
     registerMarkdownCommands(registry, {
       importRepository,
       workspaceRepository,
       viewHostFactory: () => createFakeViewHost(),
+      invalidateMaterialRuntime: invalidateReaderRuntimeMaterial,
+      reloadMaterialViews: (id) => reloadMaterialViews(readerDependencies, id),
+      suspendReaderView: (id) => suspendReaderViewRuntime(readerDependencies, id),
+      restoreReaderView: (id) =>
+        restoreReaderViewRuntime(readerDependencies, id).then(() => undefined),
     });
     await registry.execute(COMMAND_IDS.libraryOpenBook, material);
   });
@@ -151,6 +167,39 @@ describe('Markdown 命令', () => {
     expect(useShellUiStore.getState().markdownDirtyCloseAction).toBe('exitSource');
   });
 
+  it('源码模式挂起 Markdown Runtime,编辑后失效旧正文,放弃修改可从共享会话重建', async () => {
+    const original = useReaderRuntime.getState().getDocument(activeViewId())!;
+    const close = vi.spyOn(original, 'close');
+    // 应用级 ReadingView 会在这里完成首次挂载;命令测试显式调用同一公共挂载 seam。
+    const { mountViewDocument } = await import('./readerCommands');
+    mountViewDocument(original, activeViewId(), document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(original.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.markdownToggleSourceMode, activeViewId());
+    expect(useReaderRuntime.getState().getDocumentLifecycle(activeViewId())).toBe('suspended');
+
+    await registry.execute(COMMAND_IDS.markdownUpdateBuffer, activeViewId(), '# 编辑中的正文');
+    expect(close).toHaveBeenCalledOnce();
+    expect(useReaderRuntime.getState().getDocument(activeViewId())).toBeUndefined();
+    expect(readerRuntimeCache.getEntries()).toHaveLength(0);
+
+    await registry.execute(COMMAND_IDS.markdownToggleSourceMode, activeViewId());
+    expect(useShellUiStore.getState().markdownDirtyCloseAction).toBe('exitSource');
+    await registry.execute(COMMAND_IDS.markdownCloseDirty, activeViewId(), 'discard');
+
+    const rebuilt = useReaderRuntime.getState().getDocument(activeViewId());
+    expect(rebuilt).toBeDefined();
+    expect(rebuilt).not.toBe(original);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.sourceMode).toBe(false);
+    expect(useMarkdownSessionStore.getState().getSession(materialId)).toMatchObject({
+      text: MARKDOWN_SOURCE,
+      dirty: false,
+    });
+  });
+
   it('保存命令由 importRepository 原子保存并递增版本、更新指纹', async () => {
     useMarkdownSessionStore.getState().openSession(materialId, MARKDOWN_SOURCE, 0);
     useMarkdownSessionStore.getState().updateText(materialId, '# 新内容');
@@ -166,6 +215,24 @@ describe('Markdown 命令', () => {
     expect(material.fingerprint).not.toBe(originalFingerprint);
     // 托管文件已写入新内容。
     expect(await readManagedText(importRepository, materialId)).toBe('# 新内容');
+  });
+
+  it('正式保存使活动 Markdown Runtime 失效并按共享缓冲区重建', async () => {
+    const before = useReaderRuntime.getState().getDocument(activeViewId())!;
+    const close = vi.spyOn(before, 'close');
+    useMarkdownSessionStore.getState().updateText(materialId, '# 保存后的正文');
+
+    await registry.execute(COMMAND_IDS.markdownSave, activeViewId());
+
+    const after = useReaderRuntime.getState().getDocument(activeViewId());
+    expect(close).toHaveBeenCalledOnce();
+    expect(after).toBeDefined();
+    expect(after).not.toBe(before);
+    expect(useMarkdownSessionStore.getState().getSession(materialId)).toMatchObject({
+      text: '# 保存后的正文',
+      dirty: false,
+      savedVersion: 1,
+    });
   });
 
   it('编辑、保存、关闭后重新打开仍从 ManagedFileSource 读取正式文本', async () => {
@@ -396,6 +463,25 @@ describe('Markdown 命令', () => {
     expect(useShellUiStore.getState().markdownRecoverySnapshots[0]?.status).toBe('conflict');
     expect(useMarkdownSessionStore.getState().getSession(materialId)?.text).not.toBe('# 未保存 v0');
     expect(await readManagedText(importRepository, materialId)).toBe('# 正式 v1');
+  });
+
+  it('恢复快照会使活动阅读 Runtime 失效并从恢复后的共享缓冲区重建', async () => {
+    const before = useReaderRuntime.getState().getDocument(activeViewId())!;
+    const close = vi.spyOn(before, 'close');
+    await importRepository.writeMarkdownRecovery(materialId, '# 恢复后的正文', 0);
+    await registry.execute(COMMAND_IDS.markdownCheckRecoveries);
+
+    await registry.execute(COMMAND_IDS.markdownResolveRecovery, materialId, 'restore');
+
+    const after = useReaderRuntime.getState().getDocument(activeViewId());
+    expect(close).toHaveBeenCalledOnce();
+    expect(after).toBeDefined();
+    expect(after).not.toBe(before);
+    expect(useMarkdownSessionStore.getState().getSession(materialId)).toMatchObject({
+      text: '# 恢复后的正文',
+      dirty: true,
+      savedVersion: 0,
+    });
   });
 
   it('正式保存成功后清理恢复快照', async () => {

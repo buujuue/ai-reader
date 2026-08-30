@@ -30,7 +30,9 @@ import {
   flushAndCloseAllReaderViews,
   reloadMaterialViews,
   invalidateReaderRuntimeMaterial,
+  restoreReaderViewRuntime,
   type ReaderCommandDependencies,
+  suspendReaderViewRuntime,
 } from '../workbench/readerCommands';
 import { ReaderRuntimeCache } from '../workbench/readerRuntimeCache';
 import { registerWorkbenchCommands } from '../workbench/workbenchCommands';
@@ -316,6 +318,9 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     importRepository: importServices.importRepository,
     workspaceRepository,
     invalidateMaterialRuntime: invalidateReaderRuntimeMaterial,
+    reloadMaterialViews: (materialId) => reloadMaterialViews(readerCommandDependencies, materialId),
+    suspendReaderView: (viewId) => suspendReaderViewRuntime(readerCommandDependencies, viewId),
+    restoreReaderView: (viewId) => restoreReaderViewRuntime(readerCommandDependencies, viewId).then(() => undefined),
     ...(options.viewHostFactory ? { viewHostFactory: options.viewHostFactory } : {}),
   });
   // 暴露批注 Store 到 window,供真实浏览器验收脚本读取(仅开发/测试用)。

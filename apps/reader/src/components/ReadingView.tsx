@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS, type CommandId } from '../commands/commandRegistry';
+import { formatFromSourceFileName } from '../domain/library/materialFormat';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import { useReaderRuntime } from '../workbench/readerRuntime';
@@ -56,7 +57,7 @@ export function ReadingView({ viewId }: { viewId: string }) {
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || sourceMode) return;
     const existing = useReaderRuntime.getState().getDocument(viewId);
     if (!existing) return;
     if (mountedDocumentRef.current === existing) return;
@@ -79,12 +80,12 @@ export function ReadingView({ viewId }: { viewId: string }) {
         mountedDocumentRef.current = null;
       }
     };
-  }, [importRepository, workspaceRepository, viewId, document]);
+  }, [importRepository, sourceMode, workspaceRepository, viewId, document]);
 
   // 统一阅读输入:键盘 + 内容文档(iframe 内)的滚轮/点击/触摸都收敛到同一组翻页命令。
   useEffect(() => {
     const book = useReaderRuntime.getState().getDocument(viewId);
-    if (!book) return;
+    if (!book || sourceMode) return;
     const materialId = useWorkspaceStore.getState().editorGroups
       .flatMap((group) => group.views)
       .find((view) => view.id === viewId)?.materialId;
@@ -169,9 +170,8 @@ export function ReadingView({ viewId }: { viewId: string }) {
       }
     };
     return registerReaderRuntimeInputCleanup(viewId, cleanup);
-  }, [commands, groupId, isActiveView, viewId, document]);
+  }, [commands, groupId, isActiveView, sourceMode, viewId, document]);
 
-  const isMarkdownSourceMode = sourceMode && document?.format === 'markdown';
   const materialId = useWorkspaceStore((state) => {
     for (const group of state.editorGroups) {
       const view = group.views.find((candidate) => candidate.id === viewId);
@@ -179,6 +179,14 @@ export function ReadingView({ viewId }: { viewId: string }) {
     }
     return null;
   });
+  const materialFormat = useLibraryStore((state) => {
+    const material = materialId ? state.materials.find((item) => item.id === materialId) : null;
+    return material ? formatFromSourceFileName(material.sourceFileName) : null;
+  });
+  // Runtime 失效后 document 可能暂时为空,源码模式仍必须继续由 CodeMirror
+  // 占据正文区域,不能因为等待重建而退回显示旧的阅读容器。
+  const isMarkdownSourceMode =
+    sourceMode && (document?.format === 'markdown' || materialFormat === 'markdown');
   const hasSplit = useWorkspaceStore((state) => state.editorGroups.length >= 2);
 
   return (

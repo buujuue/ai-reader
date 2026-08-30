@@ -30,6 +30,8 @@ export interface MarkdownSessionStoreState {
     text: string,
     savedVersion: number,
   ) => void;
+  /** 用当前托管正文替换版本不一致的会话,清除旧的脏缓冲区。 */
+  replaceFormalText: (materialId: string, text: string, savedVersion: number) => void;
   /** 更新缓冲区文本并标记为脏。 */
   updateText: (materialId: string, text: string) => void;
   /** 记录正式保存结果；仅当缓冲区仍等于本次保存文本时清除脏标记。 */
@@ -65,6 +67,14 @@ export const useMarkdownSessionStore = create<MarkdownSessionStoreState>()(
           },
         };
       }),
+
+    replaceFormalText: (materialId, text, savedVersion) =>
+      set((state) => ({
+        sessions: {
+          ...state.sessions,
+          [materialId]: { materialId, text, dirty: false, savedVersion },
+        },
+      })),
 
     updateText: (materialId, text) =>
       set((state) => {

@@ -270,6 +270,22 @@ function getReaderRuntimeCache(dependencies: ReaderCommandDependencies): ReaderR
   return registeredReaderRuntimeCache;
 }
 
+/** 在不改变 Workspace 活动视图的前提下挂起一个 ReadingView Runtime。 */
+export function suspendReaderViewRuntime(
+  dependencies: ReaderCommandDependencies,
+  viewId: string,
+): Promise<void> {
+  return enqueueRuntimeTransition(() => suspendViewRuntime(dependencies, viewId));
+}
+
+/** 恢复一个当前活动视图的 Runtime;命中时复用原 BookDocument,否则安全重建。 */
+export function restoreReaderViewRuntime(
+  dependencies: ReaderCommandDependencies,
+  viewId: string,
+): Promise<BookDocument | null> {
+  return enqueueRuntimeTransition(() => ensureActiveViewDocument(dependencies, viewId));
+}
+
 /** 关闭一个不再可缓存的 Runtime,先移除缓存索引再由 Runtime Store 统一 close。 */
 function closeReaderRuntime(viewId: string, cache: ReaderRuntimeCache): void {
   cache.remove(viewId);
@@ -372,17 +388,25 @@ async function createPdfDocument(
 async function createMarkdownDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
+  options: { preferManagedSource?: boolean } = {},
 ): Promise<BookDocument | null> {
-  let text: string;
-  try {
-    text = await readManagedMarkdownText(dependencies.importRepository, material.id);
-  } catch (error) {
-    throw new Error(`读取 Markdown 失败：${describeDocumentOpenError(error)}`);
+  const session = useMarkdownSessionStore.getState().getSession(material.id);
+  let text =
+    !options.preferManagedSource || session?.dirty
+      ? session?.savedVersion === material.documentVersion
+        ? session.text
+        : null
+      : null;
+  if (text === null) {
+    try {
+      text = await readManagedMarkdownText(dependencies.importRepository, material.id);
+    } catch (error) {
+      throw new Error(`读取 Markdown 失败：${describeDocumentOpenError(error)}`);
+    }
+    useMarkdownSessionStore
+      .getState()
+      .replaceFormalText(material.id, text, material.documentVersion);
   }
-  // 打开 Markdown 视图时建立或复用该材料的共享会话(缓冲区、脏标记、已保存版本)。
-  useMarkdownSessionStore
-    .getState()
-    .openSession(material.id, text, material.documentVersion);
   return new MarkdownBookDocument({
     text,
     metadata: {
@@ -400,6 +424,7 @@ async function createMarkdownDocument(
 async function createDocumentForMaterial(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
+  options: { preferManagedMarkdownSource?: boolean } = {},
 ): Promise<BookDocument | null> {
   const format = formatFromSourceFileName(material.sourceFileName);
   switch (format) {
@@ -408,7 +433,13 @@ async function createDocumentForMaterial(
     case 'epub':
       return createEpubDocument(dependencies, material);
     case 'markdown':
-      return createMarkdownDocument(dependencies, material);
+      return createMarkdownDocument(
+        dependencies,
+        material,
+        options.preferManagedMarkdownSource === undefined
+          ? {}
+          : { preferManagedSource: options.preferManagedMarkdownSource },
+      );
     default:
       return null;
   }
@@ -418,11 +449,12 @@ function getOrCreatePendingDocument(
   dependencies: ReaderCommandDependencies,
   viewId: string,
   material: ReadingMaterial,
+  options: { preferManagedMarkdownSource?: boolean } = {},
 ): Promise<BookDocument | null> {
   const pending = pendingDocumentCreations.get(viewId);
   if (pending) return pending;
 
-  const creation = createDocumentForMaterial(dependencies, material);
+  const creation = createDocumentForMaterial(dependencies, material, options);
   pendingDocumentCreations.set(viewId, creation);
   void creation.then(
     () => {
@@ -615,7 +647,12 @@ export function reloadMaterialViews(
     const viewIds = useWorkspaceStore
       .getState()
       .editorGroups.flatMap((group) => group.views)
-      .filter((view) => view.materialId === materialId && isViewActive(view.id))
+      .filter(
+        (view) =>
+          view.materialId === materialId &&
+          isViewActive(view.id) &&
+          !view.sourceMode,
+      )
       .map((view) => view.id);
     await invalidateReaderRuntimeMaterial(materialId);
     for (const viewId of viewIds) {
@@ -628,6 +665,7 @@ async function ensureActiveViewDocument(
   dependencies: ReaderCommandDependencies,
   viewId: string,
   material?: ReadingMaterial,
+  options: { preferManagedMarkdownSource?: boolean } = {},
 ): Promise<BookDocument | null> {
   const runtime = useReaderRuntime.getState();
   const existing = runtime.getDocument(viewId);
@@ -664,6 +702,13 @@ async function ensureActiveViewDocument(
     return null;
   }
 
+  // 源码模式由 CodeMirror 独占当前 ReadingView 的可见内容;不要在启动恢复、
+  // 标签切换或其它材料刷新时为隐藏的 Foliate Runtime 重新创建正文。
+  if (view.sourceMode) {
+    runtime.setDocumentState(viewId, { status: 'idle' });
+    return null;
+  }
+
   const cache = getReaderRuntimeCache(dependencies);
   const cacheKey = buildReaderRuntimeCacheKeyForMaterial(viewId, targetMaterial);
   if (existing && runtime.getDocumentLifecycle(viewId) === 'active') {
@@ -697,7 +742,7 @@ async function ensureActiveViewDocument(
   const generation = runtimeGeneration;
   let document: BookDocument | null;
   try {
-    document = await getOrCreatePendingDocument(dependencies, viewId, targetMaterial);
+    document = await getOrCreatePendingDocument(dependencies, viewId, targetMaterial, options);
   } catch (error) {
     runtime.setDocumentState(viewId, {
       status: 'error',
@@ -751,6 +796,7 @@ async function activateViewRuntime(
   viewId: string,
   material?: ReadingMaterial,
   previousViewIdOverride?: string | null,
+  options: { preferManagedMarkdownSource?: boolean } = {},
 ): Promise<BookDocument | null> {
   const view = findView(viewId);
   const groupId = findViewGroupId(viewId);
@@ -759,8 +805,7 @@ async function activateViewRuntime(
   const previousViewId =
     previousViewIdOverride === undefined ? getActiveViewId(groupId) : previousViewIdOverride;
   if (previousViewId && previousViewId !== viewId) {
-    // 先提升目标缓存项再挂起旧活动项。缓存只有一个挂起槽位时，若反过来处理，
-    // 旧项会把即将回切的目标 LRU 淘汰，A→B→A 会错误地退化为重建。
+    const targetIsSourceMode = view.sourceMode;
     const targetDocument = useReaderRuntime.getState().getDocument(viewId);
     const targetCache = getReaderRuntimeCache(dependencies);
     const targetCacheKey =
@@ -768,6 +813,35 @@ async function activateViewRuntime(
         ? buildReaderRuntimeCacheKeyForMaterial(viewId, material)
         : useReaderRuntime.getState().getDocumentCacheKey(viewId)) ??
       targetCache.getEntries().find((entry) => entry.viewId === viewId)?.key;
+
+    // 源码模式不需要可见 Foliate，但未修改内容仍可以保留一个受保护的
+    // suspended Runtime。先提升目标缓存项，再挂起上一个活动视图，避免
+    // 单槽位 LRU 把源码视图的无损回切对象淘汰。
+    if (
+      targetIsSourceMode &&
+      targetDocument &&
+      useReaderRuntime.getState().getDocumentLifecycle(viewId) === 'suspended' &&
+      targetCacheKey
+    ) {
+      const lookup = targetCache.activate(viewId, targetCacheKey);
+      if (lookup.kind === 'hit' && lookup.entry.document === targetDocument) {
+        useReaderRuntime.getState().setDocumentLifecycle(viewId, 'active');
+      } else {
+        useReaderRuntime.getState().removeDocument(viewId);
+      }
+    }
+
+    if (targetIsSourceMode) {
+      await suspendViewRuntime(dependencies, previousViewId);
+      useWorkspaceStore.getState().setActiveView(groupId, viewId);
+      if (useReaderRuntime.getState().getDocument(viewId)) {
+        await suspendViewRuntime(dependencies, viewId);
+      }
+      return null;
+    }
+
+    // 先提升目标缓存项再挂起旧活动项。缓存只有一个挂起槽位时，若反过来处理，
+    // 旧项会把即将回切的目标 LRU 淘汰，A→B→A 会错误地退化为重建。
     if (
       targetDocument &&
       useReaderRuntime.getState().getDocumentLifecycle(viewId) === 'suspended' &&
@@ -807,7 +881,8 @@ async function activateViewRuntime(
     await suspendViewRuntime(dependencies, previousViewId);
   }
   useWorkspaceStore.getState().setActiveView(groupId, viewId);
-  return ensureActiveViewDocument(dependencies, viewId, material);
+  if (view.sourceMode) return null;
+  return ensureActiveViewDocument(dependencies, viewId, material, options);
 }
 
 /** 材料格式的展示用途(供 PDF 视口命令判断当前材料是否支持 PDF 视口)。 */
@@ -1041,11 +1116,23 @@ export function registerReaderCommands(
     }
     const activeGroupId = useWorkspaceStore.getState().activeEditorGroupId;
     const previousViewId = getActiveViewId(activeGroupId);
+    const existingView = findViewInGroupByMaterialId(activeGroupId, material.id);
     const viewId = useWorkspaceStore.getState().openView(material.id, { activate: false });
 
     try {
-      const document = await activateViewRuntime(dependencies, viewId, material, previousViewId);
+      const document = await activateViewRuntime(
+        dependencies,
+        viewId,
+        material,
+        previousViewId,
+        { preferManagedMarkdownSource: existingView === undefined },
+      );
       if (!document) {
+        if (findView(viewId)?.sourceMode) {
+          await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+          useShellUiStore.getState().requestCompactActivityPanelDismissal();
+          return viewId;
+        }
         if (getActiveViewId() !== viewId) {
           await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
           return;

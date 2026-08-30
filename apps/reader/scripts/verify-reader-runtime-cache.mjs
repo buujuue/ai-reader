@@ -1,5 +1,5 @@
 /**
- * Reader Runtime 有界缓存的真实浏览器基线（工单 #53/#54）。
+ * Reader Runtime 有界缓存的真实浏览器基线（工单 #53/#54/#55）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
  * EPUB 与 Markdown 的 A→B→A 流程，分别记录冷启动与缓存回切的可交互时间、
@@ -78,7 +78,7 @@ async function main() {
     const result = await page.evaluate(async ({ runCount: requestedRuns }) => {
       const [commandModule, commandRegistryModule, importModule, epubWriterModule, epubInspectorModule,
         markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeCacheModule,
-        managedSourceModule, hostModule] = await Promise.all([
+        managedSourceModule, hostModule, markdownCommandsModule, libraryStoreModule] = await Promise.all([
         import('/src/workbench/readerCommands.ts'),
         import('/src/commands/commandRegistry.ts'),
         import('/src/domain/library/inMemoryImportRepository.ts'),
@@ -90,6 +90,8 @@ async function main() {
         import('/src/workbench/readerRuntimeCache.ts'),
         import('/src/domain/library/managedFileSource.ts'),
         import('/src/domain/reader/foliateViewHost.ts'),
+        import('/src/workbench/markdownCommands.ts'),
+        import('/src/workbench/libraryStore.ts'),
       ]);
       const {
         addInMemorySource,
@@ -100,13 +102,19 @@ async function main() {
       const { inspectMarkdown } = markdownInspectorModule;
       const { createInMemoryWorkspaceRepository } = workspaceRepoModule;
       const { useWorkspaceStore } = workspaceStoreModule;
+      const { useLibraryStore } = libraryStoreModule;
       const { ManagedFileSource } = managedSourceModule;
       const { createFoliateViewHostFactory } = hostModule;
       const { COMMAND_IDS, CommandRegistry } = commandRegistryModule;
       const {
         registerReaderCommands,
         flushAndCloseAllReaderViews,
+        invalidateReaderRuntimeMaterial,
+        reloadMaterialViews,
+        restoreReaderViewRuntime,
+        suspendReaderViewRuntime,
       } = commandModule;
+      const { registerMarkdownCommands } = markdownCommandsModule;
 
       const bytes = new Map();
       addInMemorySource(bytes, 'cache-a.epub', buildEpub({ title: '缓存基线 EPUB' }));
@@ -124,6 +132,7 @@ async function main() {
           : (await inspectMarkdown(content, name)).metadata;
         materials.push(await importRepository.commitImport(staged, metadata));
       }
+      useLibraryStore.setState({ materials, trashedMaterials: [] });
 
       const counters = {
         sourceOpens: 0,
@@ -153,11 +162,21 @@ async function main() {
       };
       const cache = new readerRuntimeCacheModule.ReaderRuntimeCache();
       const registry = new CommandRegistry();
-      registerReaderCommands(registry, {
+      const readerDependencies = {
         importRepository,
         workspaceRepository,
         viewHostFactory,
         readerRuntimeCache: cache,
+      };
+      registerReaderCommands(registry, readerDependencies);
+      registerMarkdownCommands(registry, {
+        importRepository,
+        workspaceRepository,
+        invalidateMaterialRuntime: invalidateReaderRuntimeMaterial,
+        reloadMaterialViews: (materialId) => reloadMaterialViews(readerDependencies, materialId),
+        suspendReaderView: (viewId) => suspendReaderViewRuntime(readerDependencies, viewId),
+        restoreReaderView: (viewId) =>
+          restoreReaderViewRuntime(readerDependencies, viewId).then(() => undefined),
       });
 
       const waitFor = async (predicate, label, timeoutMs = 20_000) => {
@@ -331,15 +350,50 @@ async function main() {
         });
       }
 
+      // 在真实 Chrome 中验证 Markdown 源码模式的 Runtime 生命周期：进入源码模式
+      // 后 Foliate 挂起，编辑会使旧对象失效，放弃修改并退出时按共享会话重建。
+      const markdownViewId = viewIdForMaterial(materials[1].id);
+      if (!markdownViewId) throw new Error('源码模式验收没有找到 Markdown ReadingView');
+      const sourceModeBefore = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
+      await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
+      const sourceModeEntered = useWorkspaceStore.getState().editorGroups
+        .flatMap((group) => group.views)
+        .find((view) => view.id === markdownViewId)?.sourceMode === true;
+      const sourceRuntimeSuspended =
+        commandModule.getReaderRuntimeStatusForMeasurement(markdownViewId)?.status !== 'error' &&
+        commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) !== undefined &&
+        cache.getEntries().some((entry) => entry.viewId === markdownViewId && entry.state === 'suspended');
+      await registry.execute(COMMAND_IDS.markdownUpdateBuffer, markdownViewId, '# 真实浏览器编辑\n\n临时正文');
+      const sourceRuntimeInvalidated =
+        commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) === undefined;
+      await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
+      await registry.execute(COMMAND_IDS.markdownCloseDirty, markdownViewId, 'discard');
+      await waitFor(
+        () => commandModule.getReaderRuntimeStatusForMeasurement(markdownViewId)?.status === 'ready',
+        'Markdown 源码模式退出后恢复阅读 Runtime',
+      );
+      const sourceModeRestored = useWorkspaceStore.getState().editorGroups
+        .flatMap((group) => group.views)
+        .find((view) => view.id === markdownViewId)?.sourceMode === false;
+      const sourceRuntimeRebuilt =
+        commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) !== sourceModeBefore;
+
       await waitFrames(4);
       await flushAndCloseAllReaderViews();
       await waitFrames();
       return {
         schemaVersion: 'reader-runtime-cache.v1',
-        issue: 54,
+        issue: 55,
         status: 'measured',
         runCount: requestedRuns,
         samples,
+        sourceMode: {
+          entered: sourceModeEntered,
+          runtimeSuspended: sourceRuntimeSuspended,
+          runtimeInvalidated: sourceRuntimeInvalidated,
+          restored: sourceModeRestored,
+          runtimeRebuilt: sourceRuntimeRebuilt,
+        },
       };
     }, { runCount });
 
@@ -377,6 +431,11 @@ async function main() {
       epubHitP95WithinSameMachineColdP95: percentile(hitValues, 0.95) <= thresholds.epub.hitReturnInteractiveP95Ms,
       markdownHitMedianWithinSameMachineColdMedian: median(markdownHitValues) <= thresholds.markdown.hitReturnInteractiveMedianMs,
       markdownHitP95WithinSameMachineColdP95: percentile(markdownHitValues, 0.95) <= thresholds.markdown.hitReturnInteractiveP95Ms,
+      sourceModeLifecycle: result.sourceMode.entered &&
+        result.sourceMode.runtimeSuspended &&
+        result.sourceMode.runtimeInvalidated &&
+        result.sourceMode.restored &&
+        result.sourceMode.runtimeRebuilt,
     };
     result.thresholds = thresholds;
     result.summary = {

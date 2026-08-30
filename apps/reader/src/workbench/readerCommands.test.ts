@@ -13,6 +13,7 @@ import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
 import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import { makeFakeDocument, makeFakeLib, makeFakeRasterizer } from '../domain/reader/pdf/pdfTestFakes';
+import { useMarkdownSessionStore } from './markdownSessionStore';
 import {
   invalidateReaderRuntimeMaterial,
   mountViewDocument,
@@ -110,6 +111,32 @@ describe('Reader 命令', () => {
     return materials;
   }
 
+  async function setupWithMarkdownAndEpub() {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(
+      sources,
+      'cache.md',
+      new TextEncoder().encode('# 缓存笔记\n\nMarkdown 正文'),
+    );
+    addInMemorySource(sources, 'cache.epub', buildEpub({ title: '缓存 EPUB' }));
+    importRepository = createInMemoryImportRepository(sources);
+    const markdownStage = await importRepository.stageImport('cache.md');
+    const markdownBytes = await importRepository.readStagedFile(markdownStage);
+    const { inspectMarkdown } = await import('../domain/reader/markdown/markdownInspector');
+    const markdown = await importRepository.commitImport(
+      markdownStage,
+      (await inspectMarkdown(markdownBytes, 'cache.md')).metadata,
+    );
+    const epubStage = await importRepository.stageImport('cache.epub');
+    const epubBytes = await importRepository.readStagedFile(epubStage);
+    const { inspectEpub } = await import('../domain/library/epub/epubInspector');
+    const epub = await importRepository.commitImport(
+      epubStage,
+      (await inspectEpub(epubBytes)).metadata,
+    );
+    return { markdown, epub };
+  }
+
   async function setupWithPdfAndEpub() {
     const sources = new Map<string, Uint8Array>();
     addInMemorySource(sources, 'demo.pdf', new TextEncoder().encode('%PDF-1.7\n测试 PDF'));
@@ -136,6 +163,7 @@ describe('Reader 命令', () => {
     workspaceRepository = createInMemoryWorkspaceRepository();
     useWorkspaceStore.getState().resetToDefault();
     useReaderRuntime.setState({ documents: new Map(), documentStates: new Map() });
+    useMarkdownSessionStore.getState().resetToDefault();
   });
 
   it('打开书籍后新增标签并在运行时注册 BookDocument', async () => {
@@ -750,6 +778,100 @@ describe('Reader 命令', () => {
     });
     await vi.waitFor(() => expect(rebuilt.isRuntimeReady?.()).toBe(true));
     expect(hosts).toHaveLength(3);
+  });
+
+  it('Markdown 标签 A→B→A 命中缓存时复用原文档且不重复读取正文或创建宿主', async () => {
+    const { markdown, epub } = await setupWithMarkdownAndEpub();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    const hosts: FoliateViewHost[] = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = createFakeViewHost();
+        hosts.push(host);
+        return host;
+      },
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, markdown);
+    const markdownViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const markdownDocument = useReaderRuntime.getState().getDocument(markdownViewId)!;
+    mountViewDocument(
+      markdownDocument,
+      markdownViewId,
+      document.createElement('div'),
+      null,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect(markdownDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, epub);
+    const epubViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
+    const epubDocument = useReaderRuntime.getState().getDocument(epubViewId)!;
+    mountViewDocument(epubDocument, epubViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(epubDocument.isRuntimeReady?.()).toBe(true));
+
+    const sourceOpensBeforeReturn = openManagedFileSource.mock.calls.length;
+    const hostsBeforeReturn = hosts.length;
+    await registry.execute(COMMAND_IDS.readerActivateView, markdownViewId, markdown);
+    mountViewDocument(
+      markdownDocument,
+      markdownViewId,
+      document.createElement('div'),
+      useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location,
+      { importRepository, workspaceRepository },
+    );
+
+    expect(useReaderRuntime.getState().getDocument(markdownViewId)).toBe(markdownDocument);
+    expect(useReaderRuntime.getState().getDocumentLifecycle(markdownViewId)).toBe('active');
+    expect(openManagedFileSource.mock.calls.length).toBe(sourceOpensBeforeReturn);
+    expect(hosts.length).toBe(hostsBeforeReturn);
+    expect(readerRuntimeCache.getDiagnostics().hits).toBe(1);
+  });
+
+  it('Markdown 跨两个 Editor Group 共享一个会话但保留各自独立 Runtime', async () => {
+    const { markdown } = await setupWithMarkdownAndEpub();
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost(),
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, markdown);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
+    const state = useWorkspaceStore.getState();
+    const secondViewId = state.editorGroups[1]!.views[0]!.id;
+    const secondDocument = useReaderRuntime.getState().getDocument(secondViewId)!;
+    mountViewDocument(secondDocument, secondViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
+
+    useMarkdownSessionStore.getState().updateText(markdown.id, '# 两组共享的缓冲区');
+    expect(useMarkdownSessionStore.getState().getSession(markdown.id)?.text).toBe(
+      '# 两组共享的缓冲区',
+    );
+    expect(useReaderRuntime.getState().getDocument(firstViewId)).not.toBe(secondDocument);
+    expect(useReaderRuntime.getState().getDocument(secondViewId)).toBe(secondDocument);
+    expect(openManagedFileSource).toHaveBeenCalledTimes(1);
   });
 
   it('切换时清理阅读输入接线,LRU 淘汰的 Runtime 只关闭一次', async () => {
