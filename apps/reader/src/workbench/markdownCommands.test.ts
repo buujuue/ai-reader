@@ -200,6 +200,22 @@ describe('Markdown 命令', () => {
     });
   });
 
+  it('重启恢复源码模式时先载入正式文本会话且不创建隐藏 Foliate Runtime', async () => {
+    const viewId = activeViewId();
+    useWorkspaceStore.getState().setViewSourceMode(viewId, true);
+    useReaderRuntime.getState().closeAll();
+    useMarkdownSessionStore.getState().resetToDefault();
+
+    await registry.execute(COMMAND_IDS.readerRestoreView, viewId, useLibraryStore.getState().materials[0]);
+
+    expect(useMarkdownSessionStore.getState().getSession(materialId)).toMatchObject({
+      text: MARKDOWN_SOURCE,
+      dirty: false,
+      savedVersion: 0,
+    });
+    expect(useReaderRuntime.getState().getDocument(viewId)).toBeUndefined();
+  });
+
   it('保存命令由 importRepository 原子保存并递增版本、更新指纹', async () => {
     useMarkdownSessionStore.getState().openSession(materialId, MARKDOWN_SOURCE, 0);
     useMarkdownSessionStore.getState().updateText(materialId, '# 新内容');

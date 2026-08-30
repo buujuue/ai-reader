@@ -205,7 +205,7 @@ export function ReadingView({ viewId }: { viewId: string }) {
           materialId={materialId}
           viewId={viewId}
           groupId={groupId}
-          isMarkdown={document?.format === 'markdown'}
+          isMarkdown={document?.format === 'markdown' || materialFormat === 'markdown'}
           isSourceMode={isMarkdownSourceMode}
           hasSplit={hasSplit}
         />

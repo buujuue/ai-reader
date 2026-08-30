@@ -104,6 +104,7 @@ async function rebuildMarkdownDocuments(
 async function refreshMarkdownRuntime(
   materialId: string,
   dependencies: MarkdownCommandDependencies,
+  materialOverride?: ReadingMaterial,
 ): Promise<void> {
   if (dependencies.reloadMaterialViews) {
     await dependencies.reloadMaterialViews(materialId);
@@ -111,7 +112,8 @@ async function refreshMarkdownRuntime(
   }
 
   await dependencies.invalidateMaterialRuntime?.(materialId);
-  const material = useLibraryStore.getState().materials.find((item) => item.id === materialId);
+  const material =
+    materialOverride ?? useLibraryStore.getState().materials.find((item) => item.id === materialId);
   if (material) await rebuildMarkdownDocuments(material, dependencies);
 }
 
@@ -205,24 +207,13 @@ export function registerMarkdownCommands(
       .recordFormalSave(materialId, savedText, updated.documentVersion);
     useLibraryStore.getState().updateMaterial(updated);
 
-    const activeViewIds = useWorkspaceStore
-      .getState()
-      .editorGroups.flatMap((group) => group.views)
-      .filter((view) => view.materialId === materialId && isViewActive(view.id))
-      .map((view) => view.id);
-
     let recoveryCleared = false;
     if (bufferUnchanged) {
       recoveryCleared = await clearRecoverySnapshot(materialId);
     } else {
       await flushRecoveryWrite(materialId);
     }
-    if (dependencies.reloadMaterialViews) {
-      await dependencies.reloadMaterialViews(materialId);
-    } else {
-      await dependencies.invalidateMaterialRuntime?.(materialId);
-      await rebuildMarkdownDocuments(updated, dependencies, activeViewIds);
-    }
+    await refreshMarkdownRuntime(materialId, dependencies, updated);
 
     if (bufferUnchanged && getSession(materialId)?.dirty) {
       bufferUnchanged = false;

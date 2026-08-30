@@ -13,10 +13,11 @@
 | `domain/` | 领域层：`workspace/` 工作区（Editor Group、阅读视图、阅读位置、导航历史）、`library/` 书库与导入/文件夹归属/完整备份/显式 EPUB 版本迁移（含 Markdown Recovery Snapshot 与迁移恢复快照 typed Repository、`BackupRepository`、`ManagedFileSource`、内建最小 `EpubInspector`、格式推断与筛选）、`annotation/` 批注（`Annotation`/`TextAnchor` 类型、单 spine 选区校验、已重锚/失联恢复、Markdown 导出 formatter、内存/localStorage/Tauri Adapter）、`reader/` 阅读文档（`BookDocument`、EPUB/PDF/Markdown 文档、位置/导航、Foliate 宿主、清洗器与格式子模块）、`tauriInvoke.ts` 共享 invoke 类型。 |
 | `workbench/` | `workspaceStore.ts`（可序列化工作区状态 + 导航历史动作）、`readerRuntime.ts`（活 BookDocument）、`readerRuntimeCache.ts`（EPUB/Markdown 有界 Runtime 缓存与 LRU 预算）、`markdownSessionStore.ts`（共享 Markdown 缓冲区）、`markdownCommands.ts`（源码编辑、正式保存与 Recovery Snapshot 编排）、`backupCommands.ts`（备份确认、来源/目标选择、flush、恢复与导出编排）、`annotationExportCommands.ts`（单本批注 Markdown 导出编排）、`searchStore.ts` / `searchRunner.ts`（当前材料搜索）、`positionPersister.ts`（阅读位置节流/flush）、`readerCommands.ts`（阅读命令）、`workbenchCommands.ts`（工作台命令）、`libraryStore.ts` / `libraryCommands.ts` / `importBook.ts`（书库、导入与版本迁移）、`annotationStore.ts` / `annotationCommands.ts`（批注创建、批量锚点恢复与软删除恢复）、`shellUiStore.ts`（外壳 UI 状态），及对应测试。 |
 
-- Markdown Runtime 约定：源码模式由 CodeMirror 独占可见编辑区并挂起 Foliate；共享会话缓冲区、正式保存和 Recovery Snapshot 变化先失效相关缓存，再由 `readerCommands.ts` 按当前会话文本恢复非源码视图。
 | `test/setup.ts` | Vitest 测试环境配置。 |
 
 ## 约定
+
+- Markdown Runtime 约定：源码模式由 CodeMirror 独占可见编辑区并挂起 Foliate；共享会话缓冲区、正式保存和 Recovery Snapshot 变化先失效相关缓存，再由 `readerCommands.ts` 按当前会话文本恢复非源码视图。
 
 - `AnnotationSidebar.tsx` 导出 `AnnotationPanel`，按 materialId 读取批注并作为运行时覆盖面板显示；主要材料设置、批注跳转与导出分别经稳定 Command 执行，面板开关和焦点恢复留在 `shellUiStore`，不写入 Workspace State。
 

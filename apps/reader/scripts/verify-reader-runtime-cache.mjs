@@ -78,7 +78,8 @@ async function main() {
     const result = await page.evaluate(async ({ runCount: requestedRuns }) => {
       const [commandModule, commandRegistryModule, importModule, epubWriterModule, epubInspectorModule,
         markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeCacheModule,
-        managedSourceModule, hostModule, markdownCommandsModule, libraryStoreModule] = await Promise.all([
+        managedSourceModule, hostModule, markdownCommandsModule, libraryStoreModule,
+        markdownSessionModule, workbenchCommandsModule] = await Promise.all([
         import('/src/workbench/readerCommands.ts'),
         import('/src/commands/commandRegistry.ts'),
         import('/src/domain/library/inMemoryImportRepository.ts'),
@@ -92,6 +93,8 @@ async function main() {
         import('/src/domain/reader/foliateViewHost.ts'),
         import('/src/workbench/markdownCommands.ts'),
         import('/src/workbench/libraryStore.ts'),
+        import('/src/workbench/markdownSessionStore.ts'),
+        import('/src/workbench/workbenchCommands.ts'),
       ]);
       const {
         addInMemorySource,
@@ -103,6 +106,8 @@ async function main() {
       const { createInMemoryWorkspaceRepository } = workspaceRepoModule;
       const { useWorkspaceStore } = workspaceStoreModule;
       const { useLibraryStore } = libraryStoreModule;
+      const { useMarkdownSessionStore } = markdownSessionModule;
+      const { serializeWorkspaceState } = workbenchCommandsModule;
       const { ManagedFileSource } = managedSourceModule;
       const { createFoliateViewHostFactory } = hostModule;
       const { COMMAND_IDS, CommandRegistry } = commandRegistryModule;
@@ -378,6 +383,109 @@ async function main() {
       const sourceRuntimeRebuilt =
         commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) !== sourceModeBefore;
 
+      const markdownMaterial = useLibraryStore.getState().materials.find(
+        (material) => material.id === materials[1].id,
+      );
+      if (!markdownMaterial) throw new Error('源码模式验收没有找到当前 Markdown 材料');
+      const versionBeforeSave = markdownMaterial.documentVersion;
+      await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
+      await registry.execute(
+        COMMAND_IDS.markdownUpdateBuffer,
+        markdownViewId,
+        '# 真实浏览器保存\n\n正式正文',
+      );
+      await registry.execute(COMMAND_IDS.markdownSave, markdownViewId);
+      const savedMarkdownMaterial = useLibraryStore.getState().materials.find(
+        (material) => material.id === materials[1].id,
+      );
+      const formalSaveInvalidated =
+        commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) === undefined;
+      const formalSaveAdvancedVersion =
+        (savedMarkdownMaterial?.documentVersion ?? versionBeforeSave) > versionBeforeSave;
+      await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
+      await waitFor(
+        () => commandModule.getReaderRuntimeStatusForMeasurement(markdownViewId)?.status === 'ready',
+        'Markdown 正式保存后恢复阅读 Runtime',
+      );
+
+      const beforeRecovery = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
+      await importRepository.writeMarkdownRecovery(
+        materials[1].id,
+        '# 真实浏览器恢复\n\n快照正文',
+        savedMarkdownMaterial?.documentVersion ?? versionBeforeSave + 1,
+      );
+      await registry.execute(COMMAND_IDS.markdownCheckRecoveries);
+      await registry.execute(COMMAND_IDS.markdownResolveRecovery, materials[1].id, 'restore');
+      const recoveryRuntimeRebuilt =
+        commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) !== beforeRecovery;
+      await registry.execute(COMMAND_IDS.markdownDiscard, markdownViewId);
+
+      // 重启只保留可序列化 Workspace；源码模式恢复时先初始化共享会话，
+      // 再由用户退出源码模式创建阅读 Runtime。
+      await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
+      const restartWorkspace = structuredClone(serializeWorkspaceState());
+      await waitFrames(4);
+      await flushAndCloseAllReaderViews();
+      cache.reset();
+      useMarkdownSessionStore.getState().resetToDefault();
+      useWorkspaceStore.getState().hydrate(restartWorkspace);
+      await registry.execute(
+        COMMAND_IDS.readerRestoreView,
+        markdownViewId,
+        savedMarkdownMaterial ?? markdownMaterial,
+        restartWorkspace.editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === markdownViewId)?.location ?? null,
+      );
+      const restartSessionLoaded =
+        useMarkdownSessionStore.getState().getSession(materials[1].id)?.text ===
+        '# 真实浏览器保存\n\n正式正文';
+      await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
+      await waitFor(
+        () => commandModule.getReaderRuntimeStatusForMeasurement(markdownViewId)?.status === 'ready',
+        'Markdown 重启后退出源码模式恢复阅读 Runtime',
+      );
+      await waitFrames(4);
+
+      const firstGroupDocument = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
+      await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
+      const splitState = useWorkspaceStore.getState();
+      const secondGroupViewId = splitState.editorGroups[1]?.views[0]?.id;
+      const secondGroupDocument = secondGroupViewId
+        ? commandModule.getReaderRuntimeDocumentForMeasurement(secondGroupViewId)
+        : undefined;
+      await waitFor(
+        () => Boolean(firstGroupDocument?.isRuntimeReady?.() && secondGroupDocument?.isRuntimeReady?.()),
+        'Markdown 双 Editor Group Runtime 就绪',
+      );
+      const dualGroupRuntimeIndependent =
+        Boolean(firstGroupDocument && secondGroupDocument && firstGroupDocument !== secondGroupDocument);
+      const sharedSessionPresent =
+        useMarkdownSessionStore.getState().getSession(materials[1].id)?.text ===
+        '# 真实浏览器保存\n\n正式正文';
+      // LRU 淘汰在 ReaderRuntimeCache 公共 seam 上验证，避免为门禁额外打开
+      // 第三份真实 renderer，减少浏览器分页器的并发噪声。
+      const evictionProbe = new readerRuntimeCacheModule.ReaderRuntimeCache({
+        budget: { ...cache.getBudget(), maxSuspendedRuntimes: 1 },
+      });
+      const probeEntry = (viewId) => ({
+        viewId,
+        materialId: `probe-${viewId}`,
+        format: 'markdown',
+        key: `probe-key-${viewId}`,
+        document: { viewId },
+        usage: {
+          iframeCount: 0,
+          canvasCount: 0,
+          decodedPageCount: 0,
+          rangeCacheBytes: 0,
+          estimatedBytes: 0,
+        },
+      });
+      evictionProbe.suspend(probeEntry('a'));
+      evictionProbe.suspend(probeEntry('b'));
+      const runtimeEvictionObserved = evictionProbe.getDiagnostics().evictions === 1;
+
       await waitFrames(4);
       await flushAndCloseAllReaderViews();
       await waitFrames();
@@ -393,6 +501,13 @@ async function main() {
           runtimeInvalidated: sourceRuntimeInvalidated,
           restored: sourceModeRestored,
           runtimeRebuilt: sourceRuntimeRebuilt,
+          formalSaveInvalidated,
+          formalSaveAdvancedVersion,
+          recoveryRuntimeRebuilt,
+          restartSessionLoaded,
+          dualGroupRuntimeIndependent,
+          sharedSessionPresent,
+          runtimeEvictionObserved,
         },
       };
     }, { runCount });
@@ -435,7 +550,14 @@ async function main() {
         result.sourceMode.runtimeSuspended &&
         result.sourceMode.runtimeInvalidated &&
         result.sourceMode.restored &&
-        result.sourceMode.runtimeRebuilt,
+        result.sourceMode.runtimeRebuilt &&
+        result.sourceMode.formalSaveInvalidated &&
+        result.sourceMode.formalSaveAdvancedVersion &&
+        result.sourceMode.recoveryRuntimeRebuilt &&
+        result.sourceMode.restartSessionLoaded &&
+        result.sourceMode.dualGroupRuntimeIndependent &&
+        result.sourceMode.sharedSessionPresent &&
+        result.sourceMode.runtimeEvictionObserved,
     };
     result.thresholds = thresholds;
     result.summary = {
@@ -446,6 +568,7 @@ async function main() {
     };
     result.checks = checks;
     if (Object.values(checks).some((value) => value !== true)) {
+      console.error(`Reader Runtime 缓存附加验收详情:${JSON.stringify(result.sourceMode)}`);
       throw new Error(`Reader Runtime 缓存门禁失败:${JSON.stringify(checks)}`);
     }
     mkdirSync('scripts/artifacts', { recursive: true });

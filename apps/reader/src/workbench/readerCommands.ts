@@ -391,22 +391,12 @@ async function createMarkdownDocument(
   options: { preferManagedSource?: boolean } = {},
 ): Promise<BookDocument | null> {
   const session = useMarkdownSessionStore.getState().getSession(material.id);
-  let text =
-    !options.preferManagedSource || session?.dirty
-      ? session?.savedVersion === material.documentVersion
-        ? session.text
-        : null
-      : null;
-  if (text === null) {
-    try {
-      text = await readManagedMarkdownText(dependencies.importRepository, material.id);
-    } catch (error) {
-      throw new Error(`读取 Markdown 失败：${describeDocumentOpenError(error)}`);
-    }
-    useMarkdownSessionStore
-      .getState()
-      .replaceFormalText(material.id, text, material.documentVersion);
-  }
+  const canReuseSession =
+    session?.savedVersion === material.documentVersion &&
+    (!options.preferManagedSource || session.dirty);
+  const text = canReuseSession
+    ? session.text
+    : await loadFormalMarkdownSession(dependencies, material);
   return new MarkdownBookDocument({
     text,
     metadata: {
@@ -418,6 +408,33 @@ async function createMarkdownDocument(
     sourceFingerprint: material.fingerprint,
     searchIndexCache: dependencies.canonicalSearchIndexCache ?? defaultCanonicalSearchIndexCache,
   });
+}
+
+/** 读取当前正式 Markdown 并校准共享会话;缓存和源码模式都复用这一入口。 */
+async function loadFormalMarkdownSession(
+  dependencies: ReaderCommandDependencies,
+  material: ReadingMaterial,
+): Promise<string> {
+  let text: string;
+  try {
+    text = await readManagedMarkdownText(dependencies.importRepository, material.id);
+  } catch (error) {
+    throw new Error(`读取 Markdown 失败：${describeDocumentOpenError(error)}`);
+  }
+  useMarkdownSessionStore
+    .getState()
+    .replaceFormalText(material.id, text, material.documentVersion);
+  return text;
+}
+
+/** 源码模式也需要初始化共享会话,但不应因此创建隐藏的 Foliate Runtime。 */
+async function ensureMarkdownSession(
+  dependencies: ReaderCommandDependencies,
+  material: ReadingMaterial,
+): Promise<void> {
+  const session = useMarkdownSessionStore.getState().getSession(material.id);
+  if (session?.savedVersion === material.documentVersion) return;
+  await loadFormalMarkdownSession(dependencies, material);
 }
 
 /** 按材料格式分派创建对应 BookDocument;未知格式返回 null。 */
@@ -705,6 +722,17 @@ async function ensureActiveViewDocument(
   // 源码模式由 CodeMirror 独占当前 ReadingView 的可见内容;不要在启动恢复、
   // 标签切换或其它材料刷新时为隐藏的 Foliate Runtime 重新创建正文。
   if (view.sourceMode) {
+    if (formatFromSourceFileName(targetMaterial.sourceFileName) === 'markdown') {
+      try {
+        await ensureMarkdownSession(dependencies, targetMaterial);
+      } catch (error) {
+        runtime.setDocumentState(viewId, {
+          status: 'error',
+          message: describeDocumentOpenError(error),
+        });
+        return null;
+      }
+    }
     runtime.setDocumentState(viewId, { status: 'idle' });
     return null;
   }
