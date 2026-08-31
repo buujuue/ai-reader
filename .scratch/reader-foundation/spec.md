@@ -184,7 +184,7 @@ Status: ready-for-agent
 - 安全测试使用带脚本、危险 URL、远程资源和嵌入对象的恶意 EPUB/Markdown fixture，验证内容不能执行或取得 Tauri IPC。
 - 备份测试验证大文件流式处理、manifest 版本、指纹校验、空间不足、损坏包和失败后原书库保持可用。
 - 性能验收关注可观察预算：最多两个活跃渲染器；大文件导入不整体读入 JS 内存；非活动标签不保留 PDF Canvas；书库封面按需加载。
-- Reader Runtime 缓存总验收运行 `pnpm --dir apps/reader test:reader-runtime-cache`：真实 Chrome 通过 `library.openBook`/`reader.activateView` Command 测量 EPUB/PDF/Markdown 的同格式与跨格式 A→B→A，记录切换、首次可见、回切可交互、缓存命中、对象创建、范围读取、PDF 挂起资源和可获得的堆内存；至少三轮，以同机冷路径中位数/P95 作为动态门槛。600 页以上 PDF 与 Windows Tauri 范围协议另运行 `pnpm --dir apps/reader test:reading-performance`。
+- Reader Runtime 缓存总验收运行 `pnpm --dir apps/reader test:reader-runtime-cache`：真实 Chrome 通过 `library.openBook`/`reader.activateView` Command 测量 EPUB/PDF/Markdown 的同格式与跨格式 A→B→A，PDF pair 额外执行 A→B→A→B→A，记录切换、首次可见、回切可交互、缓存命中、对象创建、范围读取、PDF 挂起资源和可获得的堆内存；至少三轮，以同机冷路径中位数/P95 作为动态门槛。600 页以上 PDF 与 Windows Tauri 范围协议另运行 `pnpm --dir apps/reader test:reading-performance`。
 - 参考 Readest 的既有测试类型：Vitest jsdom、Vitest Browser、Playwright Web、WebdriverIO Tauri 与 Rust tests，但只引入当前切片真正需要的工具。
 
 ## Out of Scope

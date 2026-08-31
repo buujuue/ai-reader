@@ -2,7 +2,8 @@
  * Reader Runtime 有界缓存的真实浏览器总验收（工单 #57）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
- * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，记录冷启动与缓存回切的
+ * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，并对 PDF pair 额外执行
+ * A→B→A→B→A 连续回切，记录冷启动与缓存回切的
  * 可交互时间、文档/renderer 创建、ManagedFileSource 范围读取、Runtime 资源和可获得的堆内存。
  * 门槛从同一台机器的冷启动中位数派生，不写死毫秒数。
  *
@@ -337,6 +338,41 @@ async function main() {
             sample.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected);
         }, label);
       };
+      const readPdfRestoreState = (viewId, expectedLocation) => {
+        if (expectedLocation?.kind !== 'pdf') {
+          return {
+            scrollModeRestored: null,
+            scrollPositionRestored: null,
+            visiblePageRestored: null,
+            container: null,
+          };
+        }
+        const container = document.querySelector(`[data-view-id="${viewId}"]`);
+        if (!(container instanceof HTMLElement)) {
+          return {
+            scrollModeRestored: false,
+            scrollPositionRestored: false,
+            visiblePageRestored: false,
+            container: null,
+          };
+        }
+        const containerRect = container.getBoundingClientRect();
+        const scrollTop = container.scrollTop;
+        const visiblePage = [...container.querySelectorAll('.pdf-page')]
+          .filter((page) => {
+            const rect = page.getBoundingClientRect();
+            const pageTop = rect.top - containerRect.top + scrollTop;
+            return pageTop <= scrollTop + 1;
+          })
+          .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+          .at(-1);
+        return {
+          scrollModeRestored: getComputedStyle(container).overflowY === 'auto',
+          scrollPositionRestored: Math.abs(scrollTop - expectedLocation.scrollTop) <= 1,
+          visiblePageRestored: Number(visiblePage?.dataset.page ?? 0) === expectedLocation.page,
+          container,
+        };
+      };
 
       const resetHarness = async () => {
         await waitFrames(4);
@@ -419,30 +455,19 @@ async function main() {
         let pdfVisiblePageRestored = null;
         let pdfScrollAdvancedAfterReturn = null;
         if (first.book.format === 'pdf') {
-          const container = document.querySelector(`[data-view-id="${first.viewId}"]`);
-          pdfScrollModeRestored = getComputedStyle(container).overflowY === 'auto';
-          pdfScrollPositionRestored = firstLocation?.kind === 'pdf' &&
-            Math.abs((container?.scrollTop ?? 0) - firstLocation.scrollTop) <= 1;
-          const containerRect = container?.getBoundingClientRect();
-          const scrollTop = container?.scrollTop ?? 0;
-          const visiblePage = [...(container?.querySelectorAll('.pdf-page') ?? [])]
-            .filter((page) => {
-              const rect = page.getBoundingClientRect();
-              const pageTop = rect.top - (containerRect?.top ?? 0) + scrollTop;
-              return pageTop <= scrollTop + 1;
-            })
-            .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
-            .at(-1);
-          pdfVisiblePageRestored = firstLocation?.kind === 'pdf' &&
-            Number(visiblePage?.dataset.page ?? 0) === firstLocation.page;
-          const resumedScrollTop = container?.scrollTop ?? 0;
+          const restoredState = readPdfRestoreState(first.viewId, firstLocation);
+          pdfScrollModeRestored = restoredState.scrollModeRestored;
+          pdfScrollPositionRestored = restoredState.scrollPositionRestored;
+          pdfVisiblePageRestored = restoredState.visiblePageRestored;
+          const resumedScrollTop = restoredState.container?.scrollTop ?? 0;
           const nextScrollTop = Math.min(
-            (container?.scrollHeight ?? 0) - (container?.clientHeight ?? 0),
+            (restoredState.container?.scrollHeight ?? 0) -
+              (restoredState.container?.clientHeight ?? 0),
             resumedScrollTop + 160,
           );
-          if (container && nextScrollTop > resumedScrollTop) {
-            container.scrollTop = nextScrollTop;
-            container.dispatchEvent(new Event('scroll'));
+          if (restoredState.container && nextScrollTop > resumedScrollTop) {
+            restoredState.container.scrollTop = nextScrollTop;
+            restoredState.container.dispatchEvent(new Event('scroll'));
             await waitFor(
               () => first.book.getLocation()?.kind === 'pdf' &&
                 Math.abs(first.book.getLocation().scrollTop - nextScrollTop) <= 1,
@@ -453,8 +478,43 @@ async function main() {
             pdfScrollAdvancedAfterReturn = false;
           }
         }
-        const countersAfter = diffCounters(countersBefore);
-        const diagnostics = cache.getDiagnostics();
+        const locationAfterFirstRound = first.book.getLocation();
+        const firstRoundDiagnostics = cache.getDiagnostics();
+        const firstRoundCounters = diffCounters(countersBefore);
+        let secondRoundCacheHit = null;
+        let secondRoundLocationPreserved = null;
+        let secondRoundWorkspaceLocationPreserved = null;
+        let secondRoundCounters = null;
+        let secondRoundPdfScrollModeRestored = null;
+        let secondRoundPdfScrollPositionRestored = null;
+        let secondRoundPdfVisiblePageRestored = null;
+        if (first.book.format === 'pdf') {
+          const secondRoundHitBefore = cache.getDiagnostics().hits;
+          const secondRoundCountersBefore = snapshotCounters();
+          await registry.execute(COMMAND_IDS.readerActivateView, second.viewId, secondMaterial);
+          await waitForInteractive(second, `${label} 第二轮 B 缓存回切可交互`);
+          await waitFrames(12);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
+          await waitForInteractive(first, `${label} 第二轮 A 缓存回切可交互`);
+          await waitFrames(12);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const secondRoundLocationAfter = first.book.getLocation();
+          const secondRoundWorkspaceLocationAfter = useWorkspaceStore.getState().editorGroups
+            .flatMap((group) => group.views)
+            .find((view) => view.id === first.viewId)?.location ?? null;
+          const secondRoundDiagnostics = cache.getDiagnostics();
+          secondRoundCacheHit = secondRoundDiagnostics.hits - secondRoundHitBefore === 2;
+          secondRoundLocationPreserved = locationAfterFirstRound !== null &&
+            JSON.stringify(secondRoundLocationAfter) === JSON.stringify(locationAfterFirstRound);
+          secondRoundWorkspaceLocationPreserved = secondRoundWorkspaceLocationAfter !== null &&
+            JSON.stringify(secondRoundWorkspaceLocationAfter) === JSON.stringify(secondRoundLocationAfter);
+          secondRoundCounters = diffCounters(secondRoundCountersBefore);
+          const restoredState = readPdfRestoreState(first.viewId, locationAfterFirstRound);
+          secondRoundPdfScrollModeRestored = restoredState.scrollModeRestored;
+          secondRoundPdfScrollPositionRestored = restoredState.scrollPositionRestored;
+          secondRoundPdfVisiblePageRestored = restoredState.visiblePageRestored;
+        }
         return {
           label,
           firstFormat: first.book.format,
@@ -462,22 +522,29 @@ async function main() {
           firstVisibleMs: first.firstVisibleMs,
           secondVisibleMs: second.firstVisibleMs,
           cacheReturnInteractiveMs,
-          cacheHit: diagnostics.hits - hitBefore === 1,
+          cacheHit: firstRoundDiagnostics.hits - hitBefore === 1,
           locationBefore: firstLocation,
           locationAfter,
           locationPreserved,
           workspaceLocationAfter,
           workspaceLocationPreserved,
+          secondRoundCacheHit,
+          secondRoundLocationPreserved,
+          secondRoundWorkspaceLocationPreserved,
+          secondRoundCounters,
           pdfScrollModeRestored,
           pdfScrollPositionRestored,
           pdfVisiblePageRestored,
           pdfScrollAdvancedAfterReturn,
-          noNewSourceOpen: countersAfter.sourceOpens === 0,
-          noNewFoliateRenderer: countersAfter.rendererCreates === 0,
-          noNewPdfDocument: countersAfter.pdfDocumentLoads === 0,
-          noNewRanges: countersAfter.rangeReads === 0,
+          secondRoundPdfScrollModeRestored,
+          secondRoundPdfScrollPositionRestored,
+          secondRoundPdfVisiblePageRestored,
+          noNewSourceOpen: firstRoundCounters.sourceOpens === 0,
+          noNewFoliateRenderer: firstRoundCounters.rendererCreates === 0,
+          noNewPdfDocument: firstRoundCounters.pdfDocumentLoads === 0,
+          noNewRanges: firstRoundCounters.rangeReads === 0,
           suspendedResourceUsage: suspendedBefore?.usage ?? null,
-          counters: countersAfter,
+          counters: firstRoundCounters,
           budget: cache.getBudget(),
         };
       };
@@ -822,6 +889,17 @@ async function main() {
       everyFormatPairAvoidsNewRenderer: result.formatMatrix.every((pair) => pair.noNewFoliateRenderer),
       everyFormatPairAvoidsNewPdfDocument: result.formatMatrix.every((pair) => pair.noNewPdfDocument),
       everyFormatPairAvoidsNewRanges: result.formatMatrix.every((pair) => pair.noNewRanges),
+      everyPdfPairCompletesSecondRound: result.formatMatrix
+        .filter((pair) => pair.firstFormat === 'pdf')
+        .every((pair) =>
+          pair.secondRoundCacheHit === true &&
+          pair.secondRoundLocationPreserved === true &&
+          pair.secondRoundWorkspaceLocationPreserved === true &&
+          pair.secondRoundCounters?.sourceOpens === 0 &&
+          pair.secondRoundCounters?.rendererCreates === 0 &&
+          pair.secondRoundCounters?.pdfDocumentLoads === 0 &&
+          pair.secondRoundCounters?.rangeReads === 0,
+        ),
       sameFormatPairsCovered: result.formatMatrix
         .filter((pair) => pair.firstFormat === pair.secondFormat)
         .length === 3,
@@ -842,7 +920,10 @@ async function main() {
           pair.pdfScrollModeRestored === true &&
           pair.pdfScrollPositionRestored === true &&
           pair.pdfVisiblePageRestored === true &&
-          pair.pdfScrollAdvancedAfterReturn === true,
+          pair.pdfScrollAdvancedAfterReturn === true &&
+          pair.secondRoundPdfScrollModeRestored === true &&
+          pair.secondRoundPdfScrollPositionRestored === true &&
+          pair.secondRoundPdfVisiblePageRestored === true,
         ),
       shutdownCleanup: result.shutdownCleanup.runtimeStoreEmpty &&
         result.shutdownCleanup.cacheEmpty &&
@@ -879,7 +960,7 @@ async function main() {
     console.log('Reader Runtime 缓存真实浏览器基线结果:');
     console.log(JSON.stringify(result, null, 2));
     console.log(`报告:${ARTIFACT}`);
-    console.log('通过:EPUB/PDF/Markdown 同格式与跨格式 A→B→A 缓存命中不重复创建文档、renderer 或范围读取。');
+    console.log('通过:PDF A→B→A→B→A 及 EPUB/Markdown A→B→A 缓存命中不重复创建文档、renderer 或范围读取。');
   } catch (error) {
     failureReport = error instanceof Error ? error.message : String(error);
     throw error;

@@ -30,8 +30,11 @@ export interface PdfRendererCallbacks {
   onAreaSelection?: (selection: AreaSelection) => void;
   /** 页面范围读取或渲染失败时的诊断回调。 */
   onError?: (error: unknown) => void;
-  /** PDF 回切诊断回调;由 PdfBookDocument 注入,不参与阅读语义。 */
-  onDiagnostic?: (phase: string, details?: Record<string, unknown>) => void;
+}
+
+export interface PdfRendererNavigationOptions {
+  /** 这是一次显式阅读位置恢复,恢复前启动的异步布局不得提交结果。 */
+  restore?: boolean;
 }
 
 export interface PdfRendererOptions {
@@ -120,8 +123,13 @@ export class PdfRenderer {
   private resizeObserver: ResizeObserver | null = null;
   /** 滚动布局对应的容器宽度;宽度变化时必须重新计算页面 top/height。 */
   private layoutWidth = 0;
+  /** 每次 attach/detach 都推进,使旧容器观察器的迟到回调失效。 */
+  private observerGeneration = 0;
   /** 只允许最新一次异步重排提交 DOM,避免尺寸/翻页竞态写回过期页面。 */
   private layoutGeneration = 0;
+  /** 显式阅读位置恢复代次;异步页面加载需与它同时有效才能改写布局。 */
+  private restoreGeneration = 0;
+  private activeRestore: { generation: number; pageNumber: number } | null = null;
   private disposed = false;
   private suspended = false;
 
@@ -222,48 +230,20 @@ export class PdfRenderer {
    */
   detach(): void {
     if (this.disposed || this.suspended) return;
-    this.callbacks.onDiagnostic?.('renderer.detach.begin', {
-      flow: this.flow,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      renderedPages: [...this.pageRenderers.keys()],
-      decodedPages: [...this.pageCache.keys()],
-      loadingPages: this.scrolledPages
-        .filter((state) => state.state === 'loading')
-        .map((state) => state.pageNumber),
-    });
     this.suspended = true;
+    this.layoutGeneration += 1;
+    this.restoreGeneration += 1;
+    this.activeRestore = null;
     this.detachObservers();
     this.shrinkToSuspendedWindow();
     this.pages.remove();
-    this.callbacks.onDiagnostic?.('renderer.detach.end', {
-      flow: this.flow,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      renderedPages: [...this.pageRenderers.keys()],
-      decodedPages: [...this.pageCache.keys()],
-      loadingPages: this.scrolledPages
-        .filter((state) => state.state === 'loading')
-        .map((state) => state.pageNumber),
-    });
   }
 
   /** 将同一 PDF.js 文档的页面窗口重新挂回新的 ReadingView 容器。 */
   attach(container: HTMLElement): boolean {
     if (this.disposed) {
-      this.callbacks.onDiagnostic?.('renderer.attach.rejected', { reason: 'disposed' });
       return false;
     }
-    this.callbacks.onDiagnostic?.('renderer.attach.begin', {
-      flow: this.flow,
-      currentPage: this.currentPage,
-      previousScrollTop: this.container.scrollTop,
-      targetScrollTop: container.scrollTop,
-      targetClientWidth: container.clientWidth,
-      targetClientHeight: container.clientHeight,
-      renderedPages: [...this.pageRenderers.keys()],
-      decodedPages: [...this.pageCache.keys()],
-    });
     this.pages.remove();
     this.container = container;
     this.container.classList.add('pdf-renderer');
@@ -271,29 +251,18 @@ export class PdfRenderer {
     this.applyContainerFlow();
     this.container.appendChild(this.pages);
     this.suspended = false;
+    this.layoutGeneration += 1;
+    this.restoreGeneration += 1;
+    this.activeRestore = null;
     this.attachObservers();
     if (!this.suspended) void this.relayout();
-    this.callbacks.onDiagnostic?.('renderer.attach.end', {
-      flow: this.flow,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      renderedPages: [...this.pageRenderers.keys()],
-      decodedPages: [...this.pageCache.keys()],
-    });
     return true;
   }
 
   setFlow(flow: 'paginated' | 'scrolled'): void {
     if (this.flow === flow) {
-      this.callbacks.onDiagnostic?.('renderer.set-flow.noop', {
-        flow,
-        currentPage: this.currentPage,
-        scrollTop: this.container.scrollTop,
-        suspended: this.suspended,
-      });
       return;
     }
-    const previousFlow = this.flow;
     if (this.flow === 'scrolled') {
       this.destroyScrolledMode();
     }
@@ -301,13 +270,6 @@ export class PdfRenderer {
     this.invalidateLayout();
     this.applyContainerFlow();
     if (!this.suspended) void this.relayout();
-    this.callbacks.onDiagnostic?.('renderer.set-flow', {
-      previousFlow,
-      flow,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      suspended: this.suspended,
-    });
   }
 
   /** 容器会在 Runtime 回切时替换，模式相关样式必须随 attach 重新应用。 */
@@ -316,83 +278,64 @@ export class PdfRenderer {
   }
 
   setViewport(zoom: number, fit: PdfFitMode): void {
-    const previous = { zoom: this.zoom, fit: this.fit };
     this.zoom = zoom;
     this.fit = fit;
     // 适配模式/缩放会改变滚动模式下每一页的尺寸和 top 偏移。旧布局
     // 不能用于恢复页码,否则会把保存的 scrollTop 映射到旧页面几何上。
     this.invalidateLayout();
     if (!this.suspended) void this.relayout();
-    this.callbacks.onDiagnostic?.('renderer.set-viewport', {
-      previous,
-      next: { zoom, fit },
-      flow: this.flow,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      suspended: this.suspended,
-    });
   }
 
-  async goToPage(page: number, scrollTop?: number): Promise<void> {
+  async goToPage(
+    page: number,
+    scrollTop?: number,
+    options: PdfRendererNavigationOptions = {},
+  ): Promise<void> {
     const target = Math.min(Math.max(1, page), this.pageCount);
-    this.callbacks.onDiagnostic?.('renderer.goToPage.begin', {
-      requestedPage: page,
-      targetPage: target,
-      requestedScrollTop: scrollTop ?? null,
-      currentPage: this.currentPage,
-      currentScrollTop: this.container.scrollTop,
-      flow: this.flow,
-      layoutCount: this.layouts.length,
-      layoutGeneration: this.layoutGeneration,
-      suspended: this.suspended,
-    });
-    if (this.flow === 'paginated') {
-      this.currentPage = target;
-      await this.relayout();
-      this.callbacks.onPageChange(this.currentPage);
-    } else {
-      // setFlow/setViewport 会主动使滚动布局失效。恢复位置紧接着发生时,
-      // 必须先完成新视口下的布局,再按目标页设置滚动位置。
-      const clientWidth = this.container.clientWidth || 1;
-      if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
+    const restoreGeneration = options.restore
+      ? ++this.restoreGeneration
+      : this.restoreGeneration;
+    if (options.restore) {
+      this.activeRestore = { generation: restoreGeneration, pageNumber: target };
+      // 显式位置优先于旧容器留下的比例/绝对锚点。目标位置会在布局完成后
+      // 由本次 goToPage 直接应用。
+      this.pendingScrollAnchor = null;
+    }
+    try {
+      if (this.flow === 'paginated') {
+        this.currentPage = target;
         await this.relayout();
+        if (restoreGeneration !== this.restoreGeneration) return;
+        this.callbacks.onPageChange(this.currentPage);
+      } else {
+        // setFlow/setViewport 会主动使滚动布局失效。恢复位置紧接着发生时,
+        // 必须先完成新视口下的布局,再按目标页设置滚动位置。
+        const clientWidth = this.container.clientWidth || 1;
+        if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
+          await this.relayout();
+        }
+        if (restoreGeneration !== this.restoreGeneration) return;
+        const layout = this.layouts[target - 1];
+        if (layout) {
+          // scrollTop 是相对于整份滚动文档的绝对位置。不能用目标页的
+          // bottom 校验它:页底到下一页 top 之间的间距也是合法阅读位置,
+          // 而且最后一页之后的边界只能由整个滚动容器决定。
+          const requestedScrollTop =
+            scrollTop !== undefined && Number.isFinite(scrollTop) ? scrollTop : layout.top;
+          const maxScrollTop = this.getMaxScrollTop();
+          const appliedScrollTop = Math.min(maxScrollTop, Math.max(0, requestedScrollTop));
+          this.container.scrollTop = appliedScrollTop;
+          this.handleScroll();
+          // 目录、位置恢复和批注跳转需要在返回前至少完成目标页附近的
+          // 调度,避免调用方立刻读取目标页面渲染器时只得到占位。
+          await this.relayout();
+        }
       }
-      const layout = this.layouts[target - 1];
-      if (layout) {
-        // scrollTop 是相对于整份滚动文档的绝对位置。不能用目标页的
-        // bottom 校验它:页底到下一页 top 之间的间距也是合法阅读位置,
-        // 而且最后一页之后的边界只能由整个滚动容器决定。
-        const requestedScrollTop =
-          scrollTop !== undefined && Number.isFinite(scrollTop) ? scrollTop : layout.top;
-        const maxScrollTop = this.getMaxScrollTop();
-        const appliedScrollTop = Math.min(maxScrollTop, Math.max(0, requestedScrollTop));
-        this.container.scrollTop = appliedScrollTop;
-        this.handleScroll();
-        this.callbacks.onDiagnostic?.('renderer.goToPage.scroll-applied', {
-          requestedPage: page,
-          targetPage: target,
-          requestedScrollTop: scrollTop ?? null,
-          appliedScrollTop,
-          actualScrollTop: this.container.scrollTop,
-          currentPage: this.currentPage,
-          layoutTop: layout.top,
-          layoutHeight: layout.height,
-          maxScrollTop,
-        });
-        // 目录、位置恢复和批注跳转需要在返回前至少完成目标页附近的
-        // 调度,避免调用方立刻读取目标页面渲染器时只得到占位。
-        await this.relayout();
+    } finally {
+      if (options.restore && this.activeRestore?.generation === restoreGeneration) {
+        this.activeRestore = null;
       }
     }
-    this.callbacks.onDiagnostic?.('renderer.goToPage.end', {
-      requestedPage: page,
-      targetPage: target,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      flow: this.flow,
-      layoutCount: this.layouts.length,
-      renderedPages: [...this.pageRenderers.keys()],
-    });
   }
 
   setScrollTop(top: number): void {
@@ -406,13 +349,14 @@ export class PdfRenderer {
       return;
     }
     const generation = ++this.layoutGeneration;
+    const restoreGeneration = this.restoreGeneration;
     const clientWidth = this.container.clientWidth || 1;
     const clientHeight = this.container.clientHeight || 1;
 
     if (this.flow === 'paginated') {
-      await this.renderPaginated(clientWidth, clientHeight, generation);
+      await this.renderPaginated(clientWidth, clientHeight, generation, restoreGeneration);
     } else {
-      await this.renderScrolled(clientWidth, generation);
+      await this.renderScrolled(clientWidth, generation, restoreGeneration);
     }
   }
 
@@ -420,10 +364,11 @@ export class PdfRenderer {
     clientWidth: number,
     clientHeight: number,
     generation: number,
+    restoreGeneration: number,
   ): Promise<void> {
     const pageNumber = this.currentPage;
     const page = await this.acquirePage(pageNumber);
-    if (!this.isCurrentLayout(generation, pageNumber)) {
+    if (!this.isCurrentLayout(generation, pageNumber, restoreGeneration)) {
       return;
     }
     const scale = this.fitScale(page, clientWidth, clientHeight);
@@ -451,12 +396,18 @@ export class PdfRenderer {
       viewport,
       renderKey,
     );
-    if (!this.isCurrentLayout(generation, pageNumber)) {
+    if (!this.isCurrentLayout(generation, pageNumber, restoreGeneration)) {
       return;
     }
     this.pages.replaceChildren(renderer.element);
     this.callbacks.onPageRendered?.(pageNumber);
-    this.preloadNextPaginatedPage(pageNumber, clientWidth, clientHeight, generation);
+    this.preloadNextPaginatedPage(
+      pageNumber,
+      clientWidth,
+      clientHeight,
+      generation,
+      restoreGeneration,
+    );
   }
 
   /** 分页模式只把当前页和下一页保留在 DOM/渲染缓存范围内,避免扩大画布预算。 */
@@ -502,6 +453,7 @@ export class PdfRenderer {
     clientWidth: number,
     clientHeight: number,
     generation: number,
+    restoreGeneration: number,
   ): void {
     const nextPageNumber = pageNumber + 1;
     if (nextPageNumber > this.pageCount) {
@@ -511,7 +463,7 @@ export class PdfRenderer {
     void (async () => {
       try {
         const nextPage = await this.acquirePage(nextPageNumber);
-        if (!this.isCurrentLayout(generation, pageNumber)) {
+        if (!this.isCurrentLayout(generation, pageNumber, restoreGeneration)) {
           return;
         }
         const nextScale = this.fitScale(nextPage, clientWidth, clientHeight);
@@ -527,7 +479,7 @@ export class PdfRenderer {
           nextViewport,
           this.getPaginatedRenderKey(nextViewport),
         );
-        if (this.isCurrentLayout(generation, pageNumber)) {
+        if (this.isCurrentLayout(generation, pageNumber, restoreGeneration)) {
           this.callbacks.onPageRendered?.(nextPageNumber);
         }
       } catch {
@@ -536,19 +488,23 @@ export class PdfRenderer {
     })();
   }
 
-  private async renderScrolled(clientWidth: number, generation: number): Promise<void> {
+  private async renderScrolled(
+    clientWidth: number,
+    generation: number,
+    restoreGeneration: number,
+  ): Promise<void> {
     this.ensureScrolledPages();
-    if (!this.isCurrentLayout(generation)) {
+    if (!this.isCurrentLayout(generation, undefined, restoreGeneration)) {
       return;
     }
 
     this.ensureScrollObserver();
     if (this.layouts.length !== this.pageCount || this.layoutWidth !== clientWidth) {
-      this.rebuildScrolledLayouts(clientWidth);
+      this.rebuildScrolledLayouts(clientWidth, generation, restoreGeneration);
     } else {
       this.applyScrolledPageStyles();
     }
-    if (!this.isCurrentLayout(generation)) {
+    if (!this.isCurrentLayout(generation, undefined, restoreGeneration)) {
       return;
     }
 
@@ -556,7 +512,7 @@ export class PdfRenderer {
     // 已取得页面的缩放重绘也走同一调度器,避免一次缩放同时启动超过 3 个
     // Canvas/文字层任务;未知页面仍保持占位,不为了计算总高度调用 getPage。
     await this.scheduleScrollPages();
-    if (!this.isCurrentLayout(generation)) {
+    if (!this.isCurrentLayout(generation, undefined, restoreGeneration)) {
       return;
     }
   }
@@ -604,9 +560,11 @@ export class PdfRenderer {
     if (this.scrollObserver || typeof IntersectionObserver === 'undefined') {
       return;
     }
+    const observerGeneration = this.observerGeneration;
     this.scrollIntersectionReported = false;
     this.scrollObserver = new IntersectionObserver(
       (entries) => {
+        if (!this.isCurrentObserver(observerGeneration)) return;
         this.scrollIntersectionReported = true;
         for (const entry of entries) {
           const pageNumber = Number((entry.target as HTMLElement).dataset.page ?? 0);
@@ -633,6 +591,10 @@ export class PdfRenderer {
     this.scrollIntersectionReported = false;
   }
 
+  private isCurrentObserver(generation: number): boolean {
+    return generation === this.observerGeneration && !this.suspended && !this.disposed;
+  }
+
   /** IntersectionObserver 尚未回报首批结果或浏览器不支持时的安全回退。 */
   private refreshFallbackScrollVisibility(): void {
     if (this.scrollIntersectionReported) {
@@ -650,10 +612,16 @@ export class PdfRenderer {
   }
 
   /** 重新计算所有占位的 top/height;未加载页不会触发页面对象读取。 */
-  private rebuildScrolledLayouts(clientWidth: number): void {
-    const previousScrollTop = this.container.scrollTop;
-    const previousPage = this.currentPage;
-    const anchor = this.pendingScrollAnchor ?? this.captureScrollAnchor();
+  private rebuildScrolledLayouts(
+    clientWidth: number,
+    layoutGeneration = this.layoutGeneration,
+    restoreGeneration = this.restoreGeneration,
+  ): void {
+    if (!this.isCurrentLayout(layoutGeneration, undefined, restoreGeneration)) {
+      return;
+    }
+    const restoring = this.activeRestore?.generation === restoreGeneration;
+    const anchor = restoring ? null : this.pendingScrollAnchor ?? this.captureScrollAnchor();
     this.pendingScrollAnchor = null;
     let top = 0;
     const layouts: PageLayout[] = [];
@@ -674,18 +642,12 @@ export class PdfRenderer {
     this.pages.style.display = 'block';
     this.pages.style.height = `${Math.max(0, top)}px`;
     this.applyScrolledPageStyles();
-    this.restoreScrollAnchor(anchor);
-    this.updateCurrentPageFromScroll();
-    this.callbacks.onDiagnostic?.('renderer.scrolled-layout-rebuilt', {
-      clientWidth,
-      previousScrollTop,
-      scrollTop: this.container.scrollTop,
-      previousPage,
-      currentPage: this.currentPage,
-      anchor,
-      layoutCount: this.layouts.length,
-      contentHeight: this.getScrollContentHeight(),
-    });
+    if (restoring) {
+      this.currentPage = this.activeRestore!.pageNumber;
+    } else {
+      this.restoreScrollAnchor(anchor);
+      this.updateCurrentPageFromScroll();
+    }
   }
 
   private applyScrolledPageStyles(): void {
@@ -795,6 +757,8 @@ export class PdfRenderer {
     if (this.disposed || this.suspended || this.flow !== 'scrolled' || this.scrolledPages.length === 0) {
       return;
     }
+    const layoutGeneration = this.layoutGeneration;
+    const restoreGeneration = this.restoreGeneration;
     this.refreshFallbackScrollVisibility();
     // IntersectionObserver 的异步回调可能落后于一次快速跳转,当前页必须
     // 始终是可调度目标,否则滚动到尚未回报的页面会短暂显示整块占位。
@@ -834,11 +798,20 @@ export class PdfRenderer {
     try {
       await Promise.all([
         ...toLoad.map((state) => this.loadScrolledPage(state)),
-        ...toRender.map((state) => this.renderScrolledPageWithBudget(state)),
+        ...toRender.map((state) =>
+          this.renderScrolledPageWithBudget(state, layoutGeneration, restoreGeneration),
+        ),
       ]);
     } finally {
       this.scrollLoadingCount = Math.max(0, this.scrollLoadingCount - toRender.length);
-      if (toRender.length > 0 && !this.disposed && this.flow === 'scrolled') {
+      if (
+        toRender.length > 0 &&
+        !this.disposed &&
+        !this.suspended &&
+        this.flow === 'scrolled' &&
+        layoutGeneration === this.layoutGeneration &&
+        restoreGeneration === this.restoreGeneration
+      ) {
         void this.scheduleScrollPages();
       }
     }
@@ -850,9 +823,13 @@ export class PdfRenderer {
     return this.scrolledRenders.get(state.pageNumber)?.key !== key;
   }
 
-  private async renderScrolledPageWithBudget(state: ScrolledPageState): Promise<void> {
+  private async renderScrolledPageWithBudget(
+    state: ScrolledPageState,
+    layoutGeneration: number,
+    restoreGeneration: number,
+  ): Promise<void> {
     try {
-      await this.renderLoadedScrolledPage(state, this.layoutGeneration);
+      await this.renderLoadedScrolledPage(state, layoutGeneration, restoreGeneration);
     } catch (error) {
       this.callbacks.onError?.(error);
     }
@@ -864,25 +841,15 @@ export class PdfRenderer {
     }
     state.state = 'loading';
     const generation = ++state.generation;
+    const restoreGeneration = this.restoreGeneration;
     this.scrollLoadingCount += 1;
-    this.callbacks.onDiagnostic?.('renderer.page-load.begin', {
-      page: state.pageNumber,
-      generation,
-      currentPage: this.currentPage,
-      scrollTop: this.container.scrollTop,
-      loadingCount: this.scrollLoadingCount,
-    });
     try {
       const page = await this.acquirePage(state.pageNumber);
-      if (!this.isCurrentScrolledPage(state, generation)) {
-        this.callbacks.onDiagnostic?.('renderer.page-load.stale', {
-          page: state.pageNumber,
-          generation,
-          currentGeneration: state.generation,
-          suspended: this.suspended,
-          disposed: this.disposed,
-          currentPage: this.currentPage,
-        });
+      if (
+        !this.isCurrentScrolledPage(state, generation) ||
+        restoreGeneration !== this.restoreGeneration
+      ) {
+        this.resetStaleScrolledPageLoad(state, generation);
         return;
       }
       state.page = page;
@@ -891,34 +858,26 @@ export class PdfRenderer {
         this.pendingScrollAnchor = this.captureScrollAnchor();
         state.naturalWidth = base.width;
         state.naturalHeight = base.height;
+        // 页面实际尺寸到达时使用当前布局事务重算;恢复代次已在上方校验,
+        // 因而不会把恢复前的页面结果带入新的位置锚点。
         this.rebuildScrolledLayouts(this.container.clientWidth || 1);
       }
       state.renderer = this.ensurePageRenderer(state.pageNumber);
       this.pages.appendChild(state.renderer.element);
       this.applyScrolledPageStyles();
-      await this.renderLoadedScrolledPage(state, this.layoutGeneration);
-      if (!this.isCurrentScrolledPage(state, generation)) {
-        this.callbacks.onDiagnostic?.('renderer.page-load.stale', {
-          page: state.pageNumber,
-          generation,
-          currentGeneration: state.generation,
-          suspended: this.suspended,
-          disposed: this.disposed,
-          currentPage: this.currentPage,
-          after: 'render',
-        });
+      await this.renderLoadedScrolledPage(state, this.layoutGeneration, restoreGeneration);
+      if (
+        !this.isCurrentScrolledPage(state, generation) ||
+        restoreGeneration !== this.restoreGeneration
+      ) {
+        this.resetStaleScrolledPageLoad(state, generation);
         return;
       }
       state.state = 'loaded';
-      this.callbacks.onDiagnostic?.('renderer.page-load.end', {
-        page: state.pageNumber,
-        generation,
-        currentPage: this.currentPage,
-        scrollTop: this.container.scrollTop,
-        state: state.state,
-      });
     } catch (error) {
-      const stillCurrent = this.isCurrentScrolledPage(state, generation);
+      const stillCurrent =
+        this.isCurrentScrolledPage(state, generation) &&
+        restoreGeneration === this.restoreGeneration;
       if (stillCurrent) {
         state.state = 'error';
         if (state.renderer) {
@@ -926,17 +885,12 @@ export class PdfRenderer {
           state.renderer = null;
         }
         this.callbacks.onError?.(error);
+      } else {
+        this.resetStaleScrolledPageLoad(state, generation);
       }
-      this.callbacks.onDiagnostic?.('renderer.page-load.error', {
-        page: state.pageNumber,
-        generation,
-        currentPage: this.currentPage,
-        error,
-        stillCurrent,
-      });
     } finally {
       this.scrollLoadingCount = Math.max(0, this.scrollLoadingCount - 1);
-      if (!this.disposed && this.flow === 'scrolled') {
+      if (!this.disposed && !this.suspended && this.flow === 'scrolled') {
         void this.scheduleScrollPages();
       }
     }
@@ -954,7 +908,8 @@ export class PdfRenderer {
 
   private async renderLoadedScrolledPage(
     state: ScrolledPageState,
-    generation: number,
+    layoutGeneration: number,
+    restoreGeneration: number,
   ): Promise<void> {
     const page = state.page;
     const renderer = state.renderer;
@@ -979,7 +934,8 @@ export class PdfRenderer {
     if (
       this.disposed ||
       this.flow !== 'scrolled' ||
-      generation !== this.layoutGeneration ||
+      layoutGeneration !== this.layoutGeneration ||
+      restoreGeneration !== this.restoreGeneration ||
       this.scrolledRenders.get(state.pageNumber)?.key !== key
     ) {
       return;
@@ -1000,16 +956,34 @@ export class PdfRenderer {
     state.element.replaceChildren();
   }
 
-  private isCurrentLayout(generation: number, pageNumber?: number): boolean {
+  private resetStaleScrolledPageLoad(state: ScrolledPageState, generation: number): void {
+    if (state.generation !== generation || state.state !== 'loading') return;
+    state.generation += 1;
+    if (state.renderer) {
+      this.releasePageRenderer(state.pageNumber, state.renderer);
+      state.renderer = null;
+    }
+    state.page = null;
+    state.state = 'idle';
+    state.element.replaceChildren();
+  }
+
+  private isCurrentLayout(
+    generation: number,
+    pageNumber?: number,
+    restoreGeneration = this.restoreGeneration,
+  ): boolean {
     return (
       !this.disposed &&
       !this.suspended &&
       generation === this.layoutGeneration &&
+      restoreGeneration === this.restoreGeneration &&
       (pageNumber === undefined || pageNumber === this.currentPage)
     );
   }
 
   private invalidateLayout(): void {
+    this.layoutGeneration += 1;
     if (this.flow === 'scrolled' && this.layouts.length > 0) {
       this.pendingScrollAnchor = this.captureScrollAnchor();
     }
@@ -1078,9 +1052,10 @@ export class PdfRenderer {
   }
 
   private handleScroll = (): void => {
-    if (this.flow !== 'scrolled') {
+    if (this.disposed || this.suspended || this.flow !== 'scrolled') {
       return;
     }
+    const restoring = this.activeRestore !== null;
     const scrollTop = this.container.scrollTop;
     let page = 1;
     for (let i = 0; i < this.layouts.length; i += 1) {
@@ -1092,17 +1067,9 @@ export class PdfRenderer {
     }
     if (page !== this.currentPage) {
       this.currentPage = page;
-      this.callbacks.onPageChange(page);
+      if (!restoring) this.callbacks.onPageChange(page);
     }
-    this.callbacks.onDiagnostic?.('renderer.scroll', {
-      scrollTop,
-      page: this.currentPage,
-      flow: this.flow,
-      layoutCount: this.layouts.length,
-      scrollHeight: this.container.scrollHeight,
-      clientHeight: this.container.clientHeight,
-    });
-    this.callbacks.onScroll(scrollTop, this.currentPage);
+    if (!restoring) this.callbacks.onScroll(scrollTop, this.currentPage);
     // 滚动位置变化时只调度附近占位页;占位布局本身无需重建。
     void this.relayout();
   };
@@ -1170,8 +1137,9 @@ export class PdfRenderer {
 
   private attachObservers(): void {
     this.resizeObserver?.disconnect();
+    const observerGeneration = ++this.observerGeneration;
     this.resizeObserver = new ResizeObserver(() => {
-      if (this.suspended || this.disposed) return;
+      if (!this.isCurrentObserver(observerGeneration)) return;
       this.invalidateLayout();
       void this.relayout();
     });
@@ -1181,6 +1149,7 @@ export class PdfRenderer {
   }
 
   private detachObservers(): void {
+    this.observerGeneration += 1;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.container.removeEventListener('scroll', this.handleScroll);
@@ -1189,6 +1158,9 @@ export class PdfRenderer {
 
   dispose(): void {
     this.disposed = true;
+    this.layoutGeneration += 1;
+    this.restoreGeneration += 1;
+    this.activeRestore = null;
     this.detachObservers();
     for (const state of this.scrolledPages) {
       state.generation += 1;

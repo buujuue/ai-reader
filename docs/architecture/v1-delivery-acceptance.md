@@ -55,7 +55,7 @@ pnpm --dir apps/reader test:reading-performance
 
 前一条在真实 Chrome 中通过应用 `library.openBook`、`reader.activateView` 和 Markdown Command 覆盖：
 
-- EPUB↔EPUB、Markdown↔Markdown、PDF↔PDF 及 EPUB/PDF/Markdown 三组跨格式 A→B→A；
+- EPUB↔EPUB、Markdown↔Markdown、PDF↔PDF 及 EPUB/PDF/Markdown 三组跨格式 A→B→A；PDF pair 额外执行 A→B→A→B→A；
 - 两个 Editor Group 的 ReadingView/位置隔离、快速连续切换、缓存命中无新文档/renderer/范围读取；
 - PDF 挂起的 Canvas、解码页、在途范围读取硬预算；LRU 淘汰、关闭清理和重启恢复；
 - Markdown 源码模式、共享会话、编辑失效、正式保存、Recovery Snapshot 和放弃修改。

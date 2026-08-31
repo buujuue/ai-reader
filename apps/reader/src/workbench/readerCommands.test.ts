@@ -339,6 +339,101 @@ describe('Reader 命令', () => {
     await persister.dispose();
   });
 
+  it('同一挂载的较早位置恢复不会提交到更新后的恢复请求', async () => {
+    const viewId = 'pdf-restore-generation-view';
+    const baseLocation: PdfReadingLocation = {
+      kind: 'pdf',
+      page: 1,
+      scrollTop: 0,
+      zoom: 100,
+      fit: 'width',
+    };
+    const firstLocation: PdfReadingLocation = { ...baseLocation, page: 2 };
+    const latestLocation: PdfReadingLocation = { ...baseLocation, page: 3 };
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      activeEditorGroupId: 'group-1',
+      editorGroups: [
+        {
+          id: 'group-1',
+          views: [
+            {
+              id: viewId,
+              materialId: 'pdf-material',
+              location: baseLocation,
+              history: { positions: [], index: -1 },
+              sourceMode: false,
+            },
+          ],
+          activeViewId: viewId,
+        },
+      ],
+    });
+
+    const listeners = new Set<(location: PdfReadingLocation) => void>();
+    let currentLocation = baseLocation;
+    let restoreCall = 0;
+    let releaseFirst!: () => void;
+    let releaseLatest!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const latestGate = new Promise<void>((resolve) => {
+      releaseLatest = resolve;
+    });
+    const emit = (location: PdfReadingLocation) => {
+      currentLocation = location;
+      for (const listener of listeners) listener(location);
+    };
+    const book = {
+      format: 'pdf',
+      metadata: { title: '测试 PDF', author: null, language: 'zh' },
+      async open() {},
+      getLocation: () => currentLocation,
+      async goToLocation(location: PdfReadingLocation) {
+        if (restoreCall++ === 0) await firstGate;
+        else await latestGate;
+        emit(location);
+      },
+      onLocationChange(listener: (location: PdfReadingLocation) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      applyTypography() {},
+      onInternalLink() {
+        return () => undefined;
+      },
+      onExternalLink() {
+        return () => undefined;
+      },
+    } as unknown as BookDocument;
+    useReaderRuntime.getState().setDocument(viewId, book);
+
+    const container = document.createElement('div');
+    const persister = mountViewDocument(book, viewId, container, firstLocation, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(restoreCall).toBe(1));
+
+    mountViewDocument(book, viewId, container, latestLocation, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(restoreCall).toBe(2));
+
+    releaseFirst();
+    await vi.waitFor(() =>
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(baseLocation),
+    );
+
+    releaseLatest();
+    await vi.waitFor(() =>
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(latestLocation),
+    );
+    await persister.dispose();
+  });
+
   it('PDF 与其他材料互切后恢复页码、滚动位置和视口状态', async () => {
     const { pdf, epub } = await setupWithPdfAndEpub();
     vi.stubGlobal(

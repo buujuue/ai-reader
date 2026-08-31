@@ -160,6 +160,97 @@ describe('PdfRenderer 分页模式', () => {
 });
 
 describe('PdfRenderer 滚动模式', () => {
+  it('Runtime 回切后旧 ResizeObserver 回调不会重启当前容器的布局', async () => {
+    const resizeCallbacks: Array<() => void> = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback);
+        }
+
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+
+    const document = makeFakeDocument(5);
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+    expect(resizeCallbacks).toHaveLength(1);
+
+    renderer.detach();
+    expect(renderer.attach(makeContainer())).toBe(true);
+    await vi.waitFor(() => expect(resizeCallbacks).toHaveLength(2));
+
+    const relayout = vi.spyOn(renderer as unknown as { relayout: () => Promise<void> }, 'relayout');
+    resizeCallbacks[0]!();
+    await Promise.resolve();
+
+    expect(relayout).not.toHaveBeenCalled();
+    renderer.dispose();
+  });
+
+  it('显式位置恢复会使恢复开始前的异步页面加载结果失效', async () => {
+    const document = makeFakeDocument(20) as PdfDocumentProxy & { pages: PdfPage[] };
+    let releaseStalePage: () => void = () => undefined;
+    const stalePageGate = new Promise<void>((resolve) => {
+      releaseStalePage = resolve;
+    });
+    (document.getPage as ReturnType<typeof vi.fn>).mockImplementation(async (pageNumber: number) => {
+      if (pageNumber === 1) await stalePageGate;
+      return document.pages[pageNumber - 1]!;
+    });
+
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+
+    const privateRenderer = renderer as unknown as {
+      pageCache: Map<number, Promise<PdfPage>>;
+      releaseScrolledPage: (state: { pageNumber: number }) => void;
+      scrolledPages: Array<{
+        pageNumber: number;
+        state: string;
+        visible: boolean;
+        generation: number;
+      }>;
+      loadScrolledPage: (state: {
+        pageNumber: number;
+        state: string;
+        visible: boolean;
+        generation: number;
+      }) => Promise<void>;
+      rebuildScrolledLayouts: (...args: unknown[]) => void;
+    };
+    const staleState = privateRenderer.scrolledPages[0]!;
+    privateRenderer.releaseScrolledPage(staleState);
+    privateRenderer.pageCache.delete(1);
+    const staleLoad = privateRenderer.loadScrolledPage(staleState);
+    await vi.waitFor(() => expect(document.getPage).toHaveBeenCalledWith(1));
+
+    const targetPage = renderer['container']?.querySelector<HTMLElement>('[data-page="10"]');
+    const targetTop = Number.parseFloat(targetPage?.style.top ?? '0') + 40;
+    const rebuild = vi.spyOn(privateRenderer, 'rebuildScrolledLayouts');
+
+    await renderer.goToPage(10, targetTop, { restore: true });
+    const rebuildsAfterRestore = rebuild.mock.calls.length;
+    releaseStalePage();
+    await staleLoad;
+
+    expect(rebuild).toHaveBeenCalledTimes(rebuildsAfterRestore);
+    expect(renderer.getCurrentPage()).toBe(10);
+    expect(renderer.getScrollTop()).toBeCloseTo(targetTop);
+    renderer.dispose();
+  });
+
   it('目标页读取期间挂起并恢复后会重新调度该页，而不是永久停在第一页结果', async () => {
     const document = makeFakeDocument(20) as PdfDocumentProxy & { pages: PdfPage[] };
     let releaseTargetPage: () => void = () => undefined;

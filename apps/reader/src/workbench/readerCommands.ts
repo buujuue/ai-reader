@@ -54,12 +54,6 @@ import {
   ReaderRuntimeCache,
 } from './readerRuntimeCache';
 import {
-  createPdfRestoreTransitionId,
-  getPdfRestoreRuntimeId,
-  isPdfRestoreDiagnosticsEnabled,
-  logPdfRestoreDiagnostic,
-} from '../domain/reader/pdf/pdfRestoreDiagnostics';
-import {
   findView,
   findViewByMaterialId,
   findViewGroupId,
@@ -102,14 +96,13 @@ interface ActiveViewMount {
   persister: ThrottledPositionPersister;
   restoring: boolean;
   restoringLocation: string | null;
+  restoreGeneration: number;
   disposed: boolean;
   dispose: () => void;
 }
 
 const activeMounts = new Map<string, ActiveViewMount>();
 const runtimeInputCleanups = new Map<string, () => void>();
-/** 当前视图最近一次切换事务;PDF 文档的异步事件用它与高层 Command 对齐。 */
-const pdfRestoreTransitions = new Map<string, string>();
 const defaultEpubDerivedCache = createEpubDerivedCache<string>();
 const defaultCanonicalSearchIndexCache = createCanonicalSearchIndexCache();
 const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
@@ -117,109 +110,6 @@ const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
 function isCurrentViewMount(viewId: string, document: BookDocument): boolean {
   const mount = activeMounts.get(viewId);
   return mount?.document === document && !mount.disposed;
-}
-
-function isPdfView(
-  viewId: string,
-  document?: BookDocument | null,
-  material?: ReadingMaterial,
-): boolean {
-  if (document?.format === 'pdf') return true;
-  const view = findView(viewId);
-  const resolvedMaterial = material ?? (view
-    ? useLibraryStore.getState().materials.find((candidate) => candidate.id === view.materialId)
-    : undefined);
-  return resolvedMaterial ? formatFromSourceFileName(resolvedMaterial.sourceFileName) === 'pdf' : false;
-}
-
-function getPdfContainerSnapshot(container: HTMLElement | undefined): Record<string, unknown> | null {
-  if (!container) return null;
-  let visiblePage: number | null = null;
-  try {
-    const top = container.getBoundingClientRect().top + 80;
-    for (const page of container.querySelectorAll<HTMLElement>('.pdf-page')) {
-      const rect = page.getBoundingClientRect();
-      if (rect.top <= top && rect.bottom > top) {
-        visiblePage = Number(page.dataset.page ?? 0) || null;
-        break;
-      }
-    }
-  } catch {
-    // DOM geometry is best-effort and must not interfere with a transition.
-  }
-  return {
-    scrollTop: container.scrollTop,
-    scrollHeight: container.scrollHeight,
-    clientHeight: container.clientHeight,
-    clientWidth: container.clientWidth,
-    overflowY: getComputedStyle(container).overflowY,
-    renderedPages: [...container.querySelectorAll<HTMLElement>('.pdf-page')]
-      .map((page) => Number(page.dataset.page ?? 0))
-      .filter((page) => page > 0),
-    visiblePage,
-  };
-}
-
-function logPdfViewDiagnostic(
-  phase: string,
-  viewId: string,
-  details: Record<string, unknown> = {},
-): void {
-  if (!isPdfRestoreDiagnosticsEnabled()) return;
-  const view = findView(viewId);
-  const document = useReaderRuntime.getState().getDocument(viewId);
-  if (!isPdfView(viewId, document)) return;
-  const container = activeMounts.get(viewId)?.container;
-  logPdfRestoreDiagnostic(
-    phase,
-    {
-      viewId,
-      materialId: view?.materialId ?? null,
-      runtimeId: document ? getPdfRestoreRuntimeId(document) : null,
-      transitionId: pdfRestoreTransitions.get(viewId) ?? null,
-    },
-    {
-      workspaceLocation: view?.location ?? null,
-      documentLocation: document?.format === 'pdf' ? document.getLocation() : null,
-      lifecycle: useReaderRuntime.getState().getDocumentLifecycle(viewId) ?? null,
-      documentState: useReaderRuntime.getState().documentStates.get(viewId) ?? null,
-      container: getPdfContainerSnapshot(container),
-      ...details,
-    },
-  );
-}
-
-function beginPdfRestoreTransition(
-  operation: string,
-  viewId: string,
-  previousViewId: string | null,
-  materialId: string | null,
-  material?: ReadingMaterial,
-): string | null {
-  const targetDocument = useReaderRuntime.getState().getDocument(viewId);
-  const previousDocument = previousViewId
-    ? useReaderRuntime.getState().getDocument(previousViewId)
-    : null;
-  const targetIsPdf = isPdfView(viewId, targetDocument, material);
-  const previousIsPdf = previousViewId ? isPdfView(previousViewId, previousDocument) : false;
-  if (!targetIsPdf && !previousIsPdf) return null;
-  const transitionId = createPdfRestoreTransitionId();
-  pdfRestoreTransitions.set(viewId, transitionId);
-  if (previousViewId) pdfRestoreTransitions.set(previousViewId, transitionId);
-  logPdfViewDiagnostic('transition.begin', viewId, {
-    operation,
-    previousViewId,
-    targetMaterialId: materialId,
-    targetDocumentPresent: Boolean(targetDocument),
-    previousDocumentPresent: Boolean(previousDocument),
-  });
-  if (previousViewId && previousViewId !== viewId) {
-    logPdfViewDiagnostic('transition.peer', previousViewId, {
-      operation,
-      targetViewId: viewId,
-    });
-  }
-  return transitionId;
 }
 
 function describeDocumentOpenError(error: unknown): string {
@@ -358,6 +248,14 @@ function serializeReadingLocation(location: ReadingLocation): string {
   return JSON.stringify(location);
 }
 
+function isPdfAtRestoredLocation(document: BookDocument, location: ReadingLocation): boolean {
+  const current = document.getLocation();
+  return (
+    document.format !== 'pdf' ||
+    (current !== null && serializeReadingLocation(current) === serializeReadingLocation(location))
+  );
+}
+
 /** 同一阅读视图尚在打开时,复用进行中的文档创建任务,避免快速重复点击触发并发读取。 */
 const pendingDocumentCreations = new Map<string, Promise<BookDocument | null>>();
 
@@ -424,19 +322,8 @@ export function restoreReaderViewRuntime(
 
 /** 关闭一个不再可缓存的 Runtime,先移除缓存索引再由 Runtime Store 统一 close。 */
 function closeReaderRuntime(viewId: string, cache: ReaderRuntimeCache): void {
-  logPdfViewDiagnostic('runtime.close.begin', viewId, {
-    cacheEntries: cache.getEntries().map((entry) => ({
-      viewId: entry.viewId,
-      state: entry.state,
-      format: entry.format,
-    })),
-  });
   cache.remove(viewId);
   useReaderRuntime.getState().removeDocument(viewId);
-  logPdfViewDiagnostic('runtime.close.end', viewId, {
-    runtimePresent: Boolean(useReaderRuntime.getState().getDocument(viewId)),
-  });
-  pdfRestoreTransitions.delete(viewId);
 }
 
 function enqueueRuntimeTransition<T>(operation: () => Promise<T>): Promise<T> {
@@ -507,7 +394,6 @@ async function createEpubDocument(
 async function createPdfDocument(
   dependencies: ReaderCommandDependencies,
   material: ReadingMaterial,
-  viewId: string,
 ): Promise<BookDocument | null> {
   let source: PdfFileSource;
   try {
@@ -524,11 +410,6 @@ async function createPdfDocument(
     },
     pdfLib: dependencies.pdfLib,
     rasterize: dependencies.pdfRasterize,
-    diagnostics: {
-      viewId,
-      materialId: material.id,
-      getTransitionId: () => pdfRestoreTransitions.get(viewId) ?? null,
-    },
   });
 }
 
@@ -593,14 +474,13 @@ async function ensureMarkdownSession(
 /** 按材料格式分派创建对应 BookDocument;未知格式返回 null。 */
 async function createDocumentForMaterial(
   dependencies: ReaderCommandDependencies,
-  viewId: string,
   material: ReadingMaterial,
   options: { preferManagedMarkdownSource?: boolean } = {},
 ): Promise<BookDocument | null> {
   const format = formatFromSourceFileName(material.sourceFileName);
   switch (format) {
     case 'pdf':
-      return createPdfDocument(dependencies, material, viewId);
+      return createPdfDocument(dependencies, material);
     case 'epub':
       return createEpubDocument(dependencies, material);
     case 'markdown':
@@ -625,7 +505,7 @@ function getOrCreatePendingDocument(
   const pending = pendingDocumentCreations.get(viewId);
   if (pending) return pending;
 
-  const creation = createDocumentForMaterial(dependencies, viewId, material, options);
+  const creation = createDocumentForMaterial(dependencies, material, options);
   pendingDocumentCreations.set(viewId, creation);
   void creation.then(
     () => {
@@ -653,47 +533,22 @@ async function suspendViewRuntime(
 ): Promise<void> {
   // flush 失败时保留当前 Runtime 和接线，阻止切换覆盖最后位置。
   const locationAtSuspendStart = useReaderRuntime.getState().getDocument(viewId)?.getLocation();
-  logPdfViewDiagnostic('runtime.suspend.begin', viewId, {
-    locationAtSuspendStart,
-    activeMount: Boolean(activeMounts.get(viewId)),
-    persister: Boolean(persisters.get(viewId)),
-  });
   await flushAndClearViewRuntimeBindings(viewId, dependencies, { preservePdfSearch: true });
-  logPdfViewDiagnostic('runtime.suspend.after-flush', viewId, {
-    locationAtSuspendStart,
-    locationAfterFlush: useReaderRuntime.getState().getDocument(viewId)?.getLocation() ?? null,
-    workspaceLocation: findView(viewId)?.location ?? null,
-  });
 
   // Foliate 的迟到 relocate 可能在 persister flush 前把 Workspace 写成章节
   // 起点;切换事务以挂起瞬间 BookDocument 的位置为准再写一次,确保回切恢复
   // 的是用户刚刚看到的精确范围而不是重排中间态。
   if (locationAtSuspendStart) {
     useWorkspaceStore.getState().setViewLocation(viewId, locationAtSuspendStart);
-    logPdfViewDiagnostic('runtime.suspend.workspace-correction', viewId, {
-      locationAtSuspendStart,
-      workspaceLocation: findView(viewId)?.location ?? null,
-    });
-    logPdfViewDiagnostic('runtime.suspend.workspace-save.begin', viewId, {
-      location: locationAtSuspendStart,
-    });
     try {
       await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-      logPdfViewDiagnostic('runtime.suspend.workspace-save.end', viewId, {
-        location: locationAtSuspendStart,
-      });
     } catch (error) {
-      logPdfViewDiagnostic('runtime.suspend.workspace-save.error', viewId, {
-        location: locationAtSuspendStart,
-        error,
-      });
       throw error;
     }
   }
 
   const document = useReaderRuntime.getState().getDocument(viewId);
   if (!document) {
-    logPdfViewDiagnostic('runtime.suspend.no-document', viewId);
     return;
   }
   const view = findView(viewId);
@@ -724,15 +579,6 @@ async function suspendViewRuntime(
       typeof document.detach === 'function' &&
       document.isRuntimeReady?.() !== false,
   );
-  logPdfViewDiagnostic('runtime.suspend.cache-admission-check', viewId, {
-    format,
-    materialPresent: Boolean(material),
-    cacheKeyPresent: Boolean(cacheKey),
-    hasAttach: typeof document.attach === 'function',
-    hasDetach: typeof document.detach === 'function',
-    runtimeReady: document.isRuntimeReady?.() ?? null,
-    canSuspend,
-  });
   if (!canSuspend) {
     // 没有当前活跃材料、未完成打开、或宿主不支持无损摘下时不能进入缓存。
     closeReaderRuntime(viewId, cache);
@@ -744,10 +590,6 @@ async function suspendViewRuntime(
     // 先让格式实现主动收缩页面/范围资源，再按收缩后的快照执行缓存准入；
     // 这样 PDF 不会因为活动窗口的多页 Canvas 被错误判定为超出挂起预算。
     await document.detach!();
-    logPdfViewDiagnostic('runtime.suspend.after-detach', viewId, {
-      locationAfterDetach: document.getLocation(),
-      usageAfterDetach: estimateReaderRuntimeResourceUsage(document),
-    });
     result = cache.suspend({
       viewId,
       materialId: material!.id,
@@ -755,16 +597,6 @@ async function suspendViewRuntime(
       key: cacheKey!,
       document,
       usage: estimateReaderRuntimeResourceUsage(document),
-    });
-    logPdfViewDiagnostic('runtime.suspend.cache-result', viewId, {
-      admitted: result.admitted,
-      evicted: result.evicted.map((entry) => ({ viewId: entry.viewId, format: entry.format })),
-      cacheEntries: cache.getEntries().map((entry) => ({
-        viewId: entry.viewId,
-        state: entry.state,
-        format: entry.format,
-        usage: entry.usage,
-      })),
     });
   } catch (error) {
     console.warn('读取 Runtime 缓存资源失败,已关闭并将在下次激活时重建', error);
@@ -775,27 +607,17 @@ async function suspendViewRuntime(
   if (result.admitted) {
     try {
       useReaderRuntime.getState().setDocumentLifecycle(viewId, 'suspended');
-      logPdfViewDiagnostic('runtime.suspend.end', viewId, {
-        admitted: true,
-        lifecycle: useReaderRuntime.getState().getDocumentLifecycle(viewId),
-      });
     } catch (error) {
       // attach/detach 是可选宿主能力;若挂起时宿主拒绝摘下,安全关闭并让
       // 下一次激活走完整重建,不能留下“缓存命中但 DOM 已断开”的假对象。
       console.warn('挂起阅读 Runtime 失败,已关闭并将在下次激活时重建', error);
       closeReaderRuntime(viewId, cache);
-      logPdfViewDiagnostic('runtime.suspend.end', viewId, { admitted: false, reason: 'lifecycle-error' });
     }
   } else {
     // 未完成加载、超出硬预算或未知材料均回到确定性的关闭路径。
     closeReaderRuntime(viewId, cache);
-    logPdfViewDiagnostic('runtime.suspend.end', viewId, { admitted: false, reason: 'cache-rejected' });
   }
   for (const evicted of result.evicted) {
-    logPdfViewDiagnostic('runtime.suspend.evicted-peer', evicted.viewId, {
-      evictedByViewId: viewId,
-      format: evicted.format,
-    });
     closeReaderRuntime(evicted.viewId, cache);
   }
 }
@@ -818,11 +640,6 @@ async function flushAndClearViewRuntimeBindings(
 ): Promise<void> {
   const activeMount = activeMounts.get(viewId);
   const persister = persisters.get(viewId);
-  logPdfViewDiagnostic('runtime.bindings.flush.begin', viewId, {
-    hasActiveMount: Boolean(activeMount),
-    hasPersister: Boolean(persister),
-    preservePdfSearch: options.preservePdfSearch === true,
-  });
   if (persister) {
     await persister.dispose();
     persisters.delete(viewId);
@@ -851,11 +668,6 @@ async function flushAndClearViewRuntimeBindings(
     clearSearch(viewId);
   }
   useSearchStore.getState().close(viewId);
-  logPdfViewDiagnostic('runtime.bindings.flush.end', viewId, {
-    workspaceLocation: findView(viewId)?.location ?? null,
-    documentLocation: useReaderRuntime.getState().getDocument(viewId)?.getLocation() ?? null,
-    hasActiveMount: Boolean(activeMounts.get(viewId)),
-  });
 }
 
 /**
@@ -925,12 +737,6 @@ async function ensureActiveViewDocument(
   const runtime = useReaderRuntime.getState();
   const existing = runtime.getDocument(viewId);
 
-  logPdfViewDiagnostic('runtime.ensure.begin', viewId, {
-    existing: Boolean(existing),
-    existingLifecycle: runtime.getDocumentLifecycle(viewId) ?? null,
-    workspaceLocation: findView(viewId)?.location ?? null,
-  });
-
   runtime.setDocumentState(viewId, { status: 'loading' });
 
   const view = findView(viewId);
@@ -963,13 +769,6 @@ async function ensureActiveViewDocument(
     return null;
   }
 
-  logPdfViewDiagnostic('runtime.ensure.material-resolved', viewId, {
-    materialId: targetMaterial.id,
-    format: formatFromSourceFileName(targetMaterial.sourceFileName),
-    contentFingerprint: targetMaterial.fingerprint,
-    documentVersion: targetMaterial.documentVersion,
-  });
-
   // 源码模式由 CodeMirror 独占当前 ReadingView 的可见内容;不要在启动恢复、
   // 标签切换或其它材料刷新时为隐藏的 Foliate Runtime 重新创建正文。
   if (view.sourceMode) {
@@ -990,11 +789,6 @@ async function ensureActiveViewDocument(
 
   const cache = getReaderRuntimeCache(dependencies);
   const cacheKey = buildReaderRuntimeCacheKeyForMaterial(viewId, targetMaterial);
-  logPdfViewDiagnostic('runtime.ensure.cache-key', viewId, {
-    cacheKey,
-    existingLifecycle: runtime.getDocumentLifecycle(viewId) ?? null,
-    existingCacheKey: runtime.getDocumentCacheKey(viewId) ?? null,
-  });
   if (existing && runtime.getDocumentLifecycle(viewId) === 'active') {
     if (runtime.getDocumentCacheKey(viewId) === cacheKey) {
       cache.registerActive({
@@ -1006,10 +800,6 @@ async function ensureActiveViewDocument(
         usage: estimateReaderRuntimeResourceUsage(existing),
       });
       runtime.setDocumentState(viewId, { status: 'ready' });
-      logPdfViewDiagnostic('runtime.ensure.active-reuse', viewId, {
-        cacheKey,
-        documentFormat: existing.format,
-      });
       return existing;
     }
     // 活动对象也必须有可验证的当前版本键；没有证明就关闭后重建。
@@ -1018,19 +808,9 @@ async function ensureActiveViewDocument(
     runtime.removeDocument(viewId);
   } else if (existing) {
     const lookup = cache.activate(viewId, cacheKey);
-    logPdfViewDiagnostic('runtime.ensure.cache-lookup', viewId, {
-      kind: lookup.kind,
-      entryViewId: lookup.kind === 'hit' ? lookup.entry.viewId : null,
-      entryState: lookup.kind === 'hit' ? lookup.entry.state : null,
-      entryDocumentMatches: lookup.kind === 'hit' ? lookup.entry.document === existing : null,
-    });
     if (lookup.kind === 'hit' && lookup.entry.document === existing) {
       runtime.setDocumentLifecycle(viewId, 'active');
       runtime.setDocumentState(viewId, { status: 'ready' });
-      logPdfViewDiagnostic('runtime.ensure.cache-hit', viewId, {
-        cacheKey,
-        locationAfterHit: existing.getLocation(),
-      });
       return existing;
     }
     // 键不一致或缓存已淘汰时不能猜测复用；移除旧对象并安全重建。
@@ -1039,11 +819,6 @@ async function ensureActiveViewDocument(
 
   const generation = runtimeGeneration;
   let document: BookDocument | null;
-  logPdfViewDiagnostic('runtime.ensure.document-create.begin', viewId, {
-    generation,
-    cacheKey,
-    existingWasPresent: Boolean(existing),
-  });
   try {
     document = await getOrCreatePendingDocument(dependencies, viewId, targetMaterial, options);
   } catch (error) {
@@ -1066,12 +841,6 @@ async function ensureActiveViewDocument(
     });
     return null;
   }
-  logPdfViewDiagnostic('runtime.ensure.document-create.end', viewId, {
-    generation,
-    format: document.format,
-    location: document.getLocation(),
-  });
-
   // A tab may have been switched away while the file was being inspected.
   // Do not leave a renderer behind for an inactive or closed view.
   if (generation !== runtimeGeneration || !isViewActive(viewId) || !findView(viewId)) {
@@ -1096,12 +865,6 @@ async function ensureActiveViewDocument(
     document,
     usage: estimateReaderRuntimeResourceUsage(document),
   });
-  logPdfViewDiagnostic('runtime.ensure.active-registered', viewId, {
-    generation,
-    cacheKey,
-    format: document.format,
-    location: document.getLocation(),
-  });
   return document;
 }
 
@@ -1118,21 +881,6 @@ async function activateViewRuntime(
 
   const previousViewId =
     previousViewIdOverride === undefined ? getActiveViewId(groupId) : previousViewIdOverride;
-  const transitionId = beginPdfRestoreTransition(
-    'activateViewRuntime',
-    viewId,
-    previousViewId && previousViewId !== viewId ? previousViewId : null,
-    material?.id ?? view.materialId,
-    material,
-  );
-  logPdfViewDiagnostic('runtime.activate.begin', viewId, {
-    previousViewId,
-    groupId,
-    transitionId,
-    targetLifecycle: useReaderRuntime.getState().getDocumentLifecycle(viewId) ?? null,
-    targetLocation: view.location,
-    sourceMode: view.sourceMode,
-  });
   if (previousViewId && previousViewId !== viewId) {
     const targetIsSourceMode = view.sourceMode;
     const targetDocument = useReaderRuntime.getState().getDocument(viewId);
@@ -1179,18 +927,18 @@ async function activateViewRuntime(
       const lookup = targetCache.activate(viewId, targetCacheKey);
       if (lookup.kind === 'hit' && lookup.entry.document === targetDocument) {
         const cachedLocation = targetDocument.getLocation();
-        if (cachedLocation) {
-          // Runtime 中的最后位置比可能被异步重排事件污染的 Workspace
-          // 快照更接近回切前用户看到的内容;激活后再由 Command 持久化。
-          useWorkspaceStore.getState().setViewLocation(viewId, cachedLocation);
+        const workspaceLocation = findView(viewId)?.location ?? null;
+        const locationToRestore =
+          targetDocument.format === 'pdf' && workspaceLocation?.kind === 'pdf'
+            ? workspaceLocation
+            : cachedLocation ?? workspaceLocation;
+        if (locationToRestore) {
+          // 回切边界以已 flush 的 Workspace 位置为准。PDF Runtime 可能在
+          // 挂起期间被迟到的布局事件改写;不能让未经验证的活对象覆盖快照。
+          useWorkspaceStore.getState().setViewLocation(viewId, locationToRestore);
         }
         useReaderRuntime.getState().setDocumentLifecycle(viewId, 'active');
         useWorkspaceStore.getState().setActiveView(groupId, viewId);
-        logPdfViewDiagnostic('runtime.activate.cache-hit', viewId, {
-          previousViewId,
-          locationFromRuntime: cachedLocation,
-          targetCacheKey,
-        });
         try {
           await suspendViewRuntime(dependencies, previousViewId);
         } catch (error) {
@@ -1208,40 +956,15 @@ async function activateViewRuntime(
           useWorkspaceStore.getState().setActiveView(groupId, previousViewId);
           throw error;
         }
-        logPdfViewDiagnostic('runtime.activate.cache-hit.end', viewId, {
-          previousViewId,
-          activeViewId: getActiveViewId(groupId),
-          location: targetDocument.getLocation(),
-        });
         return targetDocument;
       }
-      logPdfViewDiagnostic('runtime.activate.cache-miss', viewId, {
-        previousViewId,
-        lookupKind: lookup.kind,
-        targetCacheKey,
-      });
       useReaderRuntime.getState().removeDocument(viewId);
     }
     await suspendViewRuntime(dependencies, previousViewId);
-    logPdfViewDiagnostic('runtime.activate.after-previous-suspend', viewId, {
-      previousViewId,
-      activeViewId: getActiveViewId(groupId),
-    });
   }
   useWorkspaceStore.getState().setActiveView(groupId, viewId);
-  logPdfViewDiagnostic('runtime.activate.active-view-set', viewId, {
-    previousViewId,
-    activeViewId: getActiveViewId(groupId),
-    transitionId,
-  });
   if (view.sourceMode) return null;
   const document = await ensureActiveViewDocument(dependencies, viewId, material, options);
-  logPdfViewDiagnostic('runtime.activate.end', viewId, {
-    previousViewId,
-    activeViewId: getActiveViewId(groupId),
-    documentPresent: Boolean(document),
-    documentLocation: document?.getLocation() ?? null,
-  });
   return document;
 }
 
@@ -1262,21 +985,11 @@ export function mountViewDocument(
   dependencies: ReaderCommandDependencies,
 ): ThrottledPositionPersister {
   const existingMount = activeMounts.get(viewId);
-  logPdfViewDiagnostic('runtime.mount.begin', viewId, {
-    passedLocation: location,
-    existingMount: Boolean(existingMount),
-    existingDocumentMatches: existingMount?.document === document,
-    documentLocation: document.getLocation(),
-  });
   if (existingMount?.document === document && !existingMount.disposed) {
     const containerChanged = existingMount.container !== container;
     let attached = false;
     if (containerChanged) {
       attached = document.attach?.(container) ?? false;
-      logPdfViewDiagnostic('runtime.mount.existing-attach', viewId, {
-        attached,
-        containerChanged,
-      });
       existingMount.container = container;
     }
     if (
@@ -1287,32 +1000,27 @@ export function mountViewDocument(
       const targetLocation = location;
       existingMount.restoringLocation = serializeReadingLocation(targetLocation);
       existingMount.restoring = true;
+      const restoreGeneration = existingMount.restoreGeneration + 1;
+      existingMount.restoreGeneration = restoreGeneration;
       useReaderRuntime.getState().setDocumentState(viewId, { status: 'loading' });
-      logPdfViewDiagnostic('runtime.mount.restore.begin', viewId, {
-        targetLocation,
-        attached,
-        existingMount: true,
-      });
       void restoreAttachedReaderLocation(document, targetLocation)
         .then(async () => {
-          if (activeMounts.get(viewId) !== existingMount) return;
+          if (
+            activeMounts.get(viewId) !== existingMount ||
+            existingMount.restoreGeneration !== restoreGeneration
+          ) return;
+          if (!isPdfAtRestoredLocation(document, targetLocation)) return;
           existingMount.restoring = false;
           useWorkspaceStore.getState().setViewLocation(viewId, targetLocation);
           existingMount.persister.update(targetLocation);
           useReaderRuntime.getState().setDocumentState(viewId, { status: 'ready' });
-          logPdfViewDiagnostic('runtime.mount.restore.end', viewId, {
-            targetLocation,
-            actualLocation: document.getLocation(),
-          });
         })
         .catch((error: unknown) => {
-          logPdfViewDiagnostic('runtime.mount.restore.error', viewId, {
-            targetLocation,
-            error,
-            actualLocation: document.getLocation(),
-          });
           console.error('缓存阅读位置恢复失败', { viewId, error });
-          if (activeMounts.get(viewId) === existingMount) {
+          if (
+            activeMounts.get(viewId) === existingMount &&
+            existingMount.restoreGeneration === restoreGeneration
+          ) {
             useReaderRuntime.getState().setDocumentState(viewId, {
               status: 'error',
               message: '阅读位置恢复失败,请重新打开该材料。',
@@ -1320,13 +1028,12 @@ export function mountViewDocument(
           }
         })
         .finally(() => {
-          if (activeMounts.get(viewId) !== existingMount) return;
+          if (
+            activeMounts.get(viewId) !== existingMount ||
+            existingMount.restoreGeneration !== restoreGeneration
+          ) return;
           existingMount.restoring = false;
           existingMount.restoringLocation = null;
-          logPdfViewDiagnostic('runtime.mount.restore.finally', viewId, {
-            targetLocation,
-            actualLocation: document.getLocation(),
-          });
         });
     }
     return existingMount.persister;
@@ -1336,32 +1043,14 @@ export function mountViewDocument(
   // 缓存命中时只移动已打开的 renderer，不重新执行 EPUB/Markdown 解析或建立
   // renderer；新建 Runtime 才进入 document.open()。
   const attached = document.attach?.(container) ?? false;
-  logPdfViewDiagnostic('runtime.mount.attach', viewId, {
-    attached,
-    passedLocation: location,
-    documentLocation: document.getLocation(),
-  });
   const readiness = prepareViewMountReadiness(viewId);
   useReaderRuntime.getState().setDocumentState(viewId, { status: 'loading' });
   const persister = new ThrottledPositionPersister({
     save: async (next) => {
-      logPdfViewDiagnostic('position.persist.begin', viewId, {
-        next,
-        workspaceBefore: findView(viewId)?.location ?? null,
-      });
       useWorkspaceStore.getState().setViewLocation(viewId, next);
-      logPdfViewDiagnostic('position.persist.workspace-updated', viewId, {
-        next,
-        workspaceAfter: findView(viewId)?.location ?? null,
-      });
       try {
         await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-        logPdfViewDiagnostic('position.persist.end', viewId, {
-          next,
-          persistedLocation: findView(viewId)?.location ?? null,
-        });
       } catch (error) {
-        logPdfViewDiagnostic('position.persist.error', viewId, { next, error });
         console.error('保存阅读位置失败', error);
         throw error;
       }
@@ -1372,10 +1061,6 @@ export function mountViewDocument(
     reportReaderReadFailure(viewId, error);
   });
   const removeLocationListener = document.onLocationChange((next) => {
-    logPdfViewDiagnostic('position.location-event', viewId, {
-      next,
-      restoring: activeMounts.get(viewId)?.restoring ?? false,
-    });
     if (activeMount.restoring) {
       return;
     }
@@ -1401,10 +1086,12 @@ export function mountViewDocument(
     persister,
     restoring: location !== null,
     restoringLocation: location ? serializeReadingLocation(location) : null,
+    restoreGeneration: location ? 1 : 0,
     disposed: false,
     dispose: () => {
       if (activeMount.disposed) return;
       activeMount.disposed = true;
+      activeMount.restoreGeneration += 1;
       removeReadErrorListener?.();
       removeLocationListener();
       removeInternalLinkListener();
@@ -1412,11 +1099,7 @@ export function mountViewDocument(
     },
   };
   activeMounts.set(viewId, activeMount);
-  logPdfViewDiagnostic('runtime.mount.registered', viewId, {
-    attached,
-    restoring: activeMount.restoring,
-    passedLocation: location,
-  });
+  const restoreGeneration = activeMount.restoreGeneration;
 
   // 挂载时应用该材料实际生效的排版(材料级覆盖优先,否则回退全局默认)。
   const materialId = findView(viewId)?.materialId;
@@ -1435,44 +1118,32 @@ export function mountViewDocument(
     if (!isCurrentViewMount(viewId, document)) return;
     const intent = navigationIntents.get(viewId) ?? 'replace';
     navigationIntents.delete(viewId);
-    logPdfViewDiagnostic('position.commit.begin', viewId, {
-      next,
-      intent,
-      workspaceBefore: findView(viewId)?.location ?? null,
-    });
     if (intent === 'push') {
       useWorkspaceStore.getState().pushViewLocation(viewId, next);
     } else {
       useWorkspaceStore.getState().setViewLocation(viewId, next);
     }
     persister.update(next);
-    logPdfViewDiagnostic('position.commit.end', viewId, {
-      next,
-      intent,
-      workspaceAfter: findView(viewId)?.location ?? null,
-    });
   }
 
   void (attached ? Promise.resolve() : document.open(container))
     .then(async () => {
       if (!isCurrentViewMount(viewId, document)) return;
-      logPdfViewDiagnostic('runtime.mount.open-ready', viewId, {
-        attached,
-        passedLocation: location,
-        documentLocation: document.getLocation(),
-      });
-      if (location && activeMount.restoring) {
+      if (
+        location &&
+        activeMount.restoring &&
+        activeMount.restoreGeneration === restoreGeneration
+      ) {
         navigationIntents.set(viewId, 'replace');
-        logPdfViewDiagnostic('runtime.mount.restore.begin', viewId, {
-          targetLocation: location,
-          attached,
-          existingMount: false,
-        });
         if (attached) {
           await waitForReaderRestoreBeforeNavigation(location);
         }
         await document.goToLocation(location);
-        if (!isCurrentViewMount(viewId, document)) return;
+        if (
+          !isCurrentViewMount(viewId, document) ||
+          activeMount.restoreGeneration !== restoreGeneration
+        ) return;
+        if (!isPdfAtRestoredLocation(document, location)) return;
         // 恢复期间的首屏/重排事件只属于渲染器初始化,不能覆盖 Workspace
         // 中已经存在的最后位置。恢复成功后以请求位置作为本次提交值。
         activeMount.restoring = false;
@@ -1481,13 +1152,12 @@ export function mountViewDocument(
         // 在两个绘制帧内继续屏蔽该旧事件,否则精确 CFI 会被回退到章节开头。
         activeMount.restoring = true;
         await waitForReaderRestoreSettling();
-        if (!isCurrentViewMount(viewId, document)) return;
+        if (
+          !isCurrentViewMount(viewId, document) ||
+          activeMount.restoreGeneration !== restoreGeneration
+        ) return;
         activeMount.restoring = false;
         activeMount.restoringLocation = null;
-        logPdfViewDiagnostic('runtime.mount.restore.end', viewId, {
-          targetLocation: location,
-          actualLocation: document.getLocation(),
-        });
       } else if (!attached) {
         activeMount.restoring = false;
         activeMount.restoringLocation = null;
@@ -1503,18 +1173,8 @@ export function mountViewDocument(
         });
       }
       useReaderRuntime.getState().setDocumentState(viewId, { status: 'ready' });
-      logPdfViewDiagnostic('runtime.mount.ready', viewId, {
-        attached,
-        location: document.getLocation(),
-      });
     })
     .catch(async (error: unknown) => {
-      logPdfViewDiagnostic('runtime.mount.error', viewId, {
-        attached,
-        passedLocation: location,
-        error,
-        documentLocation: document.getLocation(),
-      });
       readiness.resolve();
       if (!isCurrentViewMount(viewId, document)) return;
       if (activeMounts.get(viewId)?.document === document) {
@@ -1940,21 +1600,10 @@ export function registerReaderCommands(
     if (!viewId || !material) return;
 
     if (!isViewActive(viewId)) return;
-    const transitionId = beginPdfRestoreTransition('readerRestoreView', viewId, null, material.id, material);
-    logPdfViewDiagnostic('command.readerRestoreView.begin', viewId, {
-      transitionId,
-      requestedLocation: location,
-      materialId: material.id,
-    });
     if (location) {
       useWorkspaceStore.getState().setViewLocation(viewId, location);
     }
     await ensureActiveViewDocument(dependencies, viewId, material);
-    logPdfViewDiagnostic('command.readerRestoreView.end', viewId, {
-      transitionId,
-      requestedLocation: location,
-      actualLocation: useReaderRuntime.getState().getDocument(viewId)?.getLocation() ?? null,
-    });
   });
 }
 
@@ -2053,5 +1702,4 @@ export async function flushAndCloseAllReaderViews(): Promise<void> {
   cancelAllSearches();
   useReaderRuntime.getState().closeAll();
   registeredReaderRuntimeCache?.clear();
-  pdfRestoreTransitions.clear();
 }

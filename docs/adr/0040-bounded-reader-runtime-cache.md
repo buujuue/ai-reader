@@ -70,7 +70,7 @@ Markdown 源码模式沿用同一生命周期：CodeMirror 独占 ReadingView �
 
 ## 性能基线与门槛
 
-`apps/reader/scripts/verify-reader-runtime-cache.mjs` 在真实 Chrome 中通过真实 `library.openBook`、`reader.activateView` 和 Markdown Commands 构造 EPUB、PDF、Markdown，执行 EPUB↔EPUB、Markdown↔Markdown、PDF↔PDF 以及三组跨格式 A→B→A，并验证源码模式的挂起、缓冲区变化失效、放弃修改后的安全重建、双 Editor Group 和重启恢复。脚本由应用真实 `ReadingView` 挂载 renderer，并记录：切出时间、首次可见、回切首次可交互、缓存命中/未命中、托管 Source 范围读取、BookDocument 来源打开次数、Foliate renderer 工厂创建次数、PDF.js 文档创建/页面读取次数、iframe/Canvas/解码页/范围缓存资源以及 `performance.memory.usedJSHeapSize`（浏览器可提供时）。PDF 还必须记录分页/滚动位置与视口恢复、在途范围读取和活跃 Canvas；600 页以上结构型 PDF 的读取与 Windows `managed-range` 门禁继续由 `apps/reader/scripts/verify-reading-performance.mjs` 覆盖。
+`apps/reader/scripts/verify-reader-runtime-cache.mjs` 在真实 Chrome 中通过真实 `library.openBook`、`reader.activateView` 和 Markdown Commands 构造 EPUB、PDF、Markdown，执行 EPUB↔EPUB、Markdown↔Markdown、PDF↔PDF 以及三组跨格式 A→B→A；PDF pair 额外执行 A→B→A→B→A，并验证源码模式的挂起、缓冲区变化失效、放弃修改后的安全重建、双 Editor Group 和重启恢复。脚本由应用真实 `ReadingView` 挂载 renderer，并记录：切出时间、首次可见、回切首次可交互、缓存命中/未命中、托管 Source 范围读取、BookDocument 来源打开次数、Foliate renderer 工厂创建次数、PDF.js 文档创建/页面读取次数、iframe/Canvas/解码页/范围缓存资源以及 `performance.memory.usedJSHeapSize`（浏览器可提供时）。PDF 还必须记录分页/滚动位置与视口恢复、在途范围读取和活跃 Canvas；600 页以上结构型 PDF 的读取与 Windows `managed-range` 门禁继续由 `apps/reader/scripts/verify-reading-performance.mjs` 覆盖。
 
 每轮随后清空 Runtime 和缓存，在同一 Chrome 进程、同一材料、同一机器测一次冷回切。默认至少五轮（命令会把小于三轮的配置提升到三轮），报告同时给出缓存命中和冷回切的中位数/P95。门槛不采用固定毫秒数：
 
@@ -86,7 +86,7 @@ pnpm --dir apps/reader test:reader-runtime-cache
 pnpm --dir apps/reader test:reading-performance
 ```
 
-前一条命令必须报告 `reader-runtime-cache.v2`、Issue #57 和六组格式 pair 全部通过；后一条命令必须报告 PDF A→B→A 命中、挂起资源在预算内、范围读取门禁通过，并在 Windows Tauri 模式额外验证二进制 `managed-range`。两条命令成功或失败都必须关闭辅助浏览器、Vite、样本服务器和 Reader Runtime；脚本报告不包含本地样本路径或正文。
+前一条命令必须报告 `reader-runtime-cache.v2`、Issue #57 和六组格式 pair 全部通过，并报告 PDF pair 的两轮 A→B→A→B→A 位置恢复；后一条命令必须报告 PDF A→B→A 命中、挂起资源在预算内、范围读取门禁通过，并在 Windows Tauri 模式额外验证二进制 `managed-range`。两条命令成功或失败都必须关闭辅助浏览器、Vite、样本服务器和 Reader Runtime；脚本报告不包含本地样本路径或正文。
 
 这些门槛由同一轮测得的冷路径派生，换机器或浏览器版本时只比较相对结果，不把某一台机器的绝对耗时当作产品承诺。
 
