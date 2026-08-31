@@ -25,7 +25,7 @@
 - 用户意图一律走 Command：UI 组件执行 Command，不在组件里另接行为逻辑；命令必须在 `commands/` 注册稳定 ID。
 - 前端不接触 SQLite 表、SQL、数据库路径与文件细节；平台能力只经 typed Repository 接口调用 Rust 命令。`ManagedFileSource` 只接收稳定 MaterialId 解析出的 File/Blob 兼容范围来源，不向格式层暴露 Tauri 协议或路径。
 - 内存 Adapter 与 Tauri Adapter 必须运行同一份 `workspaceRepository.contract.ts` 契约测试；Repository 接口变化时同步更新契约与两个 Adapter。
-- Workspace State 必须可序列化；Reader Runtime 活对象（视图、选区、加载任务）不得进入持久化状态。每个 Editor Group 仅保留活动阅读器，全应用最多两个活动渲染器、最多三个 resident Runtime；EPUB/Markdown/PDF 完成打开后可由 `readerRuntimeCache.ts` 按 ADR-0041 的三 resident/资源硬预算挂起，切换由 `readerCommands.ts` 先 flush 并清除输入/搜索接线，PDF 只保留 PDF.js 文档和当前页的预算内结果；材料失效与整库恢复必须释放旧对象。Issue #60 的三视图总验收及 Issue #57 的格式回归由 `scripts/verify-reader-runtime-cache.mjs` 统一覆盖，浏览器设备模拟不计作原生证据。
+- Workspace State 必须可序列化；Reader Runtime 活对象（视图、选区、加载任务）不得进入持久化状态。每个 Editor Group 仅保留活动阅读器，全应用最多两个活动渲染器、最多三个 resident Runtime；EPUB/Markdown/PDF 完成打开后可由 `readerRuntimeCache.ts` 按 ADR-0041 的三 resident/资源硬预算挂起，切换由 `readerCommands.ts` 先 flush 并清除输入/搜索接线，PDF 只保留 PDF.js 文档和当前页的预算内结果，符合 ADR-0042 条件时回切首帧同步复挂页面 DOM/Canvas/文本层/覆盖层并延后邻页工作；材料失效与整库恢复必须释放旧对象。Issue #62 的单组/双组三材料轮换、按 ReadingView 计数的 LRU 淘汰、隐藏组挂起、Issue #61 的 PDF 首帧、Issue #60 的三 resident 决策和 Issue #57 的格式回归由 `scripts/verify-reader-runtime-cache.mjs` 统一覆盖，浏览器设备模拟不计作原生证据。
 - Markdown 源码模式下 CodeMirror 与 Foliate Runtime 不同时占有可见阅读区域；会话文本变化、正式保存或恢复快照载入必须使旧 Markdown Runtime 失效，阅读模式恢复时只能从当前共享会话或当前正式版本重建。
 
 ## Readest 参照

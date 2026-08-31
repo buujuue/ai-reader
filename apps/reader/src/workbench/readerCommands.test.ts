@@ -145,6 +145,39 @@ describe('Reader 命令', () => {
     return { markdown, epub };
   }
 
+  async function setupWithThreeFormatMaterials() {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, 'mixed.epub', buildEpub({ title: '混合 EPUB' }));
+    addInMemorySource(
+      sources,
+      'mixed.md',
+      new TextEncoder().encode('# 混合 Markdown\n\n三格式常驻测试正文'),
+    );
+    addInMemorySource(sources, 'mixed.pdf', new TextEncoder().encode('%PDF-1.7\n混合 PDF'));
+    importRepository = createInMemoryImportRepository(sources);
+
+    const epubStage = await importRepository.stageImport('mixed.epub');
+    const epubBytes = await importRepository.readStagedFile(epubStage);
+    const { inspectEpub } = await import('../domain/library/epub/epubInspector');
+    const epub = await importRepository.commitImport(epubStage, (await inspectEpub(epubBytes)).metadata);
+
+    const markdownStage = await importRepository.stageImport('mixed.md');
+    const markdownBytes = await importRepository.readStagedFile(markdownStage);
+    const { inspectMarkdown } = await import('../domain/reader/markdown/markdownInspector');
+    const markdown = await importRepository.commitImport(
+      markdownStage,
+      (await inspectMarkdown(markdownBytes, 'mixed.md')).metadata,
+    );
+
+    const pdfStage = await importRepository.stageImport('mixed.pdf');
+    const pdf = await importRepository.commitImport(pdfStage, {
+      title: '混合 PDF',
+      author: null,
+      language: 'zh',
+    });
+    return { epub, markdown, pdf };
+  }
+
   async function setupWithPdfAndEpub() {
     const sources = new Map<string, Uint8Array>();
     addInMemorySource(sources, 'demo.pdf', new TextEncoder().encode('%PDF-1.7\n测试 PDF'));
@@ -1081,6 +1114,160 @@ describe('Reader 命令', () => {
     expect(openManagedFileSource.mock.calls.length).toBe(sourceOpensBeforeReturn);
     expect(hosts.length).toBe(hostsBeforeReturn);
     expect(readerRuntimeCache.getDiagnostics().hits).toBe(1);
+  });
+
+  it('EPUB→Markdown→PDF→EPUB 在三 resident 容量内复用原 Runtime', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const { epub, markdown, pdf } = await setupWithThreeFormatMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const hosts: FoliateViewHost[] = [];
+    const pdfLib = makeFakeLib(makeFakeDocument(4));
+    const openManagedFileSource = vi.spyOn(importRepository, 'openManagedFileSource');
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = createFakeViewHost();
+        hosts.push(host);
+        return host;
+      },
+      pdfLib,
+      pdfRasterize: makeFakeRasterizer(),
+      readerRuntimeCache,
+    });
+
+    const opened: Array<{ material: typeof epub; viewId: string; document: BookDocument }> = [];
+    for (const material of [epub, markdown, pdf]) {
+      await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+      const view = useWorkspaceStore.getState().editorGroups[0]!.views.find(
+        (candidate) => candidate.materialId === material.id,
+      )!;
+      const document = useReaderRuntime.getState().getDocument(view.id)!;
+      mountViewDocument(document, view.id, globalThis.document.createElement('div'), null, {
+        importRepository,
+        workspaceRepository,
+      });
+      await vi.waitFor(() => expect(document.isRuntimeReady?.()).toBe(true));
+      opened.push({ material, viewId: view.id, document });
+    }
+
+    const beforeReturn = readerRuntimeCache.getDiagnostics();
+    expect(beforeReturn.entries).toHaveLength(3);
+    expect(beforeReturn.entries.map((entry) => entry.format).sort()).toEqual([
+      'epub',
+      'markdown',
+      'pdf',
+    ]);
+    expect(beforeReturn.entries.filter((entry) => entry.state === 'suspended')).toHaveLength(2);
+
+    await registry.execute(
+      COMMAND_IDS.readerActivateView,
+      opened[0]!.viewId,
+      opened[0]!.material,
+    );
+
+    expect(useReaderRuntime.getState().getDocument(opened[0]!.viewId)).toBe(opened[0]!.document);
+    expect(useReaderRuntime.getState().getDocumentLifecycle(opened[0]!.viewId)).toBe('active');
+    expect(readerRuntimeCache.getDiagnostics().entries).toHaveLength(3);
+    expect(readerRuntimeCache.getDiagnostics().hits).toBe(1);
+    expect(openManagedFileSource).toHaveBeenCalledTimes(3);
+    expect(hosts).toHaveLength(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('双 Editor Group 中三份材料按 ReadingView 计数并只淘汰最旧挂起对象', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const { epub, markdown, pdf } = await setupWithThreeFormatMaterials();
+    const readerRuntimeCache = new ReaderRuntimeCache();
+    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => {
+        const host = { ...createFakeViewHost(), close: vi.fn() };
+        hosts.push(host);
+        return host;
+      },
+      pdfLib: makeFakeLib(makeFakeDocument(4)),
+      pdfRasterize: makeFakeRasterizer(),
+      readerRuntimeCache,
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, epub);
+    const firstViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const firstDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    mountViewDocument(firstDocument, firstViewId, globalThis.document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
+    const splitState = useWorkspaceStore.getState();
+    const copiedViewId = splitState.editorGroups[1]!.views[0]!.id;
+    const copiedDocument = useReaderRuntime.getState().getDocument(copiedViewId)!;
+    mountViewDocument(copiedDocument, copiedViewId, globalThis.document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(copiedDocument.isRuntimeReady?.()).toBe(true));
+    expect(copiedDocument).not.toBe(firstDocument);
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, markdown);
+    const markdownViewId = useWorkspaceStore.getState().editorGroups[1]!.views.find(
+      (view) => view.materialId === markdown.id,
+    )!.id;
+    const markdownDocument = useReaderRuntime.getState().getDocument(markdownViewId)!;
+    mountViewDocument(markdownDocument, markdownViewId, globalThis.document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(markdownDocument.isRuntimeReady?.()).toBe(true));
+
+    // 将第三份材料放入第一组。第四个 Runtime 是跨组复制出来的 A2，
+    // 容量不足时只能淘汰它，不能淘汰两个活动组或刚切出的 A1。
+    useWorkspaceStore.getState().focusEditorGroup('group-1');
+    await registry.execute(COMMAND_IDS.libraryOpenBook, pdf);
+    const pdfViewId = useWorkspaceStore.getState().editorGroups[0]!.views.find(
+      (view) => view.materialId === pdf.id,
+    )!.id;
+    const pdfDocument = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    mountViewDocument(pdfDocument, pdfViewId, globalThis.document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(pdfDocument.isRuntimeReady?.()).toBe(true));
+
+    expect(useReaderRuntime.getState().getDocument(copiedViewId)).toBeUndefined();
+    expect(hosts[1]!.close).toHaveBeenCalledOnce();
+    const entries = readerRuntimeCache.getDiagnostics().entries;
+    expect(entries).toHaveLength(3);
+    expect(entries.map((entry) => entry.viewId)).toEqual(
+      expect.arrayContaining([firstViewId, markdownViewId, pdfViewId]),
+    );
+    expect(entries.filter((entry) => entry.state === 'active')).toHaveLength(2);
+
+    await registry.execute(COMMAND_IDS.readerActivateView, firstViewId, epub);
+
+    expect(useReaderRuntime.getState().getDocument(firstViewId)).toBe(firstDocument);
+    expect(useReaderRuntime.getState().getDocumentLifecycle(firstViewId)).toBe('active');
+    expect(readerRuntimeCache.getDiagnostics().entries).toHaveLength(3);
+    expect(readerRuntimeCache.getDiagnostics().entries.filter((entry) => entry.state === 'active'))
+      .toHaveLength(2);
+    expect(hosts[1]!.close).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
   });
 
   it('Markdown 跨两个 Editor Group 共享一个会话但保留各自独立 Runtime', async () => {

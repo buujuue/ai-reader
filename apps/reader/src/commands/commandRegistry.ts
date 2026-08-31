@@ -40,6 +40,7 @@ export const COMMAND_IDS = {
   readerNextPage: 'reader.nextPage',
   readerPrevPage: 'reader.prevPage',
   readerActivateView: 'reader.activateView',
+  readerSuspendViewRuntime: 'reader.suspendViewRuntime',
   readerCloseView: 'reader.closeView',
   readerRestoreView: 'reader.restoreView',
   readerGoToHref: 'reader.goToHref',

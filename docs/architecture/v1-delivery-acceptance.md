@@ -44,9 +44,9 @@ pnpm --filter @ai-reader/app test:real-annotations
 - v1 旧备份通过同一恢复协议读取；恢复前只在暂存数据库清除文件夹数据，材料归入未归类，书籍、封面、设置、位置、批注和标签保持不变。
 - 应用级入口由 `apps/reader/src/app/App.test.tsx` 验证，Rust 的同版/旧版恢复、损坏层级和原子回滚由 `apps/reader/src-tauri/src/db/backup.rs` 验证；Windows Tauri 的真实导入、树操作、导出/恢复和重启冒烟仍需按本机可用材料执行，不能以浏览器降级测试代替。
 
-## Issue #60 三 resident Reader Runtime 总验收补充
+## Issue #62 三 resident Reader Runtime 与 PDF 首帧总验收补充
 
-Issue #60 的自动化验收（继承 Issue #57 的格式回归）由两条互补命令组成：
+Issue #62 的自动化验收（继承 Issue #61、Issue #60 与 Issue #57 的格式回归）由两条互补命令组成：
 
 ```powershell
 pnpm --dir apps/reader test:reader-runtime-cache
@@ -55,9 +55,9 @@ pnpm --dir apps/reader test:reading-performance
 
 前一条在真实 Chrome 中通过应用 `library.openBook`、`reader.activateView` 和 Markdown Command 覆盖：
 
-- EPUB→Markdown→PDF→EPUB 的 A→B→C→A 三 resident 流程：最多三个按 ReadingView 实例计数、最多两个 active，第四个 resident 才按 LRU 淘汰 suspended；
+- EPUB→Markdown→PDF→EPUB 的 A→B→C→A 三 resident 流程：最多三个按 ReadingView 实例计数、最多两个 active，第四个 resident 才按 LRU 淘汰 suspended；单组与双 Editor Group 都要执行，双组还要证明同材料复制 View 使用独立 Runtime；
 - EPUB↔EPUB、Markdown↔Markdown、PDF↔PDF 及 EPUB/PDF/Markdown 三组跨格式 A→B→A；PDF pair 额外执行 A→B→A→B→A；
-- 两个 Editor Group 的 ReadingView/位置隔离、快速连续切换、缓存命中无新 BookDocument/renderer/来源/范围读取；PDF 命中在首次可交互前无新页面取得或光栅化；
+- 两个 Editor Group 的 ReadingView/位置隔离、快速连续切换、缓存命中无新 BookDocument/renderer/来源/范围读取；PDF 命中在首次可交互前复用当前页 DOM/Canvas/文本层/高亮层，不新增页面取得或光栅化，邻页工作延后；
 - PDF 挂起的 Canvas、解码页、在途范围读取硬预算；LRU 淘汰、关闭清理和重启恢复；
 - Markdown 源码模式、共享会话、编辑失效、正式保存、Recovery Snapshot 和放弃修改。
 

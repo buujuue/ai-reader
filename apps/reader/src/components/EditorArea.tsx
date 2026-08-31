@@ -116,7 +116,7 @@ function EditorGroupPane({
     >
       {activeView ? (
         <div className="min-h-0 min-w-0 flex-1">
-          <ReadingView key={activeView.id} viewId={activeView.id} />
+          <ReadingView key={activeView.id} viewId={activeView.id} visible={visible} />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-sm text-zinc-600">

@@ -1,11 +1,13 @@
 /**
- * Reader Runtime 有界缓存的真实浏览器总验收（工单 #60，继承 #57）。
+ * Reader Runtime 有界缓存的真实浏览器总验收（工单 #62，继承 #61/#60/#57）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
  * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，并新增三视图
  * EPUB→Markdown→PDF→EPUB resident 流程；对 PDF pair 额外执行
  * A→B→A→B→A 连续回切，记录冷启动与缓存回切的
  * 可交互时间、文档/renderer 创建、ManagedFileSource 范围读取、Runtime 资源和可获得的堆内存。
+ * PDF 回切额外验证当前页 DOM/Canvas/文本层/覆盖层的首帧节点复用，以及首帧前不发生
+ * 页面取得或光栅化，邻页工作在首帧后再恢复。
  * 门槛从同一台机器的冷启动中位数派生，不写死毫秒数。
  *
  * 运行：pnpm test:reader-runtime-cache
@@ -396,6 +398,52 @@ async function main() {
           container,
         };
       };
+      const readPdfFirstFrameState = (viewId, expectedLocation, preservedNodes) => {
+        if (expectedLocation?.kind !== 'pdf') {
+          return {
+            currentPagePresent: null,
+            canvasReady: null,
+            textLayerPresent: null,
+            highlightLayerPresent: null,
+            pagePreserved: null,
+            canvasPreserved: null,
+            textLayerPreserved: null,
+            highlightLayerPreserved: null,
+            scrollPositionRestored: null,
+          };
+        }
+        const container = document.querySelector(`[data-view-id="${viewId}"]`);
+        const page = container?.querySelector(`.pdf-page[data-page="${expectedLocation.page}"]`);
+        const canvas = page?.querySelector('canvas');
+        const textLayer = page?.querySelector('.pdf-text-layer');
+        const highlightLayer = page?.querySelector('.pdf-highlight-layer');
+        return {
+          currentPagePresent: Boolean(page),
+          canvasReady: Boolean(canvas && canvas.width > 0 && canvas.height > 0),
+          textLayerPresent: Boolean(textLayer),
+          highlightLayerPresent: Boolean(highlightLayer),
+          pagePreserved: page === preservedNodes?.page,
+          canvasPreserved: canvas === preservedNodes?.canvas,
+          textLayerPreserved: textLayer === preservedNodes?.textLayer,
+          highlightLayerPreserved: highlightLayer === preservedNodes?.highlightLayer,
+          scrollPositionRestored:
+            container instanceof HTMLElement &&
+            Math.abs(container.scrollTop - expectedLocation.scrollTop) <= 1,
+        };
+      };
+      const capturePdfCurrentNodes = (viewId, location) => {
+        if (location?.kind !== 'pdf') return null;
+        const container = document.querySelector(`[data-view-id="${viewId}"]`);
+        const page = container?.querySelector(`.pdf-page[data-page="${location.page}"]`);
+        return page
+          ? {
+              page,
+              canvas: page.querySelector('canvas'),
+              textLayer: page.querySelector('.pdf-text-layer'),
+              highlightLayer: page.querySelector('.pdf-highlight-layer'),
+            }
+          : null;
+      };
 
       const resetHarness = async () => {
         await waitFrames(4);
@@ -451,6 +499,7 @@ async function main() {
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
         const firstLocation = first.book.getLocation();
+        const firstPdfNodes = capturePdfCurrentNodes(first.viewId, firstLocation);
         const second = await openAndWait(secondMaterial, COMMAND_IDS.libraryOpenBook);
         const hitBefore = cache.getDiagnostics().hits;
         const suspendedBefore = cache.getDiagnostics().entries.find(
@@ -460,6 +509,12 @@ async function main() {
         const returnStarted = performance.now();
         await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
         await waitForInteractive(first, `${label} 缓存回切`);
+        const firstFrameCounters = diffCounters(countersBefore);
+        const firstFrameState = readPdfFirstFrameState(
+          first.viewId,
+          firstLocation,
+          firstPdfNodes,
+        );
         // 真实 ResizeObserver / 页面尺寸校正可能晚于首个 Canvas；必须等其收敛后
         // 再判断用户最终看到的页面，不能只读取刚 attach 时的瞬时位置。
         await waitFrames(12);
@@ -477,7 +532,28 @@ async function main() {
         let pdfScrollPositionRestored = null;
         let pdfVisiblePageRestored = null;
         let pdfScrollAdvancedAfterReturn = null;
+        let pdfFirstFrameCurrentPagePresent = null;
+        let pdfFirstFrameCanvasReady = null;
+        let pdfFirstFrameTextLayerPresent = null;
+        let pdfFirstFrameHighlightLayerPresent = null;
+        let pdfFirstFramePagePreserved = null;
+        let pdfFirstFrameCanvasPreserved = null;
+        let pdfFirstFrameTextLayerPreserved = null;
+        let pdfFirstFrameHighlightLayerPreserved = null;
+        let pdfFirstFrameScrollPositionRestored = null;
+        let pdfFirstFrameNoPageWork = null;
         if (first.book.format === 'pdf') {
+          pdfFirstFrameCurrentPagePresent = firstFrameState.currentPagePresent;
+          pdfFirstFrameCanvasReady = firstFrameState.canvasReady;
+          pdfFirstFrameTextLayerPresent = firstFrameState.textLayerPresent;
+          pdfFirstFrameHighlightLayerPresent = firstFrameState.highlightLayerPresent;
+          pdfFirstFramePagePreserved = firstFrameState.pagePreserved;
+          pdfFirstFrameCanvasPreserved = firstFrameState.canvasPreserved;
+          pdfFirstFrameTextLayerPreserved = firstFrameState.textLayerPreserved;
+          pdfFirstFrameHighlightLayerPreserved = firstFrameState.highlightLayerPreserved;
+          pdfFirstFrameScrollPositionRestored = firstFrameState.scrollPositionRestored;
+          pdfFirstFrameNoPageWork =
+            firstFrameCounters.pdfPageGets === 0 && firstFrameCounters.pdfRasterizations === 0;
           const restoredState = readPdfRestoreState(first.viewId, firstLocation);
           pdfScrollModeRestored = restoredState.scrollModeRestored;
           pdfScrollPositionRestored = restoredState.scrollPositionRestored;
@@ -511,15 +587,41 @@ async function main() {
         let secondRoundPdfScrollModeRestored = null;
         let secondRoundPdfScrollPositionRestored = null;
         let secondRoundPdfVisiblePageRestored = null;
+        let secondRoundPdfFirstFrameNoPageWork = null;
+        let secondRoundPdfFirstFramePagePreserved = null;
+        let secondRoundPdfFirstFrameCanvasPreserved = null;
+        let secondRoundPdfFirstFrameTextLayerPreserved = null;
+        let secondRoundPdfFirstFrameHighlightLayerPreserved = null;
+        let secondRoundFirstFrameState = null;
         if (first.book.format === 'pdf') {
           const secondRoundHitBefore = cache.getDiagnostics().hits;
           const secondRoundCountersBefore = snapshotCounters();
+          const secondRoundLocationBeforeReturn = first.book.getLocation();
+          const secondRoundPdfNodes = capturePdfCurrentNodes(
+            first.viewId,
+            secondRoundLocationBeforeReturn,
+          );
           await registry.execute(COMMAND_IDS.readerActivateView, second.viewId, secondMaterial);
           await waitForInteractive(second, `${label} 第二轮 B 缓存回切可交互`);
           await waitFrames(12);
           await new Promise((resolve) => setTimeout(resolve, 250));
+          const secondRoundReturnCountersBefore = snapshotCounters();
           await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
           await waitForInteractive(first, `${label} 第二轮 A 缓存回切可交互`);
+          const secondRoundFirstFrameCounters = diffCounters(secondRoundReturnCountersBefore);
+          secondRoundFirstFrameState = readPdfFirstFrameState(
+            first.viewId,
+            secondRoundLocationBeforeReturn,
+            secondRoundPdfNodes,
+          );
+          secondRoundPdfFirstFrameNoPageWork =
+            secondRoundFirstFrameCounters.pdfPageGets === 0 &&
+            secondRoundFirstFrameCounters.pdfRasterizations === 0;
+          secondRoundPdfFirstFramePagePreserved = secondRoundFirstFrameState.pagePreserved;
+          secondRoundPdfFirstFrameCanvasPreserved = secondRoundFirstFrameState.canvasPreserved;
+          secondRoundPdfFirstFrameTextLayerPreserved = secondRoundFirstFrameState.textLayerPreserved;
+          secondRoundPdfFirstFrameHighlightLayerPreserved =
+            secondRoundFirstFrameState.highlightLayerPreserved;
           await waitFrames(12);
           await new Promise((resolve) => setTimeout(resolve, 250));
           const secondRoundLocationAfter = first.book.getLocation();
@@ -559,13 +661,29 @@ async function main() {
           pdfScrollPositionRestored,
           pdfVisiblePageRestored,
           pdfScrollAdvancedAfterReturn,
+          pdfFirstFrameCurrentPagePresent,
+          pdfFirstFrameCanvasReady,
+          pdfFirstFrameTextLayerPresent,
+          pdfFirstFrameHighlightLayerPresent,
+          pdfFirstFramePagePreserved,
+          pdfFirstFrameCanvasPreserved,
+          pdfFirstFrameTextLayerPreserved,
+          pdfFirstFrameHighlightLayerPreserved,
+          pdfFirstFrameScrollPositionRestored,
+          pdfFirstFrameNoPageWork,
           secondRoundPdfScrollModeRestored,
           secondRoundPdfScrollPositionRestored,
           secondRoundPdfVisiblePageRestored,
+          secondRoundPdfFirstFrameNoPageWork,
+          secondRoundPdfFirstFramePagePreserved,
+          secondRoundPdfFirstFrameCanvasPreserved,
+          secondRoundPdfFirstFrameTextLayerPreserved,
+          secondRoundPdfFirstFrameHighlightLayerPreserved,
           noNewSourceOpen: firstRoundCounters.sourceOpens === 0,
           noNewFoliateRenderer: firstRoundCounters.rendererCreates === 0,
           noNewPdfDocument: firstRoundCounters.pdfDocumentLoads === 0,
-          noNewRanges: firstRoundCounters.rangeReads === 0,
+          // 邻页预取允许在首帧之后恢复;“无新范围读取”只约束当前页首帧窗口。
+          noNewRanges: firstFrameCounters.rangeReads === 0,
           suspendedResourceUsage: suspendedBefore?.usage ?? null,
           counters: firstRoundCounters,
           budget: cache.getBudget(),
@@ -783,6 +901,78 @@ async function main() {
         samples: residentTripleSamples,
       };
 
+      // 双 Editor Group 也必须遵守同一 resident 容量：拆分会生成同材料的独立
+      // ReadingView，第三份材料进入时淘汰最旧的 suspended View，而不是跨组共享
+      // renderer 或静默淘汰活动 Runtime。
+      const measureDualGroupResident = async (run) => {
+        await resetHarness();
+        const first = await openAndWait(materials[0], COMMAND_IDS.libraryOpenBook);
+        await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
+        await waitFor(
+          () => useWorkspaceStore.getState().editorGroups.length === 2,
+          '双组拆分完成',
+        );
+        const copiedViewId = useWorkspaceStore.getState().editorGroups[1]?.views[0]?.id;
+        if (!copiedViewId) throw new Error('双组验收没有创建复制的 ReadingView');
+        const copiedBook = commandModule.getReaderRuntimeDocumentForMeasurement(copiedViewId);
+        if (!copiedBook) throw new Error('双组验收没有创建复制的 BookDocument');
+        await waitForInteractive(
+          { viewId: copiedViewId, book: copiedBook },
+          '双组复制的 EPUB Runtime 可交互',
+        );
+
+        const second = await openAndWait(materials[1], COMMAND_IDS.libraryOpenBook);
+        await registry.execute(COMMAND_IDS.workbenchFocusEditorGroup, 'group-1');
+        const third = await openAndWait(materials[4], COMMAND_IDS.libraryOpenBook);
+        const expectedViewIds = [first.viewId, second.viewId, third.viewId];
+        const beforeReturn = cache.getDiagnostics();
+        const returnedDocumentBefore = commandModule.getReaderRuntimeDocumentForMeasurement(first.viewId);
+        const hitsBefore = beforeReturn.hits;
+        await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, materials[0]);
+        await waitForInteractive(first, '双组三 resident A→B→C→A 回切');
+        const afterReturn = cache.getDiagnostics();
+        const returnedDocument = commandModule.getReaderRuntimeDocumentForMeasurement(first.viewId);
+        return {
+          run,
+          label: '双 Editor Group EPUB→Markdown→PDF→EPUB',
+          firstFormat: first.book.format,
+          secondFormat: second.book.format,
+          thirdFormat: third.book.format,
+          firstViewId: first.viewId,
+          copiedViewId,
+          secondViewId: second.viewId,
+          thirdViewId: third.viewId,
+          residentCountBeforeReturn: beforeReturn.entries.length,
+          residentCountAfterReturn: afterReturn.entries.length,
+          activeCountAfterReturn: afterReturn.entries.filter((entry) => entry.state === 'active').length,
+          copiedRuntimeIndependent: copiedBook !== first.book,
+          copiedRuntimeEvicted: !afterReturn.entries.some((entry) => entry.viewId === copiedViewId),
+          copiedBookStillInRuntime: commandModule.getReaderRuntimeDocumentForMeasurement(copiedViewId) !== undefined,
+          cacheHit: afterReturn.hits - hitsBefore === 1,
+          runtimeIdentityPreserved: returnedDocument === first.book,
+          noNewBookDocument: returnedDocumentBefore === first.book && returnedDocument === returnedDocumentBefore,
+          residentViewIds: afterReturn.entries.map((entry) => entry.viewId),
+          expectedViewIds,
+          budget: cache.getBudget(),
+        };
+      };
+
+      const dualGroupResidentSamples = [];
+      for (let run = 0; run < requestedRuns; run += 1) {
+        dualGroupResidentSamples.push(await measureDualGroupResident(run + 1));
+      }
+      const dualGroupResident = {
+        label: '双 Editor Group EPUB→Markdown→PDF→EPUB',
+        runCount: dualGroupResidentSamples.length,
+        samples: dualGroupResidentSamples,
+      };
+
+      // 双组基线会故意留下两个 Editor Group；源码模式/重启回归从干净的
+      // 单组 Workspace 开始，避免旧组的活动视图污染后续命令。
+      await resetHarness();
+      await registry.execute(COMMAND_IDS.libraryOpenBook, materials[0]);
+      await registry.execute(COMMAND_IDS.libraryOpenBook, materials[1]);
+
       // 在真实 Chrome 中验证 Markdown 源码模式的 Runtime 生命周期：进入源码模式
       // 后 Foliate 挂起，编辑会使旧对象失效，放弃修改并退出时按共享会话重建。
       const markdownViewId = viewIdForMaterial(materials[1].id);
@@ -801,10 +991,14 @@ async function main() {
       const sourceModeEntered = useWorkspaceStore.getState().editorGroups
         .flatMap((group) => group.views)
         .find((view) => view.id === markdownViewId)?.sourceMode === true;
-      const sourceRuntimeSuspended =
-        commandModule.getReaderRuntimeStatusForMeasurement(markdownViewId)?.status !== 'error' &&
-        commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) !== undefined &&
-        cache.getEntries().some((entry) => entry.viewId === markdownViewId && entry.state === 'suspended');
+      let sourceRuntimeSuspended = false;
+      await waitFor(() => {
+        sourceRuntimeSuspended =
+          commandModule.getReaderRuntimeStatusForMeasurement(markdownViewId)?.status !== 'error' &&
+          commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) !== undefined &&
+          cache.getEntries().some((entry) => entry.viewId === markdownViewId && entry.state === 'suspended');
+        return sourceRuntimeSuspended;
+      }, 'Markdown 源码模式 Runtime 挂起');
       await registry.execute(COMMAND_IDS.markdownUpdateBuffer, markdownViewId, '# 真实浏览器编辑\n\n临时正文');
       const sourceRuntimeInvalidated =
         commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId) === undefined;
@@ -884,17 +1078,20 @@ async function main() {
       );
       await waitFrames(4);
 
-      const firstGroupDocument = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
+      let firstGroupDocument = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
       await registry.execute(COMMAND_IDS.workbenchSplitEditorGroupRight);
       const splitState = useWorkspaceStore.getState();
       const secondGroupViewId = splitState.editorGroups[1]?.views[0]?.id;
-      const secondGroupDocument = secondGroupViewId
-        ? commandModule.getReaderRuntimeDocumentForMeasurement(secondGroupViewId)
-        : undefined;
+      if (!secondGroupViewId) throw new Error('Markdown 双 Editor Group 没有复制 ReadingView');
       await waitFor(
-        () => Boolean(firstGroupDocument?.isRuntimeReady?.() && secondGroupDocument?.isRuntimeReady?.()),
+        () => {
+          firstGroupDocument = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
+          const secondGroupDocument = commandModule.getReaderRuntimeDocumentForMeasurement(secondGroupViewId);
+          return Boolean(firstGroupDocument?.isRuntimeReady?.() && secondGroupDocument?.isRuntimeReady?.());
+        },
         'Markdown 双 Editor Group Runtime 就绪',
       );
+      const secondGroupDocument = commandModule.getReaderRuntimeDocumentForMeasurement(secondGroupViewId);
       const dualGroupRuntimeIndependent =
         Boolean(firstGroupDocument && secondGroupDocument && firstGroupDocument !== secondGroupDocument);
       const sharedSessionPresent =
@@ -943,14 +1140,16 @@ async function main() {
         })(),
       };
       return {
-        schemaVersion: 'reader-runtime-cache.v3',
-        issue: 60,
-        inheritedFromIssue: 57,
+        schemaVersion: 'reader-runtime-cache.v5',
+        issue: 62,
+        inheritedFromIssue: 61,
+        inheritedFromIssues: [61, 60, 57],
         status: 'measured',
         runCount: requestedRuns,
         samples,
         formatMatrix,
         residentTriple,
+        dualGroupResident,
         shutdownCleanup,
         sourceMode: {
           entered: sourceModeEntered,
@@ -1047,6 +1246,29 @@ async function main() {
           pair.secondRoundPdfScrollPositionRestored === true &&
           pair.secondRoundPdfVisiblePageRestored === true,
         ),
+      everyPdfPairRestoresPdfFirstFrame: result.formatMatrix
+        .filter((pair) => pair.firstFormat === 'pdf')
+        .every((pair) =>
+          pair.pdfFirstFrameCurrentPagePresent === true &&
+          pair.pdfFirstFrameCanvasReady === true &&
+          pair.pdfFirstFrameTextLayerPresent === true &&
+          pair.pdfFirstFrameHighlightLayerPresent === true &&
+          pair.pdfFirstFramePagePreserved === true &&
+          pair.pdfFirstFrameCanvasPreserved === true &&
+          pair.pdfFirstFrameTextLayerPreserved === true &&
+          pair.pdfFirstFrameHighlightLayerPreserved === true &&
+          pair.pdfFirstFrameScrollPositionRestored === true &&
+          pair.pdfFirstFrameNoPageWork === true,
+        ),
+      everyPdfPairRestoresSecondPdfFirstFrame: result.formatMatrix
+        .filter((pair) => pair.firstFormat === 'pdf')
+        .every((pair) =>
+          pair.secondRoundPdfFirstFrameNoPageWork === true &&
+          pair.secondRoundPdfFirstFramePagePreserved === true &&
+          pair.secondRoundPdfFirstFrameCanvasPreserved === true &&
+          pair.secondRoundPdfFirstFrameTextLayerPreserved === true &&
+          pair.secondRoundPdfFirstFrameHighlightLayerPreserved === true,
+        ),
       shutdownCleanup: result.shutdownCleanup.runtimeStoreEmpty &&
         result.shutdownCleanup.cacheEmpty &&
         result.shutdownCleanup.noOrphanReaderDom &&
@@ -1100,6 +1322,32 @@ async function main() {
         sample.noNewPdfRasterization &&
         sample.noNewRanges,
       ),
+      dualGroupResidentCovered: result.dualGroupResident.label ===
+        '双 Editor Group EPUB→Markdown→PDF→EPUB' &&
+        result.dualGroupResident.runCount >= 3 &&
+        result.dualGroupResident.samples.every((sample) =>
+          sample.firstFormat === 'epub' &&
+          sample.secondFormat === 'markdown' &&
+          sample.thirdFormat === 'pdf',
+        ),
+      dualGroupResidentKeepsCapacityAndActiveLimit: result.dualGroupResident.samples.every((sample) =>
+        sample.residentCountBeforeReturn === 3 &&
+        sample.residentCountAfterReturn === 3 &&
+        sample.activeCountAfterReturn === 2 &&
+        sample.residentViewIds.includes(sample.firstViewId) &&
+        sample.residentViewIds.includes(sample.secondViewId) &&
+        sample.residentViewIds.includes(sample.thirdViewId),
+      ),
+      dualGroupResidentSeparatesAndEvictsCopiedView: result.dualGroupResident.samples.every((sample) =>
+        sample.copiedRuntimeIndependent === true &&
+        sample.copiedRuntimeEvicted === true &&
+        sample.copiedBookStillInRuntime === false,
+      ),
+      dualGroupResidentCacheHitPreservesRuntime: result.dualGroupResident.samples.every((sample) =>
+        sample.cacheHit === true &&
+        sample.runtimeIdentityPreserved === true &&
+        sample.noNewBookDocument === true,
+      ),
     };
     result.thresholds = thresholds;
     result.summary = {
@@ -1119,7 +1367,7 @@ async function main() {
     console.log('Reader Runtime 缓存真实浏览器基线结果:');
     console.log(JSON.stringify(result, null, 2));
     console.log(`报告:${ARTIFACT}`);
-    console.log('通过:EPUB→Markdown→PDF→EPUB 三视图常驻回切及既有格式矩阵均未重复创建文档、renderer、PDF 页面或范围读取。');
+    console.log('通过:三 resident 单组/双组回切、按 View 隔离的 LRU 淘汰、PDF 首帧复用及既有格式矩阵均符合门禁。');
   } catch (error) {
     failureReport = error instanceof Error ? error.message : String(error);
     throw error;

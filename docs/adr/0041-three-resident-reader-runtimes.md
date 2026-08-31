@@ -2,8 +2,8 @@
 
 - 状态：已接受
 - 日期：2026-08-31
-- 关联工单：#60
-- 替代范围：替代 ADR-0040 中 Reader Runtime 的 resident 容量、挂起容量和跨格式性能验收口径；保留 ADR-0040 的缓存键、`active/suspended/evicted/closed` 生命周期、失效规则、Workspace State 可序列化边界、每组一个活动渲染器和全局最多两个活动渲染器。
+- 关联工单：#60（容量决策）；#62（实现与总验收）
+- 替代范围：替代 ADR-0040 中 Reader Runtime 的 resident 容量、挂起容量和跨格式性能验收口径；保留 ADR-0040 的缓存键、`active/suspended/evicted/closed` 生命周期、失效规则、Workspace State 可序列化边界、每组一个活动渲染器和全局最多两个活动渲染器。PDF 挂起 Runtime 的首帧 DOM/Canvas/文本层复用与邻页延迟恢复由 ADR-0042 进一步细化。
 
 ## 背景
 
@@ -36,7 +36,7 @@ Readest 的用户体验表明，保留已解析的 `BookDocument` 和 renderer �
 1. 对当前 active View flush 最新可序列化位置；失败时保留原 active View、输入接线和 Workspace 活动关系。
 2. 清理当前 View 的输入、搜索任务、Selection、焦点、位置监听器和临时覆盖层；PDF 同时断开观察器并暂停范围调度。
 3. 如果目标 View 的缓存键精确命中，先把目标从 suspended 提升为 active，再挂起原 View。这样 resident 容量收缩时不会先把正要回切的目标按 LRU 淘汰。
-4. 命中后只调用原 `BookDocument.attach`，不重新打开 `ManagedFileSource`，不创建 `BookDocument` 或底层 renderer；恢复位置以已经 flush 的 Workspace 位置为权威，并等待首次可交互状态收敛。
+4. 命中后只调用原 `BookDocument.attach`，不重新打开 `ManagedFileSource`，不创建 `BookDocument` 或底层 renderer；恢复位置以已经 flush 的 Workspace 位置为权威。PDF 在快照条件满足时同步复挂当前页首帧，邻页预取延后；具体规则见 ADR-0042。
 5. 未命中、键失配、失效、容量不足或 attach 失败时，关闭旧对象并按当前 Workspace State 安全重建。重建失败保留标签和中文错误状态，不猜测位置。
 
 普通切换只改变 Runtime 生命周期，不改变 Workspace State 的可序列化边界。关闭标签、应用退出、材料版本替换、重新关联、永久清理和 Markdown 正式内容/恢复快照变化都走关闭或按材料全量失效路径。
@@ -53,7 +53,7 @@ Readest 的用户体验表明，保留已解析的 `BookDocument` 和 renderer �
 | 临时覆盖层 | 仅当前可见 View 使用 | 不保留会响应事件的临时覆盖接线；可随文档重新绘制的材料批注数据仍由材料级领域状态负责 |
 | Markdown 编辑会话 | CodeMirror 源码模式独占可见区域；Foliate 不同时占有可见区域 | 共享 `MarkdownDocumentSession` 仍按材料存在，但缓冲区、正式保存、放弃或恢复快照变化必须先失效该材料全部 Runtime，再按最新会话文本重建 |
 
-PDF `detach` 必须等待范围传输收敛；超时即拒绝 suspended 准入并关闭重建，不留下 PDF.js 永久等待。PDF 回切可以复用 PDF.js 文档和当前页结果，但在首次可交互前不得重新取得或光栅化可见页。
+PDF `detach` 必须等待范围传输收敛；超时即拒绝 suspended 准入并关闭重建，不留下 PDF.js 永久等待。PDF 回切可以复用 PDF.js 文档和当前页结果；满足 ADR-0042 快照条件时首帧直接复挂页面 DOM，否则走安全重排/重建路径。无论哪条路径，首次可交互前都不得重新取得或光栅化已保留的可见页。
 
 ### 桌面与平板资源硬预算
 
@@ -88,7 +88,7 @@ active Runtime 的两个可见组仍由各格式 renderer 的既有窗口、并�
 - 缓存命中：记录命中、来源打开、BookDocument 身份、Foliate renderer、PDF.js 文档、页面取得、PDF 光栅化、范围读取和可获得的堆内存；EPUB 回切命中不能新增这些对象或读取，PDF 在首次可交互前不能新增页面取得或光栅化。
 - 既有六组格式 pair、PDF A→B→A→B→A、Markdown 源码模式/正式保存/恢复快照/重启、双 Editor Group 与关闭清理继续作为回归门禁。
 
-报告 schema 为 `reader-runtime-cache.v3`，关联 Issue #60，并保留 Issue #57 的继承关系。执行命令：
+决策基线曾使用 `reader-runtime-cache.v4` 关联 Issue #60；Issue #62 的实现总验收升级为 `reader-runtime-cache.v5`，继承 Issue #61/#60/#57，并增加单组/双组三材料轮换、隐藏 Editor Group 挂起和按 View 计数的 LRU 证据。PDF 首帧节点复用与首帧前无页面工作由 Issue #61 的门禁补充。执行命令：
 
 ```powershell
 pnpm --dir apps/reader test:reader-runtime-cache

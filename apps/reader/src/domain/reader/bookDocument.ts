@@ -70,8 +70,16 @@ export interface BookDocument {
    */
   attach?(container: HTMLElement): boolean;
 
+  /**
+   * 消费最近一次 attach 是否同步恢复了已保留的运行时位置快照。
+   * 该能力只描述活 Runtime 的首帧恢复，不进入可序列化 Workspace State；
+   * 没有无损快照或快照与容器环境不匹配时返回 null。
+   */
+  consumeRuntimeAttachSnapshot?(): ReadingLocation | null;
+
   /** 从界面容器摘下 renderer，但不销毁 BookDocument 或其派生运行时。 */
-  detach?(): void | Promise<void>;
+  /** 返回 false 表示挂起前的底层任务未收敛，调用方必须关闭并重建。 */
+  detach?(): void | boolean | Promise<void | boolean>;
 
   /** 返回文档是否已完成首次打开，可用于阻止缓存未完成的加载任务。 */
   isRuntimeReady?(): boolean;

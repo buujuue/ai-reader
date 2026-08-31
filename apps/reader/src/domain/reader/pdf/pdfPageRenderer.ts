@@ -379,6 +379,19 @@ export class PdfPageRenderer {
     return this.canvas.width * this.canvas.height;
   }
 
+  /**
+   * 当前页面已经完成 Canvas 与文本层构建，可以作为挂起 Runtime 的首帧结果。
+   * 扫描页的 textLayerState 为 `none`，同样属于完整可见页面。
+   */
+  isRendered(): boolean {
+    return (
+      !this.disposed &&
+      this.canvas.width > 0 &&
+      this.canvas.height > 0 &&
+      this.element.dataset.textLayerState !== 'pending'
+    );
+  }
+
   private createCanvas(): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     canvas.setAttribute('aria-hidden', 'true');

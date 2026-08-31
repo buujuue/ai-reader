@@ -86,6 +86,17 @@ interface CachedPageRender {
   promise: Promise<void>;
 }
 
+interface SuspendedRenderSnapshot {
+  containerWidth: number;
+  containerHeight: number;
+  devicePixelRatio: number;
+  flow: 'paginated' | 'scrolled';
+  zoom: number;
+  fit: PdfFitMode;
+  currentPage: number;
+  scrollTop: number;
+}
+
 /**
  * PDF 固定版式渲染器:在容器内以分页或滚动方式呈现页面,负责布局、缩放/适配、
  * 视口窗口化与画布内存预算。外部(BookDocument)只通过窄方法驱动它,不直接
@@ -132,6 +143,10 @@ export class PdfRenderer {
   private activeRestore: { generation: number; pageNumber: number } | null = null;
   private disposed = false;
   private suspended = false;
+  private suspendedSnapshot: SuspendedRenderSnapshot | null = null;
+  private lastAttachRestoredSnapshot = false;
+  private ignoreInitialResizeForRestoredSnapshot = false;
+  private deferredPrefetchTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     options: PdfRendererOptions,
@@ -230,12 +245,15 @@ export class PdfRenderer {
    */
   detach(): void {
     if (this.disposed || this.suspended) return;
+    this.cancelDeferredPrefetch();
+    this.ignoreInitialResizeForRestoredSnapshot = false;
     this.suspended = true;
     this.layoutGeneration += 1;
     this.restoreGeneration += 1;
     this.activeRestore = null;
     this.detachObservers();
     this.shrinkToSuspendedWindow();
+    this.suspendedSnapshot = this.captureSuspendedSnapshot();
     this.pages.remove();
   }
 
@@ -244,6 +262,7 @@ export class PdfRenderer {
     if (this.disposed) {
       return false;
     }
+    const canRestoreSnapshot = this.canRestoreSuspendedSnapshot(container);
     this.pages.remove();
     this.container = container;
     this.container.classList.add('pdf-renderer');
@@ -254,15 +273,53 @@ export class PdfRenderer {
     this.layoutGeneration += 1;
     this.restoreGeneration += 1;
     this.activeRestore = null;
+    this.lastAttachRestoredSnapshot = canRestoreSnapshot;
+    this.ignoreInitialResizeForRestoredSnapshot = canRestoreSnapshot;
+    if (canRestoreSnapshot && this.flow === 'scrolled' && this.suspendedSnapshot) {
+      // 先写回滚动位置,再接观察器,避免恢复首帧被一次初始 scroll 事件改写。
+      this.container.scrollTop = this.suspendedSnapshot.scrollTop;
+    }
     this.attachObservers();
-    if (!this.suspended) void this.relayout();
+    if (canRestoreSnapshot) {
+      if (this.flow === 'scrolled') {
+        this.ensureScrollObserver();
+      }
+      this.scheduleDeferredPrefetch();
+    } else {
+      this.ignoreInitialResizeForRestoredSnapshot = false;
+      this.suspendedSnapshot = null;
+      if (!this.suspended) void this.relayout();
+    }
     return true;
+  }
+
+  /** 最近一次 attach 是否复挂了无需重排的已保留页面。 */
+  wasLastAttachRestoredSnapshot(): boolean {
+    return this.lastAttachRestoredSnapshot;
+  }
+
+  /** 当前页是否已完成,可作为 Runtime 挂起快照的最小完整结果。 */
+  isCurrentPageRendered(): boolean {
+    return this.hasCompleteCurrentPage({
+      containerWidth: this.container.clientWidth || 1,
+      containerHeight: this.container.clientHeight || 1,
+      devicePixelRatio: this.getDpr(),
+      flow: this.flow,
+      zoom: this.zoom,
+      fit: this.fit,
+      currentPage: this.currentPage,
+      scrollTop: this.flow === 'scrolled' ? this.container.scrollTop : 0,
+    });
   }
 
   setFlow(flow: 'paginated' | 'scrolled'): void {
     if (this.flow === flow) {
       return;
     }
+    this.cancelDeferredPrefetch();
+    this.lastAttachRestoredSnapshot = false;
+    this.ignoreInitialResizeForRestoredSnapshot = false;
+    this.suspendedSnapshot = null;
     if (this.flow === 'scrolled') {
       this.destroyScrolledMode();
     }
@@ -278,8 +335,12 @@ export class PdfRenderer {
   }
 
   setViewport(zoom: number, fit: PdfFitMode): void {
+    this.cancelDeferredPrefetch();
+    this.lastAttachRestoredSnapshot = false;
+    this.ignoreInitialResizeForRestoredSnapshot = false;
     this.zoom = zoom;
     this.fit = fit;
+    this.suspendedSnapshot = null;
     // 适配模式/缩放会改变滚动模式下每一页的尺寸和 top 偏移。旧布局
     // 不能用于恢复页码,否则会把保存的 scrollTop 映射到旧页面几何上。
     this.invalidateLayout();
@@ -1140,6 +1201,22 @@ export class PdfRenderer {
     const observerGeneration = ++this.observerGeneration;
     this.resizeObserver = new ResizeObserver(() => {
       if (!this.isCurrentObserver(observerGeneration)) return;
+      if (this.ignoreInitialResizeForRestoredSnapshot) {
+        this.ignoreInitialResizeForRestoredSnapshot = false;
+        const snapshot = this.suspendedSnapshot;
+        if (
+          snapshot &&
+          snapshot.containerWidth === (this.container.clientWidth || 1) &&
+          snapshot.containerHeight === (this.container.clientHeight || 1) &&
+          snapshot.devicePixelRatio === this.getDpr()
+        ) {
+          // ResizeObserver 对新容器通常会异步补发一次初始通知。尺寸未变时
+          // 这是观察器建立事件，不是布局变化，不能破坏已恢复的首帧。
+          return;
+        }
+        this.lastAttachRestoredSnapshot = false;
+        this.suspendedSnapshot = null;
+      }
       this.invalidateLayout();
       void this.relayout();
     });
@@ -1158,6 +1235,10 @@ export class PdfRenderer {
 
   dispose(): void {
     this.disposed = true;
+    this.cancelDeferredPrefetch();
+    this.suspendedSnapshot = null;
+    this.lastAttachRestoredSnapshot = false;
+    this.ignoreInitialResizeForRestoredSnapshot = false;
     this.layoutGeneration += 1;
     this.restoreGeneration += 1;
     this.activeRestore = null;
@@ -1181,5 +1262,86 @@ export class PdfRenderer {
     this.pageCache.clear();
     this.layouts = [];
     this.pages.remove();
+  }
+
+  /** 在当前页面已经可交互后,异步恢复分页/滚动模式的邻页预取。 */
+  private scheduleDeferredPrefetch(): void {
+    this.cancelDeferredPrefetch();
+    this.deferredPrefetchTimer = setTimeout(() => {
+      this.deferredPrefetchTimer = null;
+      if (this.disposed || this.suspended || !this.lastAttachRestoredSnapshot) return;
+      const generation = this.layoutGeneration;
+      const restoreGeneration = this.restoreGeneration;
+      const clientWidth = this.container.clientWidth || 1;
+      const clientHeight = this.container.clientHeight || 1;
+      if (this.flow === 'paginated') {
+        this.preloadNextPaginatedPage(
+          this.currentPage,
+          clientWidth,
+          clientHeight,
+          generation,
+          restoreGeneration,
+        );
+      } else {
+        void this.scheduleScrollPages();
+      }
+    }, 0);
+  }
+
+  private cancelDeferredPrefetch(): void {
+    if (this.deferredPrefetchTimer === null) return;
+    clearTimeout(this.deferredPrefetchTimer);
+    this.deferredPrefetchTimer = null;
+  }
+
+  private captureSuspendedSnapshot(): SuspendedRenderSnapshot | null {
+    const snapshot: SuspendedRenderSnapshot = {
+      containerWidth: this.container.clientWidth || 1,
+      containerHeight: this.container.clientHeight || 1,
+      devicePixelRatio: this.getDpr(),
+      flow: this.flow,
+      zoom: this.zoom,
+      fit: this.fit,
+      currentPage: this.currentPage,
+      scrollTop: this.flow === 'scrolled' ? this.container.scrollTop : 0,
+    };
+    return this.hasCompleteCurrentPage(snapshot) ? snapshot : null;
+  }
+
+  private canRestoreSuspendedSnapshot(container: HTMLElement): boolean {
+    const snapshot = this.suspendedSnapshot;
+    if (!snapshot || !this.suspended) return false;
+    if (
+      snapshot.containerWidth !== (container.clientWidth || 1) ||
+      snapshot.containerHeight !== (container.clientHeight || 1) ||
+      snapshot.devicePixelRatio !== this.getDpr() ||
+      snapshot.flow !== this.flow ||
+      snapshot.zoom !== this.zoom ||
+      snapshot.fit !== this.fit
+    ) {
+      return false;
+    }
+    return this.hasCompleteCurrentPage(snapshot);
+  }
+
+  private hasCompleteCurrentPage(snapshot: SuspendedRenderSnapshot): boolean {
+    if (snapshot.flow === 'paginated') {
+      const renderer = this.pageRenderers.get(snapshot.currentPage);
+      return Boolean(
+        renderer &&
+          renderer.isRendered() &&
+          this.pages.contains(renderer.element) &&
+          this.paginatedRenders.has(snapshot.currentPage),
+      );
+    }
+    const state = this.scrolledPages[snapshot.currentPage - 1];
+    return Boolean(
+      state &&
+        state.state === 'loaded' &&
+        state.renderer &&
+        state.renderer.isRendered() &&
+        this.pages.contains(state.renderer.element) &&
+        this.scrolledRenders.has(snapshot.currentPage),
+    );
   }
 }

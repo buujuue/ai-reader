@@ -187,6 +187,7 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private readonly relocateHandlers = new Set<EventListener>();
   private readonly progressHandlers = new Set<EventListener>();
   private readonly contentCreateHandlers = new Set<EventListener>();
+  private closeScheduled = false;
 
   constructor(
     element: ExtendedFoliateView,
@@ -554,39 +555,53 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   }
 
   close(): void {
-    try {
-      if (this.opened) {
-        this.element.close?.();
+    if (this.closeScheduled) return;
+    this.closeScheduled = true;
+    const finalize = () => {
+      try {
+        if (this.opened) {
+          this.element.close?.();
+        }
+      } finally {
+        this.contentCleanup?.();
+        this.internalLinkCleanup?.();
+        this.externalLinkCleanup?.();
+        this.element.remove();
+        this.contentListeners.clear();
+        this.internalLinkListeners.clear();
+        this.externalLinkListeners.clear();
+        this.showAnnotationListeners.clear();
+        this.readErrorListeners.clear();
+        this.relocateHandlers.clear();
+        this.progressHandlers.clear();
+        this.contentCreateHandlers.clear();
+        this.drawAnnotationCleanup?.();
+        this.showAnnotationCleanup?.();
+        this.contentCleanup = null;
+        this.internalLinkCleanup = null;
+        this.externalLinkCleanup = null;
+        this.drawAnnotationCleanup = null;
+        this.showAnnotationCleanup = null;
+        this.revokeFallbackUrls();
+        this.searchAnnotations.clear();
+        this.canonicalSearchIndex = null;
+        this.canonicalSearchIndexKey = null;
+        this.canonicalSearchConfig = null;
+        this.book = null;
+        this.derivedToc = null;
+        this.tocSource = 'native';
+        this.opened = false;
       }
-    } finally {
-      this.contentCleanup?.();
-      this.internalLinkCleanup?.();
-      this.externalLinkCleanup?.();
-      this.element.remove();
-      this.contentListeners.clear();
-      this.internalLinkListeners.clear();
-      this.externalLinkListeners.clear();
-      this.showAnnotationListeners.clear();
-      this.readErrorListeners.clear();
-      this.relocateHandlers.clear();
-      this.progressHandlers.clear();
-      this.contentCreateHandlers.clear();
-      this.drawAnnotationCleanup?.();
-      this.showAnnotationCleanup?.();
-      this.contentCleanup = null;
-      this.internalLinkCleanup = null;
-      this.externalLinkCleanup = null;
-      this.drawAnnotationCleanup = null;
-      this.showAnnotationCleanup = null;
-      this.revokeFallbackUrls();
-      this.searchAnnotations.clear();
-      this.canonicalSearchIndex = null;
-      this.canonicalSearchIndexKey = null;
-      this.canonicalSearchConfig = null;
-      this.book = null;
-      this.derivedToc = null;
-      this.tocSource = 'native';
-      this.opened = false;
+    };
+
+    // paginator.js 在 setStyles() 中排队的 rAF 会读取当前页面背景；关闭一份
+    // 已摘到缓存根的 renderer 前让这些帧先落地，避免销毁 Paginator 后旧帧
+    // 访问已置空的内部 View。挂载在可见容器中的 Runtime 仍保持同步关闭。
+    const detached = this.element.parentElement?.id === 'ai-reader-runtime-cache-root';
+    if (detached && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(finalize));
+    } else {
+      finalize();
     }
   }
 

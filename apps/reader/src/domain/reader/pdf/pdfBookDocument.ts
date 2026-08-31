@@ -83,6 +83,10 @@ export class PdfBookDocument implements BookDocument {
   private openGeneration = 0;
   private renderer: PdfRenderer | null = null;
   private container: HTMLElement | null = null;
+  /** 最近一次 attach 是否同步复挂了 PDF 页面首帧;仅供挂载编排消费一次。 */
+  private attachedRuntimeSnapshot: ReadingLocation | null = null;
+  /** 快照回切时延后恢复范围队列,让当前页先完成首帧交互。 */
+  private deferredRangeResumeTimer: ReturnType<typeof setTimeout> | null = null;
   private typography: ReadingTypography;
   private currentLocation: PdfReadingLocationLike | null = null;
   /** 显式位置恢复代次;迟到的渲染器事件不得覆盖最新目标位置。 */
@@ -122,6 +126,7 @@ export class PdfBookDocument implements BookDocument {
     }
     const generation = ++this.openGeneration;
     this.container = container;
+    this.attachedRuntimeSnapshot = null;
 
     let range: ConcurrentRangeTransport | null = null;
     this.rangeTransport = range;
@@ -247,12 +252,14 @@ export class PdfBookDocument implements BookDocument {
   }
 
   /** 挂起时保留 PDF.js 文档和当前页的最小渲染结果。 */
-  async detach(): Promise<void> {
+  async detach(): Promise<boolean> {
     if (!this.pdf || !this.renderer) {
-      return;
+      return true;
     }
     this.locationRestoreGeneration += 1;
     this.activeLocationRestoreGeneration = null;
+    this.attachedRuntimeSnapshot = null;
+    this.cancelDeferredRangeResume();
     const locationBeforeDetach = this.currentLocation;
     if (
       locationBeforeDetach?.kind === 'pdf' &&
@@ -273,25 +280,61 @@ export class PdfBookDocument implements BookDocument {
     // 挂起缓存的硬预算要求没有范围读取继续占用并发槽位。读取不收敛时
     // 由上层根据 false 结果拒绝缓存并走 close()，而不是留下半挂起 Runtime。
     const settled = await rangeTransport?.waitForIdle();
-    if (settled === false) rangeTransport?.cancel();
+    if (settled === false) {
+      rangeTransport?.cancel();
+      return false;
+    }
+    return true;
   }
 
   /** 复用原 PDF.js 文档，把页面窗口重新挂回新的 ReadingView。 */
   attach(container: HTMLElement): boolean {
     if (!this.pdf || !this.renderer) {
+      this.attachedRuntimeSnapshot = null;
       return false;
     }
     this.container?.removeEventListener('click', this.handleContainerClick, true);
     this.container = container;
     if (!this.renderer.attach(container)) {
       this.container = null;
+      this.attachedRuntimeSnapshot = null;
       return false;
     }
-    this.rangeTransport?.resume();
+    const restoredSnapshot = this.renderer.wasLastAttachRestoredSnapshot();
+    this.attachedRuntimeSnapshot = restoredSnapshot
+      ? this.currentLocation
+      : null;
+    if (restoredSnapshot) {
+      // PdfRenderer.attach 已经把当前页的 DOM/Canvas/文本层同步复挂;
+      // 范围队列和邻页预取延后一拍,避免回切首帧被后台读取抢占。
+      this.cancelDeferredRangeResume();
+      this.deferredRangeResumeTimer = setTimeout(() => {
+        this.deferredRangeResumeTimer = null;
+        if (this.container === container && this.pdf && this.renderer) {
+          this.rangeTransport?.resume();
+        }
+      }, 0);
+    } else {
+      this.rangeTransport?.resume();
+    }
     this.applyTheme(this.typography.theme);
     this.wireHighlightClick();
-    this.redrawHighlights();
+    // 快照命中时页面 Canvas、文本层、搜索和批注覆盖层都直接复用;
+    // 只有需要重排的回退 attach 才立即重绘覆盖层。
+    if (this.attachedRuntimeSnapshot === null) {
+      this.redrawHighlights();
+    }
     return true;
+  }
+
+  /**
+   * 返回并清除最近一次 attach 的无损首帧位置快照。快照只由
+   * mountViewDocument 使用一次,不会成为持久化状态。
+   */
+  consumeRuntimeAttachSnapshot(): ReadingLocation | null {
+    const snapshot = this.attachedRuntimeSnapshot;
+    this.attachedRuntimeSnapshot = null;
+    return snapshot;
   }
 
   onReadError(listener: (error: unknown) => void): () => void {
@@ -307,6 +350,7 @@ export class PdfBookDocument implements BookDocument {
     if (!this.pdf) {
       return;
     }
+    this.resumeRangeTransportForInteraction();
     const pageIndex = await this.resolveHrefToPage(href);
     if (pageIndex !== null) {
       await this.goToPage(pageIndex + 1);
@@ -317,6 +361,7 @@ export class PdfBookDocument implements BookDocument {
     if (!this.renderer) {
       return;
     }
+    this.resumeRangeTransportForInteraction();
     if (this.typography.flow === 'paginated') {
       await this.renderer.goToPage(this.renderer.getCurrentPage() + 1);
       this.notifyLocation();
@@ -330,6 +375,7 @@ export class PdfBookDocument implements BookDocument {
     if (!this.renderer) {
       return;
     }
+    this.resumeRangeTransportForInteraction();
     if (this.typography.flow === 'paginated') {
       await this.renderer.goToPage(this.renderer.getCurrentPage() - 1);
       this.notifyLocation();
@@ -343,6 +389,7 @@ export class PdfBookDocument implements BookDocument {
     if (location.kind !== 'pdf') {
       return;
     }
+    this.resumeRangeTransportForInteraction();
     const restoreGeneration = ++this.locationRestoreGeneration;
     this.activeLocationRestoreGeneration = restoreGeneration;
     this.currentLocation = {
@@ -370,6 +417,7 @@ export class PdfBookDocument implements BookDocument {
 
   /** 调整 PDF 视口(缩放与页面适配模式),并同步当前阅读位置。 */
   setViewport(zoom: number, fit: PdfFitModeLike): void {
+    this.resumeRangeTransportForInteraction();
     this.renderer?.setViewport(zoom, fit);
     if (this.currentLocation) {
       this.currentLocation = { ...this.currentLocation, zoom, fit };
@@ -386,6 +434,7 @@ export class PdfBookDocument implements BookDocument {
     if (!loc || !this.renderer) {
       return;
     }
+    this.resumeRangeTransportForInteraction();
     const current = this.currentLocation;
     const zoom = current?.zoom ?? this.renderer.getViewportState().zoom;
     const fit = current?.fit ?? this.renderer.getViewportState().fit;
@@ -413,6 +462,7 @@ export class PdfBookDocument implements BookDocument {
     if (!this.pdf) {
       return (async function* searchNoDoc() {})();
     }
+    this.resumeRangeTransportForInteraction();
     return this.searchWithHighlights(options);
   }
 
@@ -443,6 +493,9 @@ export class PdfBookDocument implements BookDocument {
   applyTypography(settings: ReadingTypography): void {
     const flowChanged = settings.flow !== this.typography.flow;
     const themeChanged = settings.theme !== this.typography.theme;
+    if (this.container) {
+      this.resumeRangeTransportForInteraction();
+    }
     this.typography = settings;
     this.renderer?.setFlow(settings.flow);
     if (themeChanged) {
@@ -554,6 +607,7 @@ export class PdfBookDocument implements BookDocument {
     this.activeLocationRestoreGeneration = null;
     this.rangeTransport?.cancel();
     this.rangeTransport = null;
+    this.cancelDeferredRangeResume();
     const loadingTask = this.loadingTask;
     this.loadingTask = null;
     void Promise.resolve(loadingTask?.destroy?.()).catch(() => undefined);
@@ -565,6 +619,7 @@ export class PdfBookDocument implements BookDocument {
     }
     this.container?.removeEventListener('click', this.handleContainerClick, true);
     this.container = null;
+    this.attachedRuntimeSnapshot = null;
     this.currentLocation = null;
     this.locationListeners.clear();
     this.readErrorListeners.clear();
@@ -801,6 +856,20 @@ export class PdfBookDocument implements BookDocument {
     const palette = THEME_PALETTES[theme];
     this.container.style.backgroundColor = palette.background;
     this.container.style.color = palette.foreground;
+  }
+
+  /** 用户主动操作时立即恢复范围调度,取消首帧后的延迟恢复。 */
+  private resumeRangeTransportForInteraction(): void {
+    this.cancelDeferredRangeResume();
+    if (this.container) {
+      this.rangeTransport?.resume();
+    }
+  }
+
+  private cancelDeferredRangeResume(): void {
+    if (this.deferredRangeResumeTimer === null) return;
+    clearTimeout(this.deferredRangeResumeTimer);
+    this.deferredRangeResumeTimer = null;
   }
 }
 

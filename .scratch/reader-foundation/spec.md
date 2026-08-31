@@ -137,7 +137,7 @@ Status: ready-for-agent
 - Workbench 集中拥有最多两个 Editor Group、标签顺序、活动 View、主要阅读材料和面板期望状态。
 - 同一 Editor Group 内每种材料最多拥有一个 ReadingView；跨组允许同时打开同一材料，位置与导航历史按视图保留，资料级批注和排版覆盖按材料共享。
 - 主要阅读材料由用户显式指定；单材料时自动指定，焦点切换不改变它。
-- 只挂载每个可见 Editor Group 的活动 ReadingView；全应用最多两个 active、最多三个按 ReadingView 实例计数的 resident Runtime，已完成的 EPUB/Markdown/PDF 失活标签可按 View 身份进入有界 `suspended` 缓存，resident 超限只按 LRU 淘汰 suspended。挂起前 flush 位置并清理选区、搜索任务、输入焦点和临时覆盖层；PDF 只保留 PDF.js 文档和当前页的预算内结果，未完成加载、版本/指纹/算法不一致或超出桌面/平板预算时进入 `evicted` 并关闭。Workspace State 仍完全可序列化。具体替代决策见 ADR-0041，跨格式总验收见工单 #60（继承 #57）。
+- 只挂载每个可见 Editor Group 的活动 ReadingView；全应用最多两个 active、最多三个按 ReadingView 实例计数的 resident Runtime，已完成的 EPUB/Markdown/PDF 失活标签可按 View 身份进入有界 `suspended` 缓存，resident 超限只按 LRU 淘汰 suspended。紧凑布局隐藏 Editor Group 时必须同步清理输入与后台接线并挂起其 Runtime，重新显示后按缓存键复用或安全重建。挂起前 flush 位置并清理选区、搜索任务、输入焦点和临时覆盖层；PDF 只保留 PDF.js 文档和当前页的预算内结果，未完成加载、版本/指纹/算法不一致或超出桌面/平板预算时进入 `evicted` 并关闭。Workspace State 仍完全可序列化。具体替代决策见 ADR-0041，三 resident 实现与跨格式/双组总验收见工单 #62（继承 #61/#60/#57）。
 - 工作台由活动栏、主侧栏、中央 Editor Group 和状态栏组成。主要阅读材料的批注通过材料操作菜单打开覆盖式批注面板；右侧栏保留给未来 Agent，第一版不显示 Agent 占位。
 - 材料更多菜单位于阅读工具栏右侧，提供查看/导出该材料批注、设置主要阅读材料、编辑元数据和移入回收站；阅读排版沿用阅读设置入口。
 - 工作台外壳第一阶段固定采用 C 深色视觉；阅读材料的浅色、羊皮和深色主题仍由现有阅读排版设置单独控制，不新增工作台主题持久化状态。
@@ -157,7 +157,7 @@ Status: ready-for-agent
 - 文本批注锚点保存 CFI、选中文字、前文、后文、文档版本与恢复状态。恢复顺序为原 CFI、唯一引文上下文，最后标记失联。
 - 扫描 PDF 区域锚点语义上保存页码和归一化矩形；第一版兼容传输层以 `pdf-text:` 编码承载它，加载时不得按文本引文恢复，版本变化后保留为失联批注。
 - 所有书籍内容视为不可信。第一版永久禁用书籍脚本、iframe、对象嵌入和主动远程资源；外部链接必须交给系统浏览器。
-- Reader Runtime 生命周期分为 `active`、`suspended`、`evicted`、`closed`；缓存准入 EPUB/Markdown/PDF，resident 总数上限为 3、active 上限为 2、suspended 上限为 2，键包含 ReadingView 身份、MaterialId、完整内容指纹、Markdown 文档版本、解析/清洗算法版本和缓存算法版本。桌面/平板使用独立的活 Runtime、iframe、Canvas、解码页、范围缓存和估算资源硬预算，并按 LRU 淘汰挂起对象；PDF 挂起阶段额外要求当前页 Canvas/解码页保留上限为 1、在途范围读取为 0，且分页/滚动位置与视口必须可恢复；性能门槛从同机冷回切测量动态派生，不写死绝对毫秒数。对应 ADR-0041 与工单 #56/#57/#60。
+- Reader Runtime 生命周期分为 `active`、`suspended`、`evicted`、`closed`；缓存准入 EPUB/Markdown/PDF，resident 总数上限为 3、active 上限为 2、suspended 上限为 2，键包含 ReadingView 身份、MaterialId、完整内容指纹、Markdown 文档版本、解析/清洗算法版本和缓存算法版本。桌面/平板使用独立的活 Runtime、iframe、Canvas、解码页、范围缓存和估算资源硬预算，并按 LRU 淘汰挂起对象；PDF 挂起阶段额外要求当前页 Canvas/解码页保留上限为 1、在途范围读取为 0，且分页/滚动位置与视口必须可恢复；不可见组不得保留输入、观察器或后台调度。性能门槛从同机冷回切测量动态派生，不写死绝对毫秒数。对应 ADR-0041、ADR-0042 与工单 #56/#57/#60/#61/#62。
 - Tauri CSP 和 Capability 使用最小白名单；前端没有任意文件系统、Shell 或 SQL 能力。
 - 上游 Tauri、官方插件和普通 Rust crate 使用锁文件固定；不 vendoring Tauri、tao 或 swift-rs。只有可复现问题且无上游解法时才建立带 ADR 的最小 Patch/Fork。
 - 完整备份包含版本化 manifest、SQLite 一致快照、托管材料与封面；流式生成且第一版不加密。

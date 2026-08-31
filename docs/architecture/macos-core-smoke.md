@@ -57,7 +57,7 @@ pnpm test
 pnpm --filter @ai-reader/app test:real-render
 ```
 
-Windows 上的 `pnpm tauri dev` 只能证明 Windows 原生壳仍可启动；本仓库当前开发主机不是 macOS，因此本次实现不虚报真实 macOS 运行证据。Issue #60 的 `test:reader-runtime-cache` 结果不能替代上表的 macOS 三 resident Runtime 缓存证据。完成原生验收后，将主机信息、命令、时间、结果和截图路径补充到本表对应行。
+Windows 上的 `pnpm tauri dev` 只能证明 Windows 原生壳仍可启动；本仓库当前开发主机不是 macOS，因此本次实现不虚报真实 macOS 运行证据。Issue #61 的 `test:reader-runtime-cache` 结果不能替代上表的 macOS PDF 首帧、三 resident Runtime 缓存证据。完成原生验收后，将主机信息、命令、时间、结果和截图路径补充到本表对应行。
 
 ## 安全边界检查
 

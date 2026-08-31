@@ -109,6 +109,68 @@ describe('PdfRenderer 分页模式', () => {
     expect(mountedPageCount(renderer)).toBe(1);
   });
 
+  it('分页模式回切时同步复挂当前页 DOM,不重复取得或光栅化', async () => {
+    const document = makeFakeDocument(2);
+    const renderedPages: PdfPage[] = [];
+    const renderer = new PdfRenderer(
+      {
+        document,
+        container: makeContainer(),
+        lib: makeFakeLib(document),
+        rasterize: makeFakeRasterizer((page) => renderedPages.push(page)),
+        devicePixelRatio: () => 1,
+      },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+
+    await renderer.mount();
+    await vi.waitFor(() => expect(document.getPage).toHaveBeenCalledWith(2));
+    await renderer.goToPage(2);
+
+    const pageElement = renderer.getPageRenderer(2)!.element;
+    const canvas = pageElement.querySelector('canvas');
+    const getPageCalls = (document.getPage as ReturnType<typeof vi.fn>).mock.calls.length;
+    const rasterizationCount = renderedPages.length;
+
+    renderer.detach();
+    const resumedContainer = makeContainer();
+    const preloadNextPage = vi.spyOn(
+      renderer as unknown as { preloadNextPaginatedPage: (...args: unknown[]) => void },
+      'preloadNextPaginatedPage',
+    );
+    expect(renderer.attach(resumedContainer)).toBe(true);
+    expect(renderer.wasLastAttachRestoredSnapshot()).toBe(true);
+    expect(resumedContainer.querySelector('.pdf-page')).toBe(pageElement);
+    expect(resumedContainer.querySelector('.pdf-page canvas')).toBe(canvas);
+    expect(document.getPage).toHaveBeenCalledTimes(getPageCalls);
+    expect(renderedPages).toHaveLength(rasterizationCount);
+    expect(preloadNextPage).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(preloadNextPage).toHaveBeenCalledTimes(1);
+
+    renderer.dispose();
+  });
+
+  it('分页模式容器尺寸变化时放弃快照并重新布局', async () => {
+    const document = makeFakeDocument(2);
+    const renderer = new PdfRenderer(
+      { document, container: makeContainer(), lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+
+    await renderer.mount();
+    renderer.detach();
+    const changedContainer = makeContainer();
+    Object.defineProperty(changedContainer, 'clientWidth', { value: 600, configurable: true });
+    expect(renderer.attach(changedContainer)).toBe(true);
+    expect(renderer.wasLastAttachRestoredSnapshot()).toBe(false);
+    await vi.waitFor(() =>
+      expect(renderer.getPageRenderer(1)?.element.style.width).toBe('600px'),
+    );
+
+    renderer.dispose();
+  });
+
   it('并发重排时旧页的异步结果不会覆盖当前页内容', async () => {
     const page1 = makeFakePage({ width: 595, height: 842 });
     const page2 = makeFakePage({ width: 595, height: 842 });
@@ -298,6 +360,49 @@ describe('PdfRenderer 滚动模式', () => {
     expect(renderer.getCurrentPage()).toBe(10);
     expect(renderer.getPageRenderer(10)).not.toBeNull();
     expect(resumedContainer.querySelector('.pdf-page[data-page="10"] canvas')).not.toBeNull();
+    renderer.dispose();
+  });
+
+  it('滚动模式回切时同步复挂当前页和 scrollTop,邻页工作不阻塞首帧', async () => {
+    const document = makeFakeDocument(20);
+    const renderedPages: PdfPage[] = [];
+    const renderer = new PdfRenderer(
+      {
+        document,
+        container: makeContainer(),
+        lib: makeFakeLib(document),
+        rasterize: makeFakeRasterizer((page) => renderedPages.push(page)),
+        devicePixelRatio: () => 1,
+      },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+
+    const target = renderer['container']?.querySelector<HTMLElement>('[data-page="10"]');
+    const targetTop = Number.parseFloat(target?.style.top ?? '0') + 80;
+    await renderer.goToPage(10, targetTop, { restore: true });
+    const privateRenderer = renderer as unknown as {
+      scrolledPages: Array<{ pageNumber: number; state: string }>;
+    };
+    await vi.waitFor(() => expect(privateRenderer.scrolledPages[9]?.state).toBe('loaded'));
+
+    const pageElement = renderer.getPageRenderer(10)!.element;
+    const canvas = pageElement.querySelector('canvas');
+    const scrollTop = renderer.getScrollTop();
+    const getPageCalls = (document.getPage as ReturnType<typeof vi.fn>).mock.calls.length;
+    const rasterizationCount = renderedPages.length;
+
+    renderer.detach();
+    const resumedContainer = makeContainer();
+    expect(renderer.attach(resumedContainer)).toBe(true);
+    expect(renderer.wasLastAttachRestoredSnapshot()).toBe(true);
+    expect(resumedContainer.scrollTop).toBeCloseTo(scrollTop);
+    expect(resumedContainer.querySelector('.pdf-page')).toBe(pageElement);
+    expect(resumedContainer.querySelector('.pdf-page canvas')).toBe(canvas);
+    expect(document.getPage).toHaveBeenCalledTimes(getPageCalls);
+    expect(renderedPages).toHaveLength(rasterizationCount);
+
     renderer.dispose();
   });
 

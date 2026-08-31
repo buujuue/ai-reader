@@ -103,6 +103,7 @@ interface ActiveViewMount {
 
 const activeMounts = new Map<string, ActiveViewMount>();
 const runtimeInputCleanups = new Map<string, () => void>();
+const closedReaderRuntimeDocuments = new WeakSet<BookDocument>();
 const defaultEpubDerivedCache = createEpubDerivedCache<string>();
 const defaultCanonicalSearchIndexCache = createCanonicalSearchIndexCache();
 const defaultEpubDerivedTocCache = createEpubDerivedTocCache();
@@ -327,23 +328,41 @@ function closeReaderRuntime(
   expectedDocument?: BookDocument,
 ): void {
   const removed = cache.remove(viewId, expectedDocument);
-  if (expectedDocument) {
-    const current = useReaderRuntime.getState().getDocument(viewId);
-    if (current === expectedDocument && !removed) {
-      // LRU 登记已先从缓存索引移除旧对象；关闭后只从 Store 忘记它，避免
-      // removeDocument 再次 close，确保每个 Runtime 只关闭一次。
-      expectedDocument.close();
-      useReaderRuntime.getState().removeDocument(viewId, { close: false });
-      return;
+  const current = useReaderRuntime.getState().getDocument(viewId);
+  if (expectedDocument && current !== expectedDocument) {
+    // 同一 viewId 被新文档替换时，不能通过 viewId 删除新对象；这里只关闭
+    // 已从缓存索引移除的旧对象。
+    closeReaderRuntimeDocumentOnce(expectedDocument);
+    if (removed && removed.document !== expectedDocument) {
+      closeReaderRuntimeDocumentOnce(removed.document);
     }
-    if (current !== expectedDocument) {
-      // 同一 viewId 被新文档替换时，不能通过 viewId 删除新对象；这里只关闭
-      // 已从缓存索引移除的旧对象，Runtime Store 仍保留当前文档。
-      expectedDocument.close();
-      return;
-    }
+    return;
   }
-  useReaderRuntime.getState().removeDocument(viewId);
+
+  if (current) {
+    // 缓存先删除索引，Runtime Store 再以 close:false 忘记对象；这条顺序同时
+    // 覆盖“刚被 LRU 删除”和“当前条目仍在缓存”两种路径，避免重复 close。
+    if (removed && removed.document !== current) {
+      closeReaderRuntimeDocumentOnce(removed.document);
+    }
+    closeReaderRuntimeDocumentOnce(current);
+    useReaderRuntime.getState().removeDocument(viewId, { close: false });
+    return;
+  }
+
+  // LRU 已经把对象从 Store 忘记，但调用方仍持有被淘汰快照时，仍需完成一次
+  // 关闭；WeakSet 让异常/竞态路径保持幂等。
+  if (expectedDocument) {
+    closeReaderRuntimeDocumentOnce(expectedDocument);
+  } else if (removed) {
+    closeReaderRuntimeDocumentOnce(removed.document);
+  }
+}
+
+function closeReaderRuntimeDocumentOnce(document: BookDocument): void {
+  if (closedReaderRuntimeDocuments.has(document)) return;
+  closedReaderRuntimeDocuments.add(document);
+  document.close();
 }
 
 function enqueueRuntimeTransition<T>(operation: () => Promise<T>): Promise<T> {
@@ -609,7 +628,12 @@ async function suspendViewRuntime(
   try {
     // 先让格式实现主动收缩页面/范围资源，再按收缩后的快照执行缓存准入；
     // 这样 PDF 不会因为活动窗口的多页 Canvas 被错误判定为超出挂起预算。
-    await document.detach!();
+    const detached = await document.detach!();
+    if (detached === false) {
+      console.warn('PDF 范围读取未在挂起期限内收敛,已关闭并将在下次激活时重建');
+      closeReaderRuntime(viewId, cache);
+      return;
+    }
     result = cache.suspend({
       viewId,
       materialId: material!.id,
@@ -964,9 +988,12 @@ async function activateViewRuntime(
           useWorkspaceStore.getState().setViewLocation(viewId, locationToRestore);
         }
         useReaderRuntime.getState().setDocumentLifecycle(viewId, 'active');
-        useWorkspaceStore.getState().setActiveView(groupId, viewId);
         try {
           await suspendViewRuntime(dependencies, previousViewId);
+          // 旧 Runtime 必须在旧 ReadingView 仍挂在 DOM 时完成位置 flush 和
+          // PDF 页面快照;否则先切换 Workspace 会让 React 卸载旧容器并把
+          // scrollTop 归零,连续 A→B→A→B→A 会退化为第一页重建。
+          useWorkspaceStore.getState().setActiveView(groupId, viewId);
         } catch (error) {
           // 目标先提升只是为给 LRU 留出回切槽位；旧视图 flush 失败时恢复
           // 原活动关系与目标 suspended 状态，不能让用户停在未落盘的半切换上。
@@ -1014,12 +1041,22 @@ export function mountViewDocument(
   if (existingMount?.document === document && !existingMount.disposed) {
     const containerChanged = existingMount.container !== container;
     let attached = false;
+    let attachedRuntimeSnapshot: ReadingLocation | null = null;
     if (containerChanged) {
       attached = document.attach?.(container) ?? false;
+      if (attached) {
+        attachedRuntimeSnapshot = document.consumeRuntimeAttachSnapshot?.() ?? null;
+      }
       existingMount.container = container;
     }
+    const fastRestored =
+      attached &&
+      attachedRuntimeSnapshot !== null &&
+      location !== null &&
+      serializeReadingLocation(attachedRuntimeSnapshot) === serializeReadingLocation(location);
     if (
       location &&
+      !fastRestored &&
       existingMount.restoringLocation !== serializeReadingLocation(location) &&
       (containerChanged || JSON.stringify(document.getLocation()) !== serializeReadingLocation(location))
     ) {
@@ -1069,6 +1106,18 @@ export function mountViewDocument(
   // 缓存命中时只移动已打开的 renderer，不重新执行 EPUB/Markdown 解析或建立
   // renderer；新建 Runtime 才进入 document.open()。
   const attached = document.attach?.(container) ?? false;
+  const attachedRuntimeSnapshot = attached
+    ? document.consumeRuntimeAttachSnapshot?.() ?? null
+    : null;
+  const fastRestored =
+    attachedRuntimeSnapshot !== null &&
+    (location === null ||
+      serializeReadingLocation(attachedRuntimeSnapshot) === serializeReadingLocation(location));
+  if (fastRestored && location === null) {
+    // Workspace 位置缺失时仍以 Runtime 的已验证快照为事实,避免首帧恢复后
+    // 序列化状态继续落在 null。
+    useWorkspaceStore.getState().setViewLocation(viewId, attachedRuntimeSnapshot);
+  }
   const readiness = prepareViewMountReadiness(viewId);
   useReaderRuntime.getState().setDocumentState(viewId, { status: 'loading' });
   const persister = new ThrottledPositionPersister({
@@ -1110,9 +1159,9 @@ export function mountViewDocument(
     document,
     container,
     persister,
-    restoring: location !== null,
-    restoringLocation: location ? serializeReadingLocation(location) : null,
-    restoreGeneration: location ? 1 : 0,
+    restoring: location !== null && !fastRestored,
+    restoringLocation: location && !fastRestored ? serializeReadingLocation(location) : null,
+    restoreGeneration: location && !fastRestored ? 1 : 0,
     disposed: false,
     dispose: () => {
       if (activeMount.disposed) return;
@@ -1190,7 +1239,7 @@ export function mountViewDocument(
       }
       readiness.resolve();
       // 文档打开后加载该材料批注并绘制到覆盖层。
-      if (dependencies.annotationRepository) {
+      if (dependencies.annotationRepository && !fastRestored) {
         void loadAnnotationsForView(
           { annotationRepository: dependencies.annotationRepository },
           viewId,
@@ -1338,6 +1387,14 @@ export function registerReaderCommands(
     await activateViewRuntime(dependencies, viewId, material);
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   }));
+
+  registry.register(COMMAND_IDS.readerSuspendViewRuntime, (...args: unknown[]) =>
+    enqueueRuntimeTransition(async () => {
+      const viewId = args[0] as string | undefined;
+      if (!viewId) return;
+      await suspendViewRuntime(dependencies, viewId);
+    }),
+  );
 
   registry.register(COMMAND_IDS.readerNextPage, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
@@ -1723,8 +1780,14 @@ export async function flushAndCloseAllReaderViews(): Promise<void> {
     await persister.dispose();
   }
   persisters.clear();
+  for (const activeMount of activeMounts.values()) {
+    activeMount.dispose();
+  }
+  activeMounts.clear();
   navigationIntents.clear();
   for (const viewId of runtimeInputCleanups.keys()) clearReaderRuntimeInput(viewId);
+  for (const readiness of viewMountReadiness.values()) readiness.resolve();
+  viewMountReadiness.clear();
   cancelAllSearches();
   useReaderRuntime.getState().closeAll();
   registeredReaderRuntimeCache?.clear();

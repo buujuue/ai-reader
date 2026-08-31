@@ -72,6 +72,7 @@ describe('PdfBookDocument', () => {
     await book.open(firstContainer);
     await book.goToLocation({ kind: 'pdf', page: 4, scrollTop: 0, zoom: 125, fit: 'page' });
 
+    const preservedPage = firstContainer.querySelector('.pdf-page');
     await book.detach();
 
     expect(book.getContentDocs()).toEqual([]);
@@ -90,10 +91,24 @@ describe('PdfBookDocument', () => {
 
     const secondContainer = makeContainer();
     expect(book.attach(secondContainer)).toBe(true);
+    expect(book.consumeRuntimeAttachSnapshot()).toEqual(book.getLocation());
+    expect(secondContainer.querySelector('.pdf-page')).toBe(preservedPage);
     await book.goToLocation({ kind: 'pdf', page: 4, scrollTop: 0, zoom: 125, fit: 'page' });
     expect(lib.getDocument).toHaveBeenCalledTimes(1);
     expect(document.destroy).not.toHaveBeenCalled();
     expect(secondContainer.querySelector('.pdf-page')).toBeTruthy();
+    book.close();
+  });
+
+  it('范围读取未在挂起期限内收敛时返回失败并取消传输', async () => {
+    const { book } = createDocument();
+    await book.open(makeContainer());
+    const rangeTransport = book['rangeTransport']!;
+    const cancel = vi.spyOn(rangeTransport, 'cancel');
+    vi.spyOn(rangeTransport, 'waitForIdle').mockResolvedValue(false);
+
+    await expect(book.detach()).resolves.toBe(false);
+    expect(cancel).toHaveBeenCalledOnce();
     book.close();
   });
 

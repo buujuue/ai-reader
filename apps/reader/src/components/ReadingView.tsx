@@ -34,11 +34,15 @@ import { SelectionToolbar } from './SelectionToolbar';
  * 把键盘与内容文档的输入(滚轮/点击/触摸)统一桥接到 Command Registry 的翻页命令，
  * 并向 Reader Runtime 注册输入接线清理。Runtime 的 flush、挂起和关闭由命令层统一负责。
  */
-export function ReadingView({ viewId }: { viewId: string }) {
+export function ReadingView({ viewId, visible = true }: { viewId: string; visible?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mountedDocumentRef = useRef<BookDocument | null>(null);
+  const previousVisibilityRef = useRef<boolean | null>(null);
   const { commands, importRepository, workspaceRepository, annotationRepository } = useAppServices();
   const document = useReaderRuntime((state) => state.documents.get(viewId));
+  const runtimeLifecycle = useReaderRuntime((state) =>
+    state.documentLifecycles.get(viewId),
+  );
   const documentState = useReaderRuntime((state) => state.documentStates.get(viewId));
   const groupId = useWorkspaceStore((state) =>
     state.editorGroups.find((group) => group.views.some((view) => view.id === viewId))?.id ?? null,
@@ -57,7 +61,7 @@ export function ReadingView({ viewId }: { viewId: string }) {
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || sourceMode) return;
+    if (!container || sourceMode || !visible || runtimeLifecycle === 'suspended') return;
     const existing = useReaderRuntime.getState().getDocument(viewId);
     if (!existing) return;
     if (mountedDocumentRef.current === existing) return;
@@ -80,12 +84,55 @@ export function ReadingView({ viewId }: { viewId: string }) {
         mountedDocumentRef.current = null;
       }
     };
-  }, [importRepository, sourceMode, workspaceRepository, viewId, document]);
+  }, [
+    importRepository,
+    runtimeLifecycle,
+    sourceMode,
+    visible,
+    workspaceRepository,
+    viewId,
+    document,
+  ]);
+
+  // 紧凑布局只保留活动 Editor Group 可见。隐藏组仍留在 React 树中以保留
+  // Workspace State，但其 Reader Runtime 必须摘下 renderer、清理输入和后台任务；
+  // 重新显示时再由同一 View 的缓存命中路径挂回原对象。
+  useEffect(() => {
+    const previousVisibility = previousVisibilityRef.current;
+    previousVisibilityRef.current = visible;
+    if (
+      sourceMode ||
+      previousVisibility === visible ||
+      (previousVisibility === null && visible)
+    ) return;
+
+    if (!visible) {
+      mountedDocumentRef.current = null;
+      void commands.execute(COMMAND_IDS.readerSuspendViewRuntime, viewId).catch((error: unknown) => {
+        console.error('隐藏 Editor Group 的阅读 Runtime 挂起失败', { viewId, error });
+      });
+      return;
+    }
+
+    // 恢复必须回到已注册的 Command，确保 PDF.js、Foliate 工厂和其它平台依赖
+    // 使用 AppServices 组装时注入的同一份实例，而不是由组件拼一份不完整依赖。
+    void commands.execute(COMMAND_IDS.readerActivateView, viewId).catch((error: unknown) => {
+      console.error('显示 Editor Group 的阅读 Runtime 恢复失败', { viewId, error });
+    });
+  }, [
+    annotationRepository,
+    commands,
+    importRepository,
+    sourceMode,
+    visible,
+    viewId,
+    workspaceRepository,
+  ]);
 
   // 统一阅读输入:键盘 + 内容文档(iframe 内)的滚轮/点击/触摸都收敛到同一组翻页命令。
   useEffect(() => {
     const book = useReaderRuntime.getState().getDocument(viewId);
-    if (!book || sourceMode) return;
+    if (!book || sourceMode || !visible || runtimeLifecycle === 'suspended') return;
     const materialId = useWorkspaceStore.getState().editorGroups
       .flatMap((group) => group.views)
       .find((view) => view.id === viewId)?.materialId;
@@ -170,7 +217,16 @@ export function ReadingView({ viewId }: { viewId: string }) {
       }
     };
     return registerReaderRuntimeInputCleanup(viewId, cleanup);
-  }, [commands, groupId, isActiveView, sourceMode, viewId, document]);
+  }, [
+    commands,
+    document,
+    groupId,
+    isActiveView,
+    runtimeLifecycle,
+    sourceMode,
+    viewId,
+    visible,
+  ]);
 
   const materialId = useWorkspaceStore((state) => {
     for (const group of state.editorGroups) {
