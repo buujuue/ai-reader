@@ -77,6 +77,13 @@ function createFakeViewHost(overrides: Partial<FoliateViewHost> = {}): FoliateVi
   };
 }
 
+function makeReaderContainer(): HTMLElement {
+  const container = document.createElement('div');
+  Object.defineProperty(container, 'clientWidth', { value: 800, configurable: true });
+  Object.defineProperty(container, 'clientHeight', { value: 600, configurable: true });
+  return container;
+}
+
 describe('Reader 命令', () => {
   let registry: CommandRegistry;
   let importRepository: ReturnType<typeof createInMemoryImportRepository>;
@@ -353,10 +360,11 @@ describe('Reader 命令', () => {
     await registry.execute(COMMAND_IDS.libraryOpenBook, pdf);
     const pdfViewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
     const pdfDocument = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    const firstPdfContainer = makeReaderContainer();
     const firstPersister = mountViewDocument(
       pdfDocument,
       pdfViewId,
-      document.createElement('div'),
+      firstPdfContainer,
       null,
       { importRepository, workspaceRepository },
     );
@@ -395,10 +403,11 @@ describe('Reader 命令', () => {
     await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
     const reopenedPaginated = useReaderRuntime.getState().getDocument(pdfViewId)!;
     expect(reopenedPaginated).toBe(pdfDocument);
+    const secondPdfContainer = makeReaderContainer();
     const secondPersister = mountViewDocument(
       reopenedPaginated,
       pdfViewId,
-      document.createElement('div'),
+      secondPdfContainer,
       useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location,
       { importRepository, workspaceRepository },
     );
@@ -406,10 +415,18 @@ describe('Reader 命令', () => {
     expect(reopenedPaginated.getLocation()).toEqual(paginatedLocation);
 
     await registry.execute(COMMAND_IDS.readerSetPdfFlow, pdfViewId, 'scrolled');
+    await vi.waitFor(() =>
+      expect(secondPdfContainer.querySelector<HTMLElement>('[data-page="4"]')?.style.height).toMatch(/px$/),
+    );
+    const scrolledPage = secondPdfContainer.querySelector<HTMLElement>('[data-page="4"]');
+    const scrolledPageTop = Number.parseFloat(scrolledPage?.style.top ?? 'NaN');
+    const scrolledPageHeight = Number.parseFloat(scrolledPage?.style.height ?? 'NaN');
     const scrolledLocation: PdfReadingLocation = {
       kind: 'pdf',
       page: 4,
-      scrollTop: 5_321.25,
+      // 目标页底部到下一页之间的间距是合法位置,也是原 bug 会错误
+      // 退回目标页顶部的边界场景。
+      scrollTop: scrolledPageTop + scrolledPageHeight + 10,
       zoom: 175,
       fit: 'actual',
     };
@@ -423,15 +440,61 @@ describe('Reader 命令', () => {
     await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
     const reopened = useReaderRuntime.getState().getDocument(pdfViewId)!;
     expect(reopened).toBe(pdfDocument);
+    const resumedScrollContainer = makeReaderContainer();
+    // ReadingView 的正文容器默认是 overflow-hidden；缓存 PDF attach 后必须
+    // 按保留的滚动模式重新打开原生滚动，否则用户会卡在恢复页面。
+    resumedScrollContainer.style.overflow = 'hidden';
     const thirdPersister = mountViewDocument(
       reopened,
       pdfViewId,
-      document.createElement('div'),
+      resumedScrollContainer,
       useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location,
       { importRepository, workspaceRepository },
     );
     await vi.waitFor(() => expect((reopened as PdfBookDocument).getPageCount()).toBe(8));
+    await vi.waitFor(() =>
+      expect(resumedScrollContainer.scrollTop).toBeCloseTo(scrolledLocation.scrollTop),
+    );
     expect(reopened.getLocation()).toEqual(scrolledLocation);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual(
+      scrolledLocation,
+    );
+    expect(reopened.getCurrentIndex()).toBe(scrolledLocation.page);
+    const restoredVisiblePage = [...resumedScrollContainer.querySelectorAll<HTMLElement>('.pdf-page')]
+      .filter((page) => Number.parseFloat(page.style.top) <= resumedScrollContainer.scrollTop + 1)
+      .sort((left, right) => Number.parseFloat(left.style.top) - Number.parseFloat(right.style.top))
+      .at(-1);
+    expect(Number(restoredVisiblePage?.dataset.page)).toBe(scrolledLocation.page);
+    const continuedPage = resumedScrollContainer.querySelector<HTMLElement>('[data-page="5"]');
+    const continuedScrollTop = Number.parseFloat(continuedPage?.style.top ?? '0') + 100;
+    resumedScrollContainer.scrollTop = continuedScrollTop;
+    resumedScrollContainer.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() =>
+      expect(reopened.getLocation()).toMatchObject({ page: 5, scrollTop: continuedScrollTop }),
+    );
+    expect(resumedScrollContainer.style.overflow).toBe('auto');
+
+    // 再执行一轮真实标签切换，锁定“回切一次后继续阅读，再切出/切回”仍恢复
+    // 用户最后看到的页，而不是被重新挂载过程中的第一页事件覆盖。
+    await registry.execute(COMMAND_IDS.libraryOpenBook, epub);
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toMatchObject({
+      kind: 'pdf',
+      page: 5,
+      scrollTop: continuedScrollTop,
+    });
+    await registry.execute(COMMAND_IDS.readerActivateView, pdfViewId, pdf);
+    const reopenedAgain = useReaderRuntime.getState().getDocument(pdfViewId)!;
+    const secondResumedScrollContainer = makeReaderContainer();
+    secondResumedScrollContainer.style.overflow = 'hidden';
+    const fourthPersister = mountViewDocument(
+      reopenedAgain,
+      pdfViewId,
+      secondResumedScrollContainer,
+      useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location,
+      { importRepository, workspaceRepository },
+    );
+    await vi.waitFor(() => expect(secondResumedScrollContainer.scrollTop).toBeCloseTo(continuedScrollTop));
+    expect(reopenedAgain.getLocation()).toMatchObject({ page: 5, scrollTop: continuedScrollTop });
 
     // 模拟应用重启:只保留序列化 Workspace,释放所有 PDF.js 活对象后重新恢复活动视图。
     const restartWorkspace = structuredClone(persistedAfterScrolledSwitch);
@@ -445,7 +508,7 @@ describe('Reader 命令', () => {
     const restartPersister = mountViewDocument(
       restoredAfterRestart,
       pdfViewId,
-      document.createElement('div'),
+      makeReaderContainer(),
       scrolledLocation,
       { importRepository, workspaceRepository },
     );
@@ -456,6 +519,7 @@ describe('Reader 命令', () => {
     await firstPersister.dispose();
     await secondPersister.dispose();
     await restartPersister.dispose();
+    await fourthPersister.dispose();
   });
 
   it('材料解析失败时保留标签并把解析错误写入运行时状态', async () => {
@@ -746,6 +810,77 @@ describe('Reader 命令', () => {
     await registry.execute(COMMAND_IDS.readerRestoreView, firstViewId, firstMaterial);
 
     expect(useReaderRuntime.getState().documentStates.get(firstViewId)).toEqual({ status: 'ready' });
+  });
+
+  it('缓存 Runtime 重新挂载后等待内容文档稳定再恢复嵌套范围 CFI', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      return setTimeout(() => callback(performance.now()), 0) as unknown as number;
+    });
+    const viewId = useWorkspaceStore.getState().openView('cached-material');
+    const location = {
+      kind: 'markdown' as const,
+      cfi: 'epubcfi(/6/2!/4/2[md-section-1],,/2[1-取模运算]/1:6)',
+    };
+    useWorkspaceStore.getState().setViewLocation(viewId, location);
+
+    let contentDocumentReady = false;
+    const goToLocation = vi.fn(async () => {
+      if (!contentDocumentReady) {
+        throw new TypeError(
+          "Cannot destructure property 'nodeType' of 'undefined' as it is undefined.",
+        );
+      }
+    });
+    const book = {
+      format: 'markdown' as const,
+      metadata: { title: '缓存材料', author: null, language: 'zh' },
+      async open() {},
+      attach: vi.fn(() => {
+        setTimeout(() => {
+          contentDocumentReady = true;
+        }, 0);
+        return true;
+      }),
+      detach() {},
+      isRuntimeReady: () => true,
+      getLocation: () => null,
+      goToLocation,
+      async goToHref() {},
+      getTOC: () => [],
+      async *search() {},
+      clearSearch() {},
+      applyTypography() {},
+      async next() {},
+      async prev() {},
+      getCFI: () => '',
+      getCurrentIndex: () => 0,
+      addAnnotation() {},
+      removeAnnotation() {},
+      onShowAnnotation: () => () => undefined,
+      onInternalLink: () => () => undefined,
+      onExternalLink: () => () => undefined,
+      getContentDocs: () => [document.implementation.createHTMLDocument('缓存正文')],
+      onContentCreate: () => () => undefined,
+      onLocationChange: () => () => undefined,
+      close: vi.fn(),
+    } as unknown as BookDocument;
+    useReaderRuntime.getState().setDocument(viewId, book, { lifecycle: 'suspended' });
+
+    try {
+      mountViewDocument(book, viewId, document.createElement('div'), location, {
+        importRepository,
+        workspaceRepository,
+      });
+
+      await vi.waitFor(() => expect(goToLocation).toHaveBeenCalledWith(location));
+      await vi.waitFor(() =>
+        expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({ status: 'ready' }),
+      );
+      expect(goToLocation).toHaveBeenCalledOnce();
+    } finally {
+      await flushAndCloseAllReaderViews();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('挂起期间材料指纹变化时不命中旧缓存并安全重建', async () => {

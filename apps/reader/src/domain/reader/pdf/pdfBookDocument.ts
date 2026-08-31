@@ -34,6 +34,11 @@ import {
   type PdfHighlight,
   type PdfNormalizedRect,
 } from './pdfTextAnchor';
+import {
+  getPdfRestoreRuntimeId,
+  logPdfRestoreDiagnostic,
+  type PdfRestoreDiagnosticReporter,
+} from './pdfRestoreDiagnostics';
 
 export interface PdfBookDocumentOptions {
   /** PDF 只读范围来源;通常是与检查阶段共享的 ManagedFileSource。 */
@@ -44,6 +49,8 @@ export interface PdfBookDocumentOptions {
   pdfLib?: PdfJsLib | undefined;
   /** 页面光栅化函数(测试注入伪实现,生产用 PDF.js page.render)。 */
   rasterize?: PdfPageRasterizer | undefined;
+  /** 可选回切诊断上下文;只写入内存/开发者工具,不参与阅读语义。 */
+  diagnostics?: PdfRestoreDiagnosticReporter | undefined;
 }
 
 /** 把 PDF.js 目录条目转成 TocItem;href 承载 dest 的 JSON,供 goToHref 解析。 */
@@ -76,6 +83,8 @@ export class PdfBookDocument implements BookDocument {
   private readonly source: PdfFileSource;
   private readonly pdfLib: PdfJsLib | undefined;
   private readonly rasterize: PdfPageRasterizer | undefined;
+  private readonly diagnostics: PdfRestoreDiagnosticReporter | undefined;
+  private readonly diagnosticRuntimeId: string;
 
   private pdf: PdfDocumentProxy | null = null;
   private loadingTask: PdfLoadingTask | null = null;
@@ -102,6 +111,8 @@ export class PdfBookDocument implements BookDocument {
     this.metadata = options.metadata;
     this.pdfLib = options.pdfLib;
     this.rasterize = options.rasterize;
+    this.diagnostics = options.diagnostics;
+    this.diagnosticRuntimeId = options.diagnostics?.runtimeId ?? getPdfRestoreRuntimeId(this);
     this.typography = {
       fontFamily: 'sansSerif',
       fontSize: 18,
@@ -111,12 +122,36 @@ export class PdfBookDocument implements BookDocument {
       flow: 'paginated',
       theme: 'light',
     };
+    this.diagnose('document.construct', {
+      flow: this.typography.flow,
+      hasDiagnosticsContext: Boolean(this.diagnostics),
+    });
+  }
+
+  private diagnose(phase: string, details?: Record<string, unknown>): void {
+    if (!this.diagnostics) return;
+    const { getTransitionId, runtimeId: _runtimeId, ...context } = this.diagnostics;
+    logPdfRestoreDiagnostic(
+      phase,
+      {
+        ...context,
+        runtimeId: this.diagnosticRuntimeId,
+        transitionId: getTransitionId?.() ?? null,
+      },
+      details,
+    );
   }
 
   async open(container: HTMLElement): Promise<void> {
     if (this.pdf) {
       throw new Error('该 BookDocument 已打开');
     }
+    this.diagnose('document.open.begin', {
+      currentLocation: this.currentLocation,
+      flow: this.typography.flow,
+      containerClientWidth: container.clientWidth,
+      containerClientHeight: container.clientHeight,
+    });
     const generation = ++this.openGeneration;
     this.container = container;
 
@@ -141,6 +176,12 @@ export class PdfBookDocument implements BookDocument {
         disableStream: true,
         disableAutoFetch: true,
       });
+      this.diagnose('document.pdfjs.getDocument', {
+        generation,
+        hasRangeTransport: true,
+        disableStream: true,
+        disableAutoFetch: true,
+      });
       this.loadingTask = loadingTask;
       const document = await withRangeFailure(loadingTask.promise, activeRange);
       if (generation !== this.openGeneration) {
@@ -148,6 +189,10 @@ export class PdfBookDocument implements BookDocument {
         return;
       }
       this.pdf = document;
+      this.diagnose('document.pdfjs.opened', {
+        generation,
+        pageCount: document.numPages,
+      });
 
       await withRangeFailure(this.readNavigation(document), activeRange);
       if (generation !== this.openGeneration) {
@@ -164,17 +209,40 @@ export class PdfBookDocument implements BookDocument {
           devicePixelRatio: () => window.devicePixelRatio || 1,
         },
         {
-          onPageChange: (page) => this.handlePageChange(page),
-          onScroll: (scrollTop, page) => this.handleScroll(scrollTop, page),
-          onPageRendered: (page) => this.redrawPage(page),
+          onPageChange: (page) => {
+            this.diagnose('document.renderer-page-change', {
+              page,
+              before: this.currentLocation,
+              flow: this.typography.flow,
+            });
+            this.handlePageChange(page);
+          },
+          onScroll: (scrollTop, page) => {
+            this.diagnose('document.renderer-scroll', {
+              page,
+              scrollTop,
+              before: this.currentLocation,
+              flow: this.typography.flow,
+            });
+            this.handleScroll(scrollTop, page);
+          },
+          onPageRendered: (page) => {
+            this.diagnose('document.renderer-page-rendered', {
+              page,
+              currentLocation: this.currentLocation,
+            });
+            this.redrawPage(page);
+          },
           onAreaSelection: (selection) => this.notifyAreaSelection(selection),
           onError: (error) => {
+            this.diagnose('document.renderer-error', { error });
             // 首屏渲染仍属于 open() 的失败边界;只在文档成功挂载后
             // 把后续页面错误发送到运行时错误通道,避免同一个错误双重上报。
             if (!opening) {
               this.notifyReadError(toPdfReadError(error));
             }
           },
+          onDiagnostic: (phase, details) => this.diagnose(phase, details),
         },
       );
       this.renderer = renderer;
@@ -192,7 +260,13 @@ export class PdfBookDocument implements BookDocument {
       }
       opening = false;
       this.wireHighlightClick();
+      this.diagnose('document.open.end', {
+        generation,
+        currentLocation: this.currentLocation,
+        runtimeReady: this.isRuntimeReady(),
+      });
     } catch (error) {
+      this.diagnose('document.open.error', { generation, error });
       range?.cancel();
       if (this.rangeTransport === range) {
         this.rangeTransport = null;
@@ -245,7 +319,19 @@ export class PdfBookDocument implements BookDocument {
 
   /** 挂起时保留 PDF.js 文档和当前页的最小渲染结果。 */
   async detach(): Promise<void> {
-    if (!this.pdf || !this.renderer) return;
+    if (!this.pdf || !this.renderer) {
+      this.diagnose('document.detach.rejected', {
+        reason: 'not-ready',
+        hasPdf: Boolean(this.pdf),
+        hasRenderer: Boolean(this.renderer),
+      });
+      return;
+    }
+    this.diagnose('document.detach.begin', {
+      currentLocation: this.currentLocation,
+      flow: this.typography.flow,
+      usage: this.getRuntimeResourceUsage(),
+    });
     this.syncLocationFromRenderer();
     const rangeTransport = this.rangeTransport;
     rangeTransport?.pause();
@@ -256,11 +342,30 @@ export class PdfBookDocument implements BookDocument {
     // 由上层根据 false 结果拒绝缓存并走 close()，而不是留下半挂起 Runtime。
     const settled = await rangeTransport?.waitForIdle();
     if (settled === false) rangeTransport?.cancel();
+    this.diagnose('document.detach.end', {
+      currentLocation: this.currentLocation,
+      settled: settled ?? null,
+      usage: this.getRuntimeResourceUsage(),
+    });
   }
 
   /** 复用原 PDF.js 文档，把页面窗口重新挂回新的 ReadingView。 */
   attach(container: HTMLElement): boolean {
-    if (!this.pdf || !this.renderer) return false;
+    if (!this.pdf || !this.renderer) {
+      this.diagnose('document.attach.rejected', {
+        reason: 'not-ready',
+        hasPdf: Boolean(this.pdf),
+        hasRenderer: Boolean(this.renderer),
+      });
+      return false;
+    }
+    this.diagnose('document.attach.begin', {
+      currentLocation: this.currentLocation,
+      flow: this.typography.flow,
+      targetScrollTop: container.scrollTop,
+      targetClientWidth: container.clientWidth,
+      targetClientHeight: container.clientHeight,
+    });
     this.container?.removeEventListener('click', this.handleContainerClick, true);
     this.container = container;
     if (!this.renderer.attach(container)) {
@@ -271,6 +376,11 @@ export class PdfBookDocument implements BookDocument {
     this.applyTheme(this.typography.theme);
     this.wireHighlightClick();
     this.redrawHighlights();
+    this.diagnose('document.attach.end', {
+      currentLocation: this.currentLocation,
+      runtimeReady: this.isRuntimeReady(),
+      usage: this.getRuntimeResourceUsage(),
+    });
     return true;
   }
 
@@ -323,6 +433,13 @@ export class PdfBookDocument implements BookDocument {
     if (location.kind !== 'pdf') {
       return;
     }
+    this.diagnose('document.goToLocation.begin', {
+      requestedLocation: location,
+      before: this.currentLocation,
+      flow: this.typography.flow,
+      rendererPage: this.renderer?.getCurrentPage() ?? null,
+      rendererScrollTop: this.renderer?.getScrollTop() ?? null,
+    });
     this.currentLocation = {
       kind: 'pdf',
       page: location.page,
@@ -337,14 +454,28 @@ export class PdfBookDocument implements BookDocument {
       await this.renderer?.goToPage(location.page, location.scrollTop);
     }
     this.notifyLocation();
+    this.diagnose('document.goToLocation.end', {
+      requestedLocation: location,
+      after: this.currentLocation,
+      rendererPage: this.renderer?.getCurrentPage() ?? null,
+      rendererScrollTop: this.renderer?.getScrollTop() ?? null,
+    });
   }
 
   /** 调整 PDF 视口(缩放与页面适配模式),并同步当前阅读位置。 */
   setViewport(zoom: number, fit: PdfFitModeLike): void {
+    const before = this.currentLocation;
     this.renderer?.setViewport(zoom, fit);
     if (this.currentLocation) {
       this.currentLocation = { ...this.currentLocation, zoom, fit };
     }
+    this.diagnose('document.set-viewport', {
+      zoom,
+      fit,
+      before,
+      after: this.currentLocation,
+      flow: this.typography.flow,
+    });
     this.notifyLocation();
   }
 
@@ -412,6 +543,7 @@ export class PdfBookDocument implements BookDocument {
   }
 
   applyTypography(settings: ReadingTypography): void {
+    const before = this.typography;
     const flowChanged = settings.flow !== this.typography.flow;
     const themeChanged = settings.theme !== this.typography.theme;
     this.typography = settings;
@@ -423,6 +555,14 @@ export class PdfBookDocument implements BookDocument {
       // 模式切换后按当前页码重新定位。
       void this.renderer.goToPage(this.renderer.getCurrentPage());
     }
+    this.diagnose('document.apply-typography', {
+      previousFlow: before.flow,
+      flow: settings.flow,
+      flowChanged,
+      themeChanged,
+      runtimeReady: this.isRuntimeReady(),
+      location: this.currentLocation,
+    });
   }
 
   getCFI(_index: number, range: Range): string {
@@ -520,6 +660,11 @@ export class PdfBookDocument implements BookDocument {
   }
 
   close(): void {
+    this.diagnose('document.close.begin', {
+      currentLocation: this.currentLocation,
+      runtimeReady: this.isRuntimeReady(),
+      usage: this.getRuntimeResourceUsage(),
+    });
     this.openGeneration += 1;
     this.rangeTransport?.cancel();
     this.rangeTransport = null;
@@ -542,6 +687,10 @@ export class PdfBookDocument implements BookDocument {
     this.annotationHighlights.clear();
     this.searchHighlights.clear();
     this.toc = null;
+    this.diagnose('document.close.end', {
+      currentLocation: this.currentLocation,
+      runtimeReady: this.isRuntimeReady(),
+    });
   }
 
   // ---- 内部 ----
@@ -549,6 +698,7 @@ export class PdfBookDocument implements BookDocument {
   /** 从 PDF 渲染器同步最后的页码、滚动位移与视口状态。 */
   private syncLocationFromRenderer(): void {
     if (!this.renderer) return;
+    const before = this.currentLocation;
     const viewport = this.renderer.getViewportState();
     const page = this.renderer.getCurrentPage();
     this.currentLocation = {
@@ -558,6 +708,11 @@ export class PdfBookDocument implements BookDocument {
       zoom: viewport.zoom,
       fit: viewport.fit,
     };
+    this.diagnose('document.sync-location-from-renderer', {
+      before,
+      after: this.currentLocation,
+      flow: this.typography.flow,
+    });
   }
 
   /** 找到 Range 所在页面,避免滚动模式下误用当前页码。 */
@@ -685,6 +840,7 @@ export class PdfBookDocument implements BookDocument {
   }
 
   private handlePageChange(page: number): void {
+    const before = this.currentLocation;
     const base = this.currentLocation ?? {
       scrollTop: this.typography.flow === 'paginated' ? 0 : this.container?.scrollTop ?? 0,
       zoom: this.renderer?.getViewportState().zoom ?? 100,
@@ -697,11 +853,18 @@ export class PdfBookDocument implements BookDocument {
       zoom: base.zoom,
       fit: base.fit,
     };
+    this.diagnose('document.handle-page-change', {
+      page,
+      before,
+      after: this.currentLocation,
+      flow: this.typography.flow,
+    });
     this.notifyLocation();
     this.redrawPage(page);
   }
 
   private handleScroll(scrollTop: number, page: number): void {
+    const before = this.currentLocation;
     const base = this.currentLocation ?? {
       zoom: this.renderer?.getViewportState().zoom ?? 100,
       fit: (this.renderer?.getViewportState().fit ?? 'width') as PdfFitModeLike,
@@ -713,6 +876,13 @@ export class PdfBookDocument implements BookDocument {
       zoom: base.zoom,
       fit: base.fit,
     };
+    this.diagnose('document.handle-scroll', {
+      page,
+      scrollTop,
+      before,
+      after: this.currentLocation,
+      flow: this.typography.flow,
+    });
     this.notifyLocation();
   }
 
@@ -721,6 +891,10 @@ export class PdfBookDocument implements BookDocument {
       return;
     }
     const location = this.currentLocation;
+    this.diagnose('document.notify-location', {
+      location,
+      listenerCount: this.locationListeners.size,
+    });
     for (const listener of this.locationListeners) {
       listener(location);
     }

@@ -160,6 +160,56 @@ describe('PdfRenderer 分页模式', () => {
 });
 
 describe('PdfRenderer 滚动模式', () => {
+  it('目标页读取期间挂起并恢复后会重新调度该页，而不是永久停在第一页结果', async () => {
+    const document = makeFakeDocument(20) as PdfDocumentProxy & { pages: PdfPage[] };
+    let releaseTargetPage: () => void = () => undefined;
+    const targetPageGate = new Promise<void>((resolve) => {
+      releaseTargetPage = resolve;
+    });
+    (document.getPage as ReturnType<typeof vi.fn>).mockImplementation(
+      async (pageNumber: number) => {
+        if (pageNumber === 10) await targetPageGate;
+        return document.pages[pageNumber - 1]!;
+      },
+    );
+    const firstContainer = makeContainer();
+    const renderer = new PdfRenderer(
+      {
+        document,
+        container: firstContainer,
+        lib: makeFakeLib(document),
+        rasterize: makeFakeRasterizer(),
+        devicePixelRatio: () => 1,
+      },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+    await renderer.mount();
+
+    const targetPlaceholder = firstContainer.querySelector<HTMLElement>(
+      '.pdf-page-placeholder[data-page="10"]',
+    )!;
+    const targetScrollTop = Number.parseFloat(targetPlaceholder.style.top) + 80;
+    renderer.setScrollTop(targetScrollTop);
+    await vi.waitFor(() => expect(document.getPage).toHaveBeenCalledWith(10));
+    expect(renderer.getCurrentPage()).toBe(10);
+
+    renderer.detach();
+    releaseTargetPage();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const resumedContainer = makeContainer();
+    expect(renderer.attach(resumedContainer)).toBe(true);
+    await renderer.goToPage(10, targetScrollTop);
+
+    expect(renderer.getCurrentPage()).toBe(10);
+    expect(renderer.getPageRenderer(10)).not.toBeNull();
+    expect(resumedContainer.querySelector('.pdf-page[data-page="10"] canvas')).not.toBeNull();
+    renderer.dispose();
+  });
+
   it('600 页以上只为当前位置附近取得页面,其余页面先保留稳定占位', async () => {
     const document = makeFakeDocument(640);
     const container = makeContainer();
@@ -323,7 +373,7 @@ describe('PdfRenderer 滚动模式', () => {
     renderer.dispose();
   });
 
-  it('位置恢复的绝对 scrollTop 不属于目标页时回退到目标页顶端', async () => {
+  it('位置恢复保留目标页底部与页间距中的绝对 scrollTop', async () => {
     const document = makeFakeDocument(10);
     const container = makeContainer();
     const renderer = new PdfRenderer(
@@ -333,15 +383,39 @@ describe('PdfRenderer 滚动模式', () => {
     renderer.setFlow('scrolled');
 
     await renderer.mount();
-    await renderer.goToPage(5, 0);
-
     const placeholder = container.querySelector<HTMLElement>('[data-page="5"]');
     const pageTop = Number.parseFloat(placeholder?.style.top ?? 'NaN');
-    expect(renderer.getCurrentPage()).toBe(5);
-    expect(renderer.getScrollTop()).toBe(pageTop);
+    const pageHeight = Number.parseFloat(placeholder?.style.height ?? 'NaN');
+    const gapScrollTop = pageTop + pageHeight + 10;
 
-    await renderer.goToPage(5, pageTop + 100);
-    expect(renderer.getScrollTop()).toBe(pageTop + 100);
+    await renderer.goToPage(5, gapScrollTop);
+    expect(renderer.getCurrentPage()).toBe(5);
+    expect(renderer.getScrollTop()).toBe(gapScrollTop);
+    renderer.dispose();
+  });
+
+  it('位置恢复按整份文档的可滚动边界裁剪,不按目标页底部裁剪', async () => {
+    const document = makeFakeDocument(3);
+    const container = makeContainer();
+    const renderer = new PdfRenderer(
+      { document, container, lib: makeFakeLib(document), devicePixelRatio: () => 1 },
+      { onPageChange: vi.fn(), onScroll: vi.fn() },
+    );
+    renderer.setFlow('scrolled');
+
+    await renderer.mount();
+    const lastPage = container.querySelector<HTMLElement>('[data-page="3"]');
+    const contentHeight =
+      Number.parseFloat(lastPage?.style.top ?? '0') +
+      Number.parseFloat(lastPage?.style.height ?? '0') +
+      20;
+    const maxScrollTop = contentHeight - container.clientHeight;
+
+    await renderer.goToPage(2, -100);
+    expect(renderer.getScrollTop()).toBe(0);
+    await renderer.goToPage(2, maxScrollTop + 100);
+    expect(renderer.getScrollTop()).toBe(maxScrollTop);
+    expect(renderer.getCurrentPage()).toBe(3);
     renderer.dispose();
   });
 

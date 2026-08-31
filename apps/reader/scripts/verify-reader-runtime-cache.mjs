@@ -350,7 +350,46 @@ async function main() {
         await resetHarness();
         const first = await openAndWait(firstMaterial, COMMAND_IDS.libraryOpenBook);
         if (first.book.format === 'pdf') {
-          await first.book.goToLocation({ kind: 'pdf', page: 2, scrollTop: 0, zoom: 125, fit: 'page' });
+          await registry.execute(COMMAND_IDS.readerSetPdfFlow, first.viewId, 'scrolled');
+          await waitFor(() => {
+            const container = document.querySelector(`[data-view-id="${first.viewId}"]`);
+            if (!(container instanceof HTMLElement)) return false;
+            const targetPage = container.querySelector('.pdf-page-placeholder[data-page="3"]');
+            return getComputedStyle(container).overflowY === 'auto' &&
+              Number.parseFloat(targetPage?.style.top ?? '0') > 0 &&
+              Number.parseFloat(targetPage?.style.height ?? '0') > 0;
+          }, `${label} PDF 滚动布局`);
+          const container = document.querySelector(`[data-view-id="${first.viewId}"]`);
+          const targetPage = container?.querySelector('.pdf-page-placeholder[data-page="3"]');
+          const targetPageTop = Number.parseFloat(targetPage?.style.top ?? '0');
+          const targetPageHeight = Number.parseFloat(targetPage?.style.height ?? '0');
+          const setPdfRestoreLocation = (scrollTop) => first.book.goToLocation({
+            kind: 'pdf',
+            page: 3,
+            scrollTop,
+            zoom: 125,
+            fit: 'width',
+          });
+          // 先滚到占位页附近让目标页实际加载,再用真实页面尺寸构造
+          // 页间距位置,避免把占位尺寸校正误差混入恢复断言。
+          await setPdfRestoreLocation(targetPageTop + targetPageHeight + 10);
+          await waitFor(
+            () => Boolean(container?.querySelector('.pdf-page[data-page="3"] canvas')),
+            `${label} PDF 目标页渲染`,
+          );
+          const renderedTargetPage = container?.querySelector('.pdf-page[data-page="3"]');
+          const renderedPageTop = Number.parseFloat(renderedTargetPage?.style.top ?? '0');
+          const renderedPageHeight = Number.parseFloat(renderedTargetPage?.style.height ?? '0');
+          const expectedScrollTop = renderedPageTop + renderedPageHeight + 10;
+          // 页间距是合法的绝对滚动位置,也是“按单页底部错误裁剪”
+          // 会把位置吸附回页顶的回归边界。
+          await setPdfRestoreLocation(expectedScrollTop);
+          await waitFor(
+            () => Math.abs((container?.scrollTop ?? 0) - expectedScrollTop) <= 1,
+            `${label} PDF 滚动位置设置`,
+          );
+          await waitFrames(8);
+          await new Promise((resolve) => setTimeout(resolve, 150));
         }
         const firstLocation = first.book.getLocation();
         const second = await openAndWait(secondMaterial, COMMAND_IDS.libraryOpenBook);
@@ -362,6 +401,58 @@ async function main() {
         const returnStarted = performance.now();
         await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
         await waitForInteractive(first, `${label} 缓存回切`);
+        // 真实 ResizeObserver / 页面尺寸校正可能晚于首个 Canvas；必须等其收敛后
+        // 再判断用户最终看到的页面，不能只读取刚 attach 时的瞬时位置。
+        await waitFrames(12);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const cacheReturnInteractiveMs = performance.now() - returnStarted;
+        const locationAfter = first.book.getLocation();
+        const workspaceLocationAfter = useWorkspaceStore.getState().editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === first.viewId)?.location ?? null;
+        const locationPreserved = firstLocation !== null &&
+          JSON.stringify(locationAfter) === JSON.stringify(firstLocation);
+        const workspaceLocationPreserved = workspaceLocationAfter !== null &&
+          JSON.stringify(workspaceLocationAfter) === JSON.stringify(locationAfter);
+        let pdfScrollModeRestored = null;
+        let pdfScrollPositionRestored = null;
+        let pdfVisiblePageRestored = null;
+        let pdfScrollAdvancedAfterReturn = null;
+        if (first.book.format === 'pdf') {
+          const container = document.querySelector(`[data-view-id="${first.viewId}"]`);
+          pdfScrollModeRestored = getComputedStyle(container).overflowY === 'auto';
+          pdfScrollPositionRestored = firstLocation?.kind === 'pdf' &&
+            Math.abs((container?.scrollTop ?? 0) - firstLocation.scrollTop) <= 1;
+          const containerRect = container?.getBoundingClientRect();
+          const scrollTop = container?.scrollTop ?? 0;
+          const visiblePage = [...(container?.querySelectorAll('.pdf-page') ?? [])]
+            .filter((page) => {
+              const rect = page.getBoundingClientRect();
+              const pageTop = rect.top - (containerRect?.top ?? 0) + scrollTop;
+              return pageTop <= scrollTop + 1;
+            })
+            .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+            .at(-1);
+          pdfVisiblePageRestored = firstLocation?.kind === 'pdf' &&
+            Number(visiblePage?.dataset.page ?? 0) === firstLocation.page;
+          const resumedScrollTop = container?.scrollTop ?? 0;
+          const nextScrollTop = Math.min(
+            (container?.scrollHeight ?? 0) - (container?.clientHeight ?? 0),
+            resumedScrollTop + 160,
+          );
+          if (container && nextScrollTop > resumedScrollTop) {
+            container.scrollTop = nextScrollTop;
+            container.dispatchEvent(new Event('scroll'));
+            await waitFor(
+              () => first.book.getLocation()?.kind === 'pdf' &&
+                Math.abs(first.book.getLocation().scrollTop - nextScrollTop) <= 1,
+              `${label} PDF 回切后继续滚动`,
+            );
+            pdfScrollAdvancedAfterReturn = true;
+          } else {
+            pdfScrollAdvancedAfterReturn = false;
+          }
+        }
         const countersAfter = diffCounters(countersBefore);
         const diagnostics = cache.getDiagnostics();
         return {
@@ -370,12 +461,17 @@ async function main() {
           secondFormat: second.book.format,
           firstVisibleMs: first.firstVisibleMs,
           secondVisibleMs: second.firstVisibleMs,
-          cacheReturnInteractiveMs: performance.now() - returnStarted,
+          cacheReturnInteractiveMs,
           cacheHit: diagnostics.hits - hitBefore === 1,
           locationBefore: firstLocation,
-          locationAfter: first.book.getLocation(),
-          locationPreserved: firstLocation !== null &&
-            JSON.stringify(first.book.getLocation()) === JSON.stringify(firstLocation),
+          locationAfter,
+          locationPreserved,
+          workspaceLocationAfter,
+          workspaceLocationPreserved,
+          pdfScrollModeRestored,
+          pdfScrollPositionRestored,
+          pdfVisiblePageRestored,
+          pdfScrollAdvancedAfterReturn,
           noNewSourceOpen: countersAfter.sourceOpens === 0,
           noNewFoliateRenderer: countersAfter.rendererCreates === 0,
           noNewPdfDocument: countersAfter.pdfDocumentLoads === 0,
@@ -642,6 +738,9 @@ async function main() {
 
       await waitFrames(4);
       await flushAndCloseAllReaderViews();
+      // Harness 显式拥有注入的缓存实例；页面正式 App 也注册了自己的缓存，
+      // 因此总验收 teardown 直接清空本实例，避免模块级注册指针的测试顺序干扰。
+      cache.clear();
       await waitFrames();
       const shutdownCleanup = {
         runtimeStoreEmpty: useReaderRuntime.getState().documents.size === 0,
@@ -718,6 +817,7 @@ async function main() {
       formatMatrixCovered: result.formatMatrix.length === 6,
       everyFormatPairHitsCache: result.formatMatrix.every((pair) => pair.cacheHit),
       everyFormatPairPreservesLocation: result.formatMatrix.every((pair) => pair.locationPreserved),
+      everyFormatPairPreservesWorkspaceLocation: result.formatMatrix.every((pair) => pair.workspaceLocationPreserved),
       everyFormatPairAvoidsNewSource: result.formatMatrix.every((pair) => pair.noNewSourceOpen),
       everyFormatPairAvoidsNewRenderer: result.formatMatrix.every((pair) => pair.noNewFoliateRenderer),
       everyFormatPairAvoidsNewPdfDocument: result.formatMatrix.every((pair) => pair.noNewPdfDocument),
@@ -735,6 +835,14 @@ async function main() {
           pair.suspendedResourceUsage.canvasCount <= pair.budget.maxSuspendedCanvases &&
           pair.suspendedResourceUsage.decodedPageCount <= pair.budget.maxSuspendedDecodedPages &&
           (pair.suspendedResourceUsage.inFlightRangeReadCount ?? 0) === 0,
+        ),
+      everyPdfPairRestoresScrollableContainer: result.formatMatrix
+        .filter((pair) => pair.firstFormat === 'pdf')
+        .every((pair) =>
+          pair.pdfScrollModeRestored === true &&
+          pair.pdfScrollPositionRestored === true &&
+          pair.pdfVisiblePageRestored === true &&
+          pair.pdfScrollAdvancedAfterReturn === true,
         ),
       shutdownCleanup: result.shutdownCleanup.runtimeStoreEmpty &&
         result.shutdownCleanup.cacheEmpty &&
