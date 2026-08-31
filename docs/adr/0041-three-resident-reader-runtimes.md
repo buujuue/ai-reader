@@ -4,6 +4,7 @@
 - 日期：2026-08-31
 - 关联工单：#60（容量决策）；#62（实现与总验收）
 - 替代范围：替代 ADR-0040 中 Reader Runtime 的 resident 容量、挂起容量和跨格式性能验收口径；保留 ADR-0040 的缓存键、`active/suspended/evicted/closed` 生命周期、失效规则、Workspace State 可序列化边界、每组一个活动渲染器和全局最多两个活动渲染器。PDF 挂起 Runtime 的首帧 DOM/Canvas/文本层复用与邻页延迟恢复由 ADR-0042 进一步细化。
+- 后续状态：桌面 suspended Canvas/解码页聚合上限和 Issue #63 压力验收口径已由 ADR-0043 替代；平板预算及其余生命周期决定继续有效。
 
 ## 背景
 
@@ -62,8 +63,8 @@ PDF `detach` 必须等待范围传输收敛；超时即拒绝 suspended 准入�
 | 资源 | 桌面 | 平板 |
 | --- | ---: | ---: |
 | suspended iframe 总数 | 4 | 2 |
-| suspended Canvas 总数 | 1（PDF 当前页） | 1（PDF 当前页） |
-| suspended 解码页总数 | 1（PDF 当前页） | 1（PDF 当前页） |
+| suspended Canvas 总数 | 2（每个 PDF 仍只保留当前页） | 1（PDF 当前页） |
+| suspended 解码页总数 | 2（每个 PDF 仍只保留当前页） | 1（PDF 当前页） |
 | suspended 在途范围读取 | 0 | 0 |
 | suspended 范围缓存总量 | 16 MiB | 8 MiB |
 | suspended 估算资源总量 | 16 MiB | 8 MiB |

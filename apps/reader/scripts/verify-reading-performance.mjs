@@ -473,8 +473,13 @@ async function runPerformanceMeasurements(config) {
     { createAppServices },
     { createInMemoryFilePicker },
     { COMMAND_IDS },
-    { mountViewDocument, flushAndCloseAllReaderViews },
-    { useReaderRuntime },
+    {
+      mountViewDocument,
+      flushAndCloseAllReaderViews,
+      getReaderRuntimeDocumentForMeasurement,
+      getReaderRuntimeStatusForMeasurement,
+    },
+    { ReaderRuntimeCache },
     { useWorkspaceStore },
     { createInMemoryImportRepository, addInMemorySource },
     { EpubBookDocument },
@@ -492,7 +497,7 @@ async function runPerformanceMeasurements(config) {
     import('/src/app/filePicker.ts'),
     import('/src/commands/commandRegistry.ts'),
     import('/src/workbench/readerCommands.ts'),
-    import('/src/workbench/readerRuntime.ts'),
+    import('/src/workbench/readerRuntimeCache.ts'),
     import('/src/workbench/workspaceStore.ts'),
     import('/src/domain/library/inMemoryImportRepository.ts'),
     import('/src/domain/reader/epubBookDocument.ts'),
@@ -785,13 +790,16 @@ async function runPerformanceMeasurements(config) {
     COMMAND_IDS: ids,
     mountViewDocument: mount,
     flushAndCloseAllReaderViews: flush,
-    useReaderRuntime: runtime,
+    getReaderRuntimeDocumentForMeasurement: getRuntimeDocument,
+    getReaderRuntimeStatusForMeasurement: getRuntimeStatus,
+    ReaderRuntimeCache: Cache,
     useWorkspaceStore: workspace,
     maxRangeBytes: rangeLimit,
     maxPeakMemoryBytes: memoryLimit,
     variantPdfPath: secondPdfPath,
   }) {
     const tracker = createRangeTracker();
+    const readerRuntimeCache = new Cache();
     const pdfLib = instrumentPdfLib(await getPdfLib(), tracker);
     let services;
     let material;
@@ -800,7 +808,7 @@ async function runPerformanceMeasurements(config) {
     let transport = 'browser-managed-source';
     if (scenarioMode === 'tauri') {
       restoreFetch = installManagedFetchTracker(managedOrigin, tracker);
-      services = makeServices({ pdfLib });
+      services = makeServices({ pdfLib, readerRuntimeCache });
       material = (await services.importRepository.listMaterials()).find((candidate) => candidate.id === targetMaterialId);
       if (!material) throw new Error(`Tauri 书库中没有刚导入的 PDF:${path ? '<explicit-local-pdf>' : '<sample>'}`);
       if (!secondPdfPath) throw new Error('Tauri PDF 缓存验收缺少临时变体路径');
@@ -840,21 +848,45 @@ async function runPerformanceMeasurements(config) {
           return range;
         });
       };
-      services = makeServices({ importRepository: baseRepository, filePicker: makeFilePicker([]), pdfLib });
+      services = makeServices({
+        importRepository: baseRepository,
+        filePicker: makeFilePicker([]),
+        pdfLib,
+        readerRuntimeCache,
+      });
     }
+    await flush().catch(() => undefined);
     workspace.getState().resetToDefault();
-    runtime.setState({ documents: new Map(), documentStates: new Map() });
     const container = makeContainer('pdf-performance-reader-command');
     let secondaryContainer = null;
     let viewId = null;
     try {
       tracker.startPhase();
       const firstVisibleStarted = performance.now();
-      await services.commands.execute(ids.libraryOpenBook, material);
+      const commandResult = await services.commands.execute(ids.libraryOpenBook, material);
       viewId = workspace.getState().editorGroups[0]?.activeViewId ?? null;
       if (!viewId) throw new Error('library.openBook 没有创建活动阅读视图');
-      const book = runtime.getState().getDocument(viewId);
-      if (!book) throw new Error('library.openBook 没有创建 BookDocument');
+      const book = getRuntimeDocument(viewId);
+      if (!book) {
+        throw new Error(`library.openBook 没有创建 BookDocument:${JSON.stringify({
+          viewId,
+          status: getRuntimeStatus(viewId),
+          activeEditorGroupId: workspace.getState().activeEditorGroupId,
+          activeViewId: workspace.getState().editorGroups[0]?.activeViewId ?? null,
+          views: workspace.getState().editorGroups[0]?.views.map((view) => ({
+            id: view.id,
+            materialId: view.materialId,
+            sourceMode: view.sourceMode,
+          })) ?? [],
+          material: {
+            id: material.id,
+            sourceFileName: material.sourceFileName,
+            managedFileAvailable: material.managedFileAvailable,
+          },
+          commandResult,
+          cache: readerRuntimeCache.getDiagnostics(),
+        })}`);
+      }
       mount(book, viewId, container, null, { importRepository: services.importRepository, workspaceRepository: services.workspaceRepository, annotationRepository: services.annotationRepository });
       await waitFor(() => hasValidVisiblePage(container, book.getCurrentIndex()), 'Reader Command 首屏');
       const firstVisibleMs = performance.now() - firstVisibleStarted;
@@ -896,7 +928,7 @@ async function runPerformanceMeasurements(config) {
       const aLocationBeforeSwitch = book.getLocation();
       const secondaryViewId = await services.commands.execute(ids.libraryOpenBook, secondaryMaterial);
       if (typeof secondaryViewId !== 'string') throw new Error('PDF 缓存验收没有创建第二个 ReadingView');
-      const secondaryBook = runtime.getState().getDocument(secondaryViewId);
+      const secondaryBook = getRuntimeDocument(secondaryViewId);
       if (!secondaryBook) throw new Error('PDF 缓存验收没有创建第二个 BookDocument');
       secondaryContainer = makeContainer('pdf-performance-reader-command-secondary');
       mount(secondaryBook, secondaryViewId, secondaryContainer, null, {
@@ -910,7 +942,7 @@ async function runPerformanceMeasurements(config) {
       const aSuspendedResourceUsage = book.getRuntimeResourceUsage?.() ?? null;
 
       await services.commands.execute(ids.readerActivateView, viewId, material);
-      const returnedBook = runtime.getState().getDocument(viewId);
+      const returnedBook = getRuntimeDocument(viewId);
       if (!returnedBook) throw new Error('PDF 缓存验收回切没有恢复 A Runtime');
       mount(returnedBook, viewId, container, workspace.getState().editorGroups
         .flatMap((group) => group.views)
@@ -1098,7 +1130,9 @@ async function runPerformanceMeasurements(config) {
       COMMAND_IDS,
       mountViewDocument,
       flushAndCloseAllReaderViews,
-      useReaderRuntime,
+      getReaderRuntimeDocumentForMeasurement,
+      getReaderRuntimeStatusForMeasurement,
+      ReaderRuntimeCache,
       useWorkspaceStore,
       maxRangeBytes,
       maxTotalReadRatio,

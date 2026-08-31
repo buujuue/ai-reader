@@ -48,3 +48,5 @@ pnpm tauri ios build --debug --target aarch64-sim
 ## 证据记录
 
 保存以下证据：原生启动日志、竖屏截图、横屏截图、导入结果、Runtime 缓存命中/退化状态和重启恢复前后的位置。CI 自动上传 iPad Simulator 的启动日志与截图；CI 不替代真机文件选择器、触摸、安全区和 Runtime 缓存的完整人工检查。
+
+Issue #63 的原生记录使用字段：`platform`、`osVersion`、`deviceModel`、`appCommit`、`recordedAt`、`cacheHit`、`backgroundReturn`、`budgetFallback`、`locationRestored`、`artifactNames`。浏览器设备模拟不得填写这些字段；未完成真机或 Simulator 行为验收时明确记为 `pending`。

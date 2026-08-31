@@ -5,6 +5,7 @@ import { createAppServices, type AppServices } from '../app/bootstrap';
 import { COMMAND_IDS, CommandRegistry } from '../commands/commandRegistry';
 import { addInMemorySource, createInMemoryImportRepository } from '../domain/library/inMemoryImportRepository';
 import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
+import type { VersionMigrationPreview } from '../domain/library/versionMigration';
 import { useLibraryStore } from './libraryStore';
 import { useShellUiStore } from './shellUiStore';
 import { useWorkspaceStore } from './workspaceStore';
@@ -162,5 +163,75 @@ describe('书库材料归类 Command', () => {
     expect(invalidateMaterialRuntime).toHaveBeenCalledWith(material.id, { includeActive: false });
     expect(useLibraryStore.getState().materials.some((item) => item.id === material.id)).toBe(false);
     expect(useLibraryStore.getState().trashedMaterials.some((item) => item.id === material.id)).toBe(true);
+  });
+
+  it('永久清理、重新关联和版本迁移都先失效旧 Runtime 再按当前材料重建', async () => {
+    const [purgeTarget, relinkTarget] = useLibraryStore.getState().materials;
+    const invalidateMaterialRuntime = vi.fn(async () => undefined);
+    const reloadMaterialViews = vi.fn(async () => undefined);
+    const registry = new CommandRegistry();
+    registerLibraryCommands(registry, {
+      importRepository: services.importRepository,
+      filePicker: createInMemoryFilePicker(['book-2.md']),
+      libraryFolderRepository: services.libraryFolderRepository,
+      workspaceRepository: services.workspaceRepository,
+      annotationRepository: services.annotationRepository,
+      invalidateMaterialRuntime,
+      reloadMaterialViews,
+      syncVersionMigrationState: false,
+    });
+
+    const trashed = await services.importRepository.trashMaterial(purgeTarget!.id);
+    useLibraryStore.setState({
+      materials: [relinkTarget!],
+      trashedMaterials: [trashed],
+    });
+    useWorkspaceStore.getState().openView(purgeTarget!.id);
+    await registry.execute(COMMAND_IDS.libraryPurge, purgeTarget!.id);
+    expect(invalidateMaterialRuntime).toHaveBeenCalledWith(purgeTarget!.id);
+    expect(useWorkspaceStore.getState().editorGroups[0]?.views).toHaveLength(0);
+
+    await registry.execute(COMMAND_IDS.libraryRelink, relinkTarget!.id);
+    expect(reloadMaterialViews).toHaveBeenCalledWith(relinkTarget!.id);
+
+    const staged = await services.importRepository.stageImport('book.md');
+    const workspaceState = await services.workspaceRepository.loadState();
+    const migratedMaterial = {
+      ...relinkTarget!,
+      fingerprint: staged.fingerprint,
+      sourceFileName: staged.originalFileName,
+    };
+    vi.spyOn(services.importRepository, 'commitVersionMigration').mockResolvedValueOnce({
+      material: migratedMaterial,
+      snapshotId: 'snapshot-1',
+    });
+    const preview: VersionMigrationPreview = {
+      candidate: {
+        material: relinkTarget!,
+        staged,
+        metadata: relinkTarget!.source,
+        sourceCover: null,
+      },
+      progress: [],
+      annotations: [],
+      summary: { kept: 0, reanchored: 0, orphaned: 0, total: 0 },
+      migratedAnnotations: [],
+      migratedWorkspaceState: workspaceState,
+      sourceAnnotations: [],
+      sourceWorkspaceState: workspaceState,
+    };
+    useShellUiStore.getState().setVersionMigrationPreview(preview);
+    await registry.execute(COMMAND_IDS.libraryCommitVersionMigration, preview);
+    expect(invalidateMaterialRuntime).toHaveBeenCalledWith(relinkTarget!.id);
+    expect(reloadMaterialViews).toHaveBeenCalledWith(relinkTarget!.id);
+
+    vi.spyOn(services.importRepository, 'restoreVersionMigrationSnapshot').mockResolvedValueOnce({
+      material: relinkTarget!,
+      annotations: [],
+      workspaceState,
+    });
+    await registry.execute(COMMAND_IDS.libraryRestoreVersionMigrationSnapshot, 'snapshot-1');
+    expect(invalidateMaterialRuntime).toHaveBeenLastCalledWith(relinkTarget!.id);
+    expect(reloadMaterialViews).toHaveBeenLastCalledWith(relinkTarget!.id);
   });
 });

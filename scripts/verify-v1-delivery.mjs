@@ -28,6 +28,7 @@ const tauriCommands = read('apps/reader/src-tauri/src/lib.rs');
 const readerCommands = read('apps/reader/src/workbench/readerCommands.ts');
 const performanceScript = read('apps/reader/scripts/verify-reading-performance.mjs');
 const runtimeCacheScript = read('apps/reader/scripts/verify-reader-runtime-cache.mjs');
+const runtimeCache = read('apps/reader/src/workbench/readerRuntimeCache.ts');
 const appStyles = read('apps/reader/src/index.css');
 
 const checks = [
@@ -111,7 +112,9 @@ const checks = [
       performanceScript.includes('MAX_RANGE_BYTES') &&
       performanceScript.includes('totalReadBytes') &&
       performanceScript.includes('hasValidVisiblePage') &&
-      performanceScript.includes('getPageCount'),
+      performanceScript.includes('getPageCount') &&
+      performanceScript.includes('getReaderRuntimeDocumentForMeasurement') &&
+      !performanceScript.includes("import('/src/workbench/readerRuntime.ts')"),
   },
   {
     name: '大型阅读范围性能验收已接入持续集成并上传记录',
@@ -120,12 +123,17 @@ const checks = [
       workflow.includes('ai-reader-reading-performance-${{ github.sha }}'),
   },
   {
-    name: 'Issue #60 三 resident Reader Runtime 总验收入口已接入',
+    name: 'Issue #63 三材料轮换与资源压力总验收入口已接入',
     pass:
-      runtimeCacheScript.includes('issue: 60') &&
-      runtimeCacheScript.includes("schemaVersion: 'reader-runtime-cache.v3'") &&
+      runtimeCacheScript.includes('issue: 63') &&
+      runtimeCacheScript.includes("schemaVersion: 'reader-runtime-cache.v6'") &&
       runtimeCacheScript.includes('EPUB→Markdown→PDF→EPUB') &&
       runtimeCacheScript.includes('residentTriple') &&
+      runtimeCacheScript.includes('sameFormatTriple') &&
+      runtimeCacheScript.includes('pdfResidentTriple') &&
+      runtimeCacheScript.includes('fourthResidentPressure') &&
+      runtimeCacheScript.includes('resourcePressure') &&
+      runtimeCacheScript.includes('lookupMissDiagnostic') &&
       runtimeCacheScript.includes('EPUB↔EPUB') &&
       runtimeCacheScript.includes('Markdown↔Markdown') &&
       runtimeCacheScript.includes('PDF↔PDF') &&
@@ -135,6 +143,9 @@ const checks = [
       runtimeCacheScript.includes('pdfDocumentLoads') &&
       runtimeCacheScript.includes('pdfRasterizations') &&
       runtimeCacheScript.includes('bookDocumentCreates') &&
+      runtimeCache.includes('lookupMisses') &&
+      runtimeCache.includes('admissionRejections') &&
+      exists('docs/adr/0043-runtime-stress-and-platform-evidence.md') &&
       workflow.includes('pnpm --dir apps/reader test:reader-runtime-cache') &&
       workflow.includes('ai-reader-reader-runtime-cache-${{ github.sha }}'),
   },
@@ -170,7 +181,10 @@ const checks = [
       exists('scripts/verify-android-core-config.mjs') &&
       exists('docs/architecture/macos-core-smoke.md') &&
       exists('docs/architecture/ipados-core-smoke.md') &&
-      exists('docs/architecture/android-core-smoke.md'),
+      exists('docs/architecture/android-core-smoke.md') &&
+      read('docs/architecture/macos-core-smoke.md').includes('budgetFallback') &&
+      read('docs/architecture/ipados-core-smoke.md').includes('backgroundReturn') &&
+      read('docs/architecture/android-core-smoke.md').includes('locationRestored'),
   },
 ];
 

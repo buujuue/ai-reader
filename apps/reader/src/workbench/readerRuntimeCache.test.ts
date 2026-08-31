@@ -33,11 +33,15 @@ describe('ReaderRuntimeCache', () => {
       maxResidentRuntimes: 3,
       maxActiveRuntimes: 2,
       maxSuspendedRuntimes: 2,
+      maxSuspendedCanvases: 2,
+      maxSuspendedDecodedPages: 2,
     });
     expect(READER_RUNTIME_CACHE_BUDGETS.tablet).toMatchObject({
       maxResidentRuntimes: 3,
       maxActiveRuntimes: 2,
       maxSuspendedRuntimes: 2,
+      maxSuspendedCanvases: 1,
+      maxSuspendedDecodedPages: 1,
     });
   });
 
@@ -204,6 +208,82 @@ describe('ReaderRuntimeCache', () => {
     expect(result.admitted).toBe(false);
     expect(result.reason).toBe('resource-budget');
     expect(cache.getEntries()).toHaveLength(0);
+  });
+
+  it('累计资源超限时保留新条目并明确记录被 LRU 淘汰的旧条目', () => {
+    let now = 0;
+    const cache = new ReaderRuntimeCache<{ id: string }>({
+      budget: makeBudget({ maxSuspendedEstimatedBytes: 6 }),
+      now: () => now,
+    });
+    const first = makeEntry('first-budget', {
+      iframeCount: 0,
+      canvasCount: 0,
+      decodedPageCount: 0,
+      rangeCacheBytes: 0,
+      estimatedBytes: 4,
+    });
+    const second = makeEntry('second-budget', {
+      iframeCount: 0,
+      canvasCount: 0,
+      decodedPageCount: 0,
+      rangeCacheBytes: 0,
+      estimatedBytes: 4,
+    });
+
+    expect(cache.suspend(first).admitted).toBe(true);
+    now = 1;
+    const result = cache.suspend(second);
+
+    expect(result).toMatchObject({
+      admitted: true,
+      reason: 'admitted',
+      evicted: [{ viewId: 'first-budget' }],
+    });
+    expect(cache.getEntries().map((entry) => entry.viewId)).toEqual(['second-budget']);
+    expect(cache.getDiagnostics().transitions).toContainEqual({
+      viewId: 'first-budget',
+      from: 'suspended',
+      to: 'evicted',
+      reason: 'lru',
+    });
+  });
+
+  it('单项超预算拒绝和缓存 miss 都提供可定位的结构化诊断', () => {
+    const cache = new ReaderRuntimeCache<{ id: string }>({
+      budget: makeBudget({ maxSuspendedEstimatedBytes: 4 }),
+    });
+    const rejected = makeEntry('too-large-diagnostic', {
+      iframeCount: 0,
+      canvasCount: 0,
+      decodedPageCount: 0,
+      rangeCacheBytes: 0,
+      estimatedBytes: 5,
+    });
+
+    expect(cache.suspend(rejected)).toMatchObject({
+      admitted: false,
+      reason: 'resource-budget',
+    });
+    expect(cache.activate('missing-view', 'missing-key')).toEqual({
+      kind: 'miss',
+      reason: 'not-found',
+    });
+
+    const diagnostics = cache.getDiagnostics();
+    expect(diagnostics.admissionRejections).toEqual([
+      {
+        viewId: 'too-large-diagnostic',
+        reason: 'resource-budget',
+        usage: { ...rejected.usage, inFlightRangeReadCount: 0 },
+      },
+    ]);
+    expect(diagnostics.lookupMisses).toEqual([
+      {
+        viewId: 'missing-view',
+        reason: 'not-found',
+      },
+    ]);
   });
 
   it('命中必须使用精确键，键变化会返回失效对象供上层关闭', () => {

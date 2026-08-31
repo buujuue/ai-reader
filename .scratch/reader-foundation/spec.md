@@ -157,7 +157,7 @@ Status: ready-for-agent
 - 文本批注锚点保存 CFI、选中文字、前文、后文、文档版本与恢复状态。恢复顺序为原 CFI、唯一引文上下文，最后标记失联。
 - 扫描 PDF 区域锚点语义上保存页码和归一化矩形；第一版兼容传输层以 `pdf-text:` 编码承载它，加载时不得按文本引文恢复，版本变化后保留为失联批注。
 - 所有书籍内容视为不可信。第一版永久禁用书籍脚本、iframe、对象嵌入和主动远程资源；外部链接必须交给系统浏览器。
-- Reader Runtime 生命周期分为 `active`、`suspended`、`evicted`、`closed`；缓存准入 EPUB/Markdown/PDF，resident 总数上限为 3、active 上限为 2、suspended 上限为 2，键包含 ReadingView 身份、MaterialId、完整内容指纹、Markdown 文档版本、解析/清洗算法版本和缓存算法版本。桌面/平板使用独立的活 Runtime、iframe、Canvas、解码页、范围缓存和估算资源硬预算，并按 LRU 淘汰挂起对象；PDF 挂起阶段额外要求当前页 Canvas/解码页保留上限为 1、在途范围读取为 0，且分页/滚动位置与视口必须可恢复；不可见组不得保留输入、观察器或后台调度。性能门槛从同机冷回切测量动态派生，不写死绝对毫秒数。对应 ADR-0041、ADR-0042 与工单 #56/#57/#60/#61/#62。
+- Reader Runtime 生命周期分为 `active`、`suspended`、`evicted`、`closed`；缓存准入 EPUB/Markdown/PDF，resident 总数上限为 3、active 上限为 2、suspended 上限为 2，键包含 ReadingView 身份、MaterialId、完整内容指纹、Markdown 文档版本、解析/清洗算法版本和缓存算法版本。桌面/平板使用独立的活 Runtime、iframe、Canvas、解码页、范围缓存和估算资源硬预算，并按 LRU 淘汰挂起对象；每个 PDF 挂起 Runtime 只保留当前页一个 Canvas/解码页，桌面聚合上限为 2、平板为 1，在途范围读取为 0，且分页/滚动位置与视口必须可恢复；不可见组不得保留输入、观察器或后台调度。单项/累计超限必须留下结构化诊断并安全冷重建。性能门槛从同机冷回切测量动态派生，不写死绝对毫秒数。对应 ADR-0041、ADR-0042、ADR-0043 与工单 #56/#57/#60/#61/#62/#63。
 - Tauri CSP 和 Capability 使用最小白名单；前端没有任意文件系统、Shell 或 SQL 能力。
 - 上游 Tauri、官方插件和普通 Rust crate 使用锁文件固定；不 vendoring Tauri、tao 或 swift-rs。只有可复现问题且无上游解法时才建立带 ADR 的最小 Patch/Fork。
 - 完整备份包含版本化 manifest、SQLite 一致快照、托管材料与封面；流式生成且第一版不加密。
@@ -184,7 +184,7 @@ Status: ready-for-agent
 - 安全测试使用带脚本、危险 URL、远程资源和嵌入对象的恶意 EPUB/Markdown fixture，验证内容不能执行或取得 Tauri IPC。
 - 备份测试验证大文件流式处理、manifest 版本、指纹校验、空间不足、损坏包和失败后原书库保持可用。
 - 性能验收关注可观察预算：最多两个活跃渲染器；大文件导入不整体读入 JS 内存；非活动标签不保留 PDF Canvas；书库封面按需加载。
-- Reader Runtime 缓存总验收运行 `pnpm --dir apps/reader test:reader-runtime-cache`：真实 Chrome 通过 `library.openBook`/`reader.activateView` Command 测量 EPUB→Markdown→PDF→EPUB 三 resident A→B→C→A、EPUB/PDF/Markdown 的同格式与跨格式 A→B→A，PDF pair 额外执行 A→B→A→B→A，记录每份材料首次可见/可交互、缓存命中、BookDocument 身份、来源打开、renderer、PDF.js 页面取得/光栅化、范围读取、PDF 挂起资源和可获得的堆内存；至少三轮，以同机冷路径中位数/P95 作为动态门槛。600 页以上 PDF 与 Windows Tauri 范围协议另运行 `pnpm --dir apps/reader test:reading-performance`。
+- Reader Runtime 缓存总验收运行 `pnpm --dir apps/reader test:reader-runtime-cache`：真实 Chrome 通过 `library.openBook`/`reader.activateView` Command 测量 EPUB/Markdown/PDF 同格式 A→B→C→A→B→C、混合格式与双 Editor Group 三 resident、PDF 连续多轮首帧、第四项 LRU、单项/累计超预算及安全冷重建，记录首次打开、命中、淘汰、重建的中位数/P95、结构化诊断、来源/BookDocument/renderer/PDF.js 页面与光栅化、范围读取和资源快照；至少三轮。600 页以上 PDF 与 Windows Tauri 范围协议另运行 `pnpm --dir apps/reader test:reading-performance`。
 - 参考 Readest 的既有测试类型：Vitest jsdom、Vitest Browser、Playwright Web、WebdriverIO Tauri 与 Rust tests，但只引入当前切片真正需要的工具。
 
 ## Out of Scope

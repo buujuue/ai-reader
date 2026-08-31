@@ -25,6 +25,8 @@ Issue #30 的 Android 平板验收分为自动化原生证据与真机手工流�
 5. 打开紧凑布局下的抽屉、目录、搜索、Markdown 源码模式和脏文档关闭确认，逐次按系统返回键；确认每次只退出当前次级状态，不静默丢弃 Markdown。
 6. 在系统设置中撤销文件访问权限后再次导入，确认应用只报告当前导入失败，不获得共享存储的任意访问能力。
 
+Issue #63 的原生记录使用字段：`platform`、`osVersion`、`deviceModel`、`appCommit`、`recordedAt`、`cacheHit`、`backgroundReturn`、`budgetFallback`、`locationRestored`、`artifactNames`。浏览器设备模拟不得代填；未完成真实 Android WebView 行为验收时明确记为 `pending`。
+
 ## 相关实现边界
 
 - `filePicker.ts` 使用 Android 文档选择器、MIME 类型和 `fileAccessMode: 'copy'`，导入后的读取和托管复制仍由现有 typed repository 完成。

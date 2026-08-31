@@ -78,6 +78,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - Issue #60 的三 resident Runtime 契约检查了 Readest `apps/readest-app/src/store/bookDataStore.ts`、`apps/readest-app/src/store/readerStore.ts`、`packages/foliate-js/fixed-layout.js` 与 `packages/foliate-js/pdf.js` 的文档复用和页面 LRU 行为；AI Reader 仅继承可复用已解析对象与有界淘汰的行为，没有直接复制代码，不新增第三方许可义务。
 - Issue #61 继续检查 Readest `packages/foliate-js/fixed-layout.js` 的页面元素/覆盖层复用与邻页调度行为；AI Reader 仅采用设计原则并保留自己的 PDF.js 首帧快照实现，没有直接复制代码，不新增第三方许可义务。
 - Issue #62 继续以 Readest 的独立 View 保留与局部 LRU 作为行为参照；AI Reader 仅扩展自己的三 resident/双 Editor Group 验收与隐藏组生命周期接线，没有直接复制代码，不新增第三方许可义务。
+- Issue #63 继续检查 Readest 的已解析文档复用、页面结果与局部 LRU；AI Reader 独立实现桌面/平板分档预算、结构化诊断和压力报告，没有直接复制代码，不新增第三方许可义务。
 
 ## marked 引入记录
 

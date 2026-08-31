@@ -1,9 +1,9 @@
 /**
- * Reader Runtime 有界缓存的真实浏览器总验收（工单 #62，继承 #61/#60/#57）。
+ * Reader Runtime 有界缓存的真实浏览器压力总验收（工单 #63，继承 #62/#61/#60/#57）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
- * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，并新增三视图
- * EPUB→Markdown→PDF→EPUB resident 流程；对 PDF pair 额外执行
+ * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，并覆盖三视图
+ * EPUB→Markdown→PDF→EPUB resident、PDF 三材料连续回切与第四项 LRU 冷重建；对 PDF pair 额外执行
  * A→B→A→B→A 连续回切，记录冷启动与缓存回切的
  * 可交互时间、文档/renderer 创建、ManagedFileSource 范围读取、Runtime 资源和可获得的堆内存。
  * PDF 回切额外验证当前页 DOM/Canvas/文本层/覆盖层的首帧节点复用，以及首帧前不发生
@@ -57,6 +57,12 @@ function percentile(values, fraction) {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
 }
 
+function sanitizeFailure(value) {
+  return String(value)
+    .replace(/file:\/\/\/[^\s;]+/gi, '<local-path>')
+    .replace(/[A-Za-z]:[\\/][^\s;]+/g, '<local-path>');
+}
+
 async function flushRuntimeInPage(page) {
   if (!page) return;
   await page.evaluate(async () => {
@@ -78,6 +84,7 @@ async function main() {
   });
 
   let browser = null;
+  let passedReport = null;
   try {
     await waitForServer(APP_URL);
     browser = await puppeteer.launch({
@@ -97,7 +104,8 @@ async function main() {
       const [commandModule, commandRegistryModule, importModule, epubWriterModule, epubInspectorModule,
         markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeModule, readerRuntimeCacheModule,
         managedSourceModule, hostModule, bootstrapModule, filePickerModule, libraryStoreModule,
-        markdownSessionModule, workbenchCommandsModule, pdfLibraryModule, pdfFixtureModule] = await Promise.all([
+        markdownSessionModule, searchStoreModule, annotationStoreModule, workbenchCommandsModule,
+        pdfLibraryModule, pdfFixtureModule] = await Promise.all([
         import('/src/workbench/readerCommands.ts'),
         import('/src/commands/commandRegistry.ts'),
         import('/src/domain/library/inMemoryImportRepository.ts'),
@@ -114,6 +122,8 @@ async function main() {
         import('/src/app/filePicker.ts'),
         import('/src/workbench/libraryStore.ts'),
         import('/src/workbench/markdownSessionStore.ts'),
+        import('/src/workbench/searchStore.ts'),
+        import('/src/workbench/annotationStore.ts'),
         import('/src/workbench/workbenchCommands.ts'),
         import('/src/domain/reader/pdf/pdfLibrary.ts'),
         import('/src/test/fixtures/pdf/pdfFixtures.ts'),
@@ -130,6 +140,8 @@ async function main() {
       const { useReaderRuntime } = readerRuntimeModule;
       const { useLibraryStore } = libraryStoreModule;
       const { useMarkdownSessionStore } = markdownSessionModule;
+      const { useSearchStore } = searchStoreModule;
+      const { useAnnotationStore } = annotationStoreModule;
       const { serializeWorkspaceState } = workbenchCommandsModule;
       const { ManagedFileSource } = managedSourceModule;
       const { createFoliateViewHostFactory } = hostModule;
@@ -148,8 +160,12 @@ async function main() {
         '# 缓存基线 Markdown\n\n这是用于 A→B→A Runtime 测量的正文。',
       ));
       addInMemorySource(bytes, 'cache-b.epub', buildEpub({ title: '缓存矩阵 EPUB' }));
+      addInMemorySource(bytes, 'cache-c.epub', buildEpub({ title: '缓存压力 EPUB' }));
       addInMemorySource(bytes, 'cache-c.md', new TextEncoder().encode(
         '# 缓存矩阵 Markdown\n\n这是用于同格式回切的第二份正文。',
+      ));
+      addInMemorySource(bytes, 'cache-d.md', new TextEncoder().encode(
+        '# 缓存压力 Markdown\n\n这是用于三材料同格式回切的第三份正文。',
       ));
       addInMemorySource(
         bytes,
@@ -161,6 +177,11 @@ async function main() {
         'cache-b.pdf',
         buildLargePdfFixture({ pageCount: 4, contentBytesPerPage: 1025 }),
       );
+      addInMemorySource(
+        bytes,
+        'cache-c.pdf',
+        buildLargePdfFixture({ pageCount: 4, contentBytesPerPage: 1026 }),
+      );
       const importRepository = createInMemoryImportRepository(bytes);
       const workspaceRepository = createInMemoryWorkspaceRepository();
       const materials = [];
@@ -171,6 +192,9 @@ async function main() {
         'cache-c.md',
         'cache-a.pdf',
         'cache-b.pdf',
+        'cache-c.epub',
+        'cache-d.md',
+        'cache-c.pdf',
       ]) {
         const staged = await importRepository.stageImport(name);
         const content = await importRepository.readStagedFile(staged);
@@ -214,9 +238,18 @@ async function main() {
       };
 
       const nativeFactory = createFoliateViewHostFactory();
+      const rendererRecords = [];
       const viewHostFactory = (container) => {
         counters.rendererCreates += 1;
-        return nativeFactory(container);
+        const host = nativeFactory(container);
+        const originalClose = host.close.bind(host);
+        const record = { closeCount: 0 };
+        host.close = () => {
+          record.closeCount += 1;
+          originalClose();
+        };
+        rendererRecords.push(record);
+        return host;
       };
       const pdfLib = new Proxy(await loadPdfLib(), {
         get(target, property, receiver) {
@@ -451,6 +484,8 @@ async function main() {
         await waitFrames();
         cache.reset();
         useWorkspaceStore.getState().resetToDefault();
+        useSearchStore.setState({ views: {} });
+        useAnnotationStore.getState().resetToDefault();
       };
 
       const measurePair = async (firstMaterial, secondMaterial, label) => {
@@ -813,6 +848,124 @@ async function main() {
         formatMatrix.push(await measurePair(firstMaterial, secondMaterial, label));
       }
 
+      const measureSameFormatTriple = async (caseMaterials, label, run) => {
+        await resetHarness();
+        const opened = [];
+        for (const material of caseMaterials) {
+          const sample = await openAndWait(material, COMMAND_IDS.libraryOpenBook);
+          if (sample.book.format === 'pdf') {
+            await sample.book.goToLocation({
+              kind: 'pdf',
+              page: sample.book.getCurrentIndex() ?? 1,
+              scrollTop: 0,
+              zoom: 100,
+              fit: 'width',
+            });
+            await waitFor(
+              () => sample.book.getLocation()?.kind === 'pdf',
+              `${label} PDF 位置落定`,
+            );
+            await waitFrames(8);
+          }
+          opened.push({
+            ...sample,
+            expectedLocation: sample.book.getLocation(),
+            preservedNodes: capturePdfCurrentNodes(sample.viewId, sample.book.getLocation()),
+          });
+        }
+
+        const returns = [];
+        for (const sample of opened) {
+          const hitsBefore = cache.getDiagnostics().hits;
+          const countersBefore = snapshotCounters();
+          const started = performance.now();
+          await registry.execute(
+            COMMAND_IDS.readerActivateView,
+            sample.viewId,
+            caseMaterials[opened.indexOf(sample)],
+          );
+          await waitForInteractive(sample, `${label} 三材料回切 ${sample.book.format}`);
+          const firstFrameCounters = diffCounters(countersBefore);
+          const returnedDocument = commandModule.getReaderRuntimeDocumentForMeasurement(sample.viewId);
+          const locationAfter = sample.book.getLocation();
+          const workspaceLocationAfter = useWorkspaceStore.getState().editorGroups
+            .flatMap((group) => group.views)
+            .find((view) => view.id === sample.viewId)?.location ?? null;
+          const firstFrameState = readPdfFirstFrameState(
+            sample.viewId,
+            sample.expectedLocation,
+            sample.preservedNodes,
+          );
+          returns.push({
+            viewId: sample.viewId,
+            format: sample.book.format,
+            returnInteractiveMs: performance.now() - started,
+            cacheHit: cache.getDiagnostics().hits - hitsBefore === 1,
+            runtimeIdentityPreserved: returnedDocument === sample.book,
+            locationPreserved:
+              sample.expectedLocation !== null &&
+              JSON.stringify(locationAfter) === JSON.stringify(sample.expectedLocation),
+            workspaceLocationPreserved:
+              workspaceLocationAfter !== null &&
+              JSON.stringify(workspaceLocationAfter) === JSON.stringify(locationAfter),
+            noNewSourceOpen: firstFrameCounters.sourceOpens === 0,
+            noNewBookDocument: firstFrameCounters.bookDocumentCreates === 0,
+            noNewRenderer: firstFrameCounters.rendererCreates === 0,
+            noNewRanges: firstFrameCounters.rangeReads === 0,
+            noPdfPageWorkBeforeInteractive:
+              sample.book.format !== 'pdf' ||
+              (firstFrameCounters.pdfPageGets === 0 &&
+                firstFrameCounters.pdfRasterizations === 0),
+            pdfFirstFramePreserved:
+              sample.book.format !== 'pdf' ||
+              (firstFrameState.currentPagePresent === true &&
+                firstFrameState.canvasReady === true &&
+                firstFrameState.textLayerPresent === true &&
+                firstFrameState.highlightLayerPresent === true &&
+                firstFrameState.pagePreserved === true &&
+                firstFrameState.canvasPreserved === true &&
+                firstFrameState.textLayerPreserved === true &&
+                firstFrameState.highlightLayerPreserved === true),
+            counters: firstFrameCounters,
+          });
+        }
+        const diagnostics = cache.getDiagnostics();
+        return {
+          run,
+          label,
+          format: opened[0]?.book.format ?? null,
+          viewIds: opened.map((sample) => sample.viewId),
+          firstVisibleMs: opened.map((sample) => sample.firstVisibleMs),
+          firstInteractiveMs: opened.map((sample) => sample.firstInteractiveMs),
+          returns,
+          residentCount: diagnostics.entries.length,
+          activeCount: diagnostics.entries.filter((entry) => entry.state === 'active').length,
+          suspendedCount: diagnostics.entries.filter((entry) => entry.state === 'suspended').length,
+          resourceSnapshot: diagnostics.entries.map((entry) => ({
+            viewId: entry.viewId,
+            format: entry.format,
+            state: entry.state,
+            usage: entry.usage,
+          })),
+          budget: cache.getBudget(),
+          heapBytes: heap(),
+        };
+      };
+
+      const sameFormatTripleCases = [
+        [[materials[0], materials[2], materials[6]], 'EPUB→EPUB→EPUB→A→B→C'],
+        [[materials[1], materials[3], materials[7]], 'Markdown→Markdown→Markdown→A→B→C'],
+        [[materials[4], materials[5], materials[8]], 'PDF→PDF→PDF→A→B→C'],
+      ];
+      const sameFormatTriple = [];
+      for (const [caseMaterials, label] of sameFormatTripleCases) {
+        const samplesForCase = [];
+        for (let run = 0; run < requestedRuns; run += 1) {
+          samplesForCase.push(await measureSameFormatTriple(caseMaterials, label, run + 1));
+        }
+        sameFormatTriple.push({ label, runCount: samplesForCase.length, samples: samplesForCase });
+      }
+
       const measureResidentTriple = async (run) => {
         await resetHarness();
         const [firstMaterial, secondMaterial, thirdMaterial] = [materials[0], materials[1], materials[4]];
@@ -901,6 +1054,126 @@ async function main() {
         samples: residentTripleSamples,
       };
 
+      const measurePdfResidentTriple = async (run) => {
+        await resetHarness();
+        const [firstMaterial, secondMaterial, thirdMaterial] = [materials[4], materials[0], materials[1]];
+        const first = await openAndWait(firstMaterial, COMMAND_IDS.libraryOpenBook);
+        await first.book.goToLocation({
+          kind: 'pdf',
+          page: first.book.getCurrentIndex() ?? 1,
+          scrollTop: 0,
+          zoom: 100,
+          fit: 'width',
+        });
+        await waitFor(
+          () => first.book.getLocation()?.kind === 'pdf',
+          'PDF 三材料基线位置落定',
+        );
+        await waitFrames(8);
+        const firstLocation = first.book.getLocation();
+        const firstNodes = capturePdfCurrentNodes(first.viewId, firstLocation);
+        const second = await openAndWait(secondMaterial, COMMAND_IDS.libraryOpenBook);
+        const third = await openAndWait(thirdMaterial, COMMAND_IDS.libraryOpenBook);
+
+        const returnToPdf = async (label, expectedLocation, preservedNodes) => {
+          const hitsBefore = cache.getDiagnostics().hits;
+          const countersBefore = snapshotCounters();
+          const started = performance.now();
+          await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
+          await waitForInteractive(first, label);
+          const firstFrameCounters = diffCounters(countersBefore);
+          const firstFrameState = readPdfFirstFrameState(
+            first.viewId,
+            expectedLocation,
+            preservedNodes,
+          );
+          const container = document.querySelector(`[data-view-id="${first.viewId}"]`);
+          let inputObserved = false;
+          if (container instanceof HTMLElement) {
+            container.addEventListener('pointermove', () => {
+              inputObserved = true;
+            }, { once: true });
+            container.dispatchEvent(new Event('pointermove', { bubbles: true }));
+          }
+          const countersAtInput = diffCounters(countersBefore);
+          await waitFrames(12);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const finalCounters = diffCounters(countersBefore);
+          const locationAfter = first.book.getLocation();
+          return {
+            returnInteractiveMs: performance.now() - started,
+            cacheHit: cache.getDiagnostics().hits - hitsBefore === 1,
+            locationPreserved:
+              expectedLocation !== null &&
+              JSON.stringify(locationAfter) === JSON.stringify(expectedLocation),
+            firstFrameState,
+            firstFrameNoPageWork:
+              firstFrameCounters.pdfPageGets === 0 &&
+              firstFrameCounters.pdfRasterizations === 0,
+            inputObservedBeforeDeferredWork:
+              inputObserved &&
+              countersAtInput.pdfPageGets === 0 &&
+              countersAtInput.pdfRasterizations === 0,
+            firstFrameCounters,
+            deferredCounters: {
+              pdfPageGets: finalCounters.pdfPageGets - firstFrameCounters.pdfPageGets,
+              pdfRasterizations:
+                finalCounters.pdfRasterizations - firstFrameCounters.pdfRasterizations,
+              rangeReads: finalCounters.rangeReads - firstFrameCounters.rangeReads,
+            },
+          };
+        };
+
+        const firstReturn = await returnToPdf(
+          'PDF→EPUB→Markdown→PDF 首次回切',
+          firstLocation,
+          firstNodes,
+        );
+        const secondLocation = first.book.getLocation();
+        const secondNodes = capturePdfCurrentNodes(first.viewId, secondLocation);
+        await registry.execute(COMMAND_IDS.readerActivateView, second.viewId, secondMaterial);
+        await waitForInteractive(second, 'PDF 三材料连续回切 EPUB 可交互');
+        await registry.execute(COMMAND_IDS.readerActivateView, third.viewId, thirdMaterial);
+        await waitForInteractive(third, 'PDF 三材料连续回切 Markdown 可交互');
+        const secondReturn = await returnToPdf(
+          'PDF→EPUB→Markdown→PDF 第二次回切',
+          secondLocation,
+          secondNodes,
+        );
+        const diagnostics = cache.getDiagnostics();
+        return {
+          run,
+          label: 'PDF→EPUB→Markdown→PDF→EPUB→Markdown→PDF',
+          firstVisibleMs: {
+            pdf: first.firstVisibleMs,
+            epub: second.firstVisibleMs,
+            markdown: third.firstVisibleMs,
+          },
+          firstInteractiveMs: {
+            pdf: first.firstInteractiveMs,
+            epub: second.firstInteractiveMs,
+            markdown: third.firstInteractiveMs,
+          },
+          firstReturn,
+          secondReturn,
+          residentCount: diagnostics.entries.length,
+          suspendedResourceUsage: diagnostics.entries
+            .filter((entry) => entry.state === 'suspended')
+            .map((entry) => ({ viewId: entry.viewId, format: entry.format, usage: entry.usage })),
+          heapBytes: heap(),
+        };
+      };
+
+      const pdfResidentTripleSamples = [];
+      for (let run = 0; run < requestedRuns; run += 1) {
+        pdfResidentTripleSamples.push(await measurePdfResidentTriple(run + 1));
+      }
+      const pdfResidentTriple = {
+        label: 'PDF→EPUB→Markdown→PDF→EPUB→Markdown→PDF',
+        runCount: pdfResidentTripleSamples.length,
+        samples: pdfResidentTripleSamples,
+      };
+
       // 双 Editor Group 也必须遵守同一 resident 容量：拆分会生成同材料的独立
       // ReadingView，第三份材料进入时淘汰最旧的 suspended View，而不是跨组共享
       // renderer 或静默淘汰活动 Runtime。
@@ -932,6 +1205,68 @@ async function main() {
         await waitForInteractive(first, '双组三 resident A→B→C→A 回切');
         const afterReturn = cache.getDiagnostics();
         const returnedDocument = commandModule.getReaderRuntimeDocumentForMeasurement(first.viewId);
+        const secondGroupId = useWorkspaceStore.getState().editorGroups[1]?.id;
+        if (!secondGroupId) throw new Error('双组隔离验收没有第二个 Editor Group');
+        const firstWorkspacePosition = { kind: 'epub', cfi: 'epubcfi(/6/2!/4/2/1:1)' };
+        const copiedWorkspacePosition = { kind: 'epub', cfi: 'epubcfi(/6/4!/4/2/1:2)' };
+        useWorkspaceStore.getState().setViewLocation(first.viewId, firstWorkspacePosition);
+        useWorkspaceStore.getState().setViewLocation(copiedViewId, copiedWorkspacePosition);
+        const workspacePositionsIndependent =
+          JSON.stringify(useWorkspaceStore.getState().editorGroups[0]?.views
+            .find((view) => view.id === first.viewId)?.location) ===
+            JSON.stringify(firstWorkspacePosition) &&
+          JSON.stringify(useWorkspaceStore.getState().editorGroups[1]?.views
+            .find((view) => view.id === copiedViewId)?.location) ===
+            JSON.stringify(copiedWorkspacePosition);
+
+        await registry.execute(COMMAND_IDS.workbenchFocusEditorGroup, secondGroupId);
+        const secondGroupFocused = useWorkspaceStore.getState().activeEditorGroupId === secondGroupId;
+        await registry.execute(COMMAND_IDS.workbenchSetPrimaryMaterial, materials[0].id);
+        const primaryBeforeFocusChange = useWorkspaceStore.getState().primaryMaterialId;
+        await registry.execute(COMMAND_IDS.workbenchFocusEditorGroup, 'group-1');
+        const firstGroupFocused = useWorkspaceStore.getState().activeEditorGroupId === 'group-1';
+        const primaryMaterialStableAcrossFocus =
+          primaryBeforeFocusChange === materials[0].id &&
+          useWorkspaceStore.getState().primaryMaterialId === materials[0].id;
+
+        await registry.execute(COMMAND_IDS.readerSearchOpen, first.viewId);
+        await registry.execute(COMMAND_IDS.readerSearchRun, first.viewId, '正文');
+        await waitFor(
+          () => useSearchStore.getState().getView(first.viewId).status === 'completed',
+          '双组搜索完成',
+        );
+        const searchScopedToTargetView =
+          useSearchStore.getState().getView(first.viewId).query === '正文' &&
+          useSearchStore.getState().getView(first.viewId).matches.length > 0 &&
+          useSearchStore.getState().getView(copiedViewId).query === '' &&
+          useSearchStore.getState().getView(second.viewId).query === '';
+        await registry.execute(COMMAND_IDS.readerSearchClose, first.viewId);
+
+        const annotationCountBefore = useAnnotationStore
+          .getState()
+          .getMaterialAnnotations(materials[0].id).length;
+        const contentDocument = first.book.getContentDocs()[0];
+        const textWalker = contentDocument?.createTreeWalker(
+          contentDocument.body,
+          NodeFilter.SHOW_TEXT,
+        );
+        const textNode = textWalker?.nextNode();
+        if (textNode?.nodeType !== 3 || !textNode.data.trim()) {
+          throw new Error('双组批注验收没有可选中的 EPUB 文本');
+        }
+        const range = contentDocument.createRange();
+        range.setStart(textNode, 0);
+        range.setEnd(textNode, Math.min(2, textNode.data.length));
+        await registry.execute(COMMAND_IDS.annotationCreateHighlight, first.viewId, range);
+        const annotationScopedToMaterial =
+          useAnnotationStore.getState().getMaterialAnnotations(materials[0].id).length ===
+            annotationCountBefore + 1 &&
+          useAnnotationStore.getState().getMaterialAnnotations(materials[1].id).length === 0 &&
+          useAnnotationStore.getState().getMaterialAnnotations(materials[4].id).length === 0;
+
+        const inactiveViewsDoNotExposeInputTargets =
+          document.querySelector(`[data-view-id="${copiedViewId}"]`) === null &&
+          document.querySelector(`[data-view-id="${third.viewId}"]`) === null;
         return {
           run,
           label: '双 Editor Group EPUB→Markdown→PDF→EPUB',
@@ -951,6 +1286,13 @@ async function main() {
           cacheHit: afterReturn.hits - hitsBefore === 1,
           runtimeIdentityPreserved: returnedDocument === first.book,
           noNewBookDocument: returnedDocumentBefore === first.book && returnedDocument === returnedDocumentBefore,
+          workspacePositionsIndependent,
+          secondGroupFocused,
+          firstGroupFocused,
+          primaryMaterialStableAcrossFocus,
+          searchScopedToTargetView,
+          annotationScopedToMaterial,
+          inactiveViewsDoNotExposeInputTargets,
           residentViewIds: afterReturn.entries.map((entry) => entry.viewId),
           expectedViewIds,
           budget: cache.getBudget(),
@@ -965,6 +1307,98 @@ async function main() {
         label: '双 Editor Group EPUB→Markdown→PDF→EPUB',
         runCount: dualGroupResidentSamples.length,
         samples: dualGroupResidentSamples,
+      };
+
+      const measureFourthResidentPressure = async (run) => {
+        await resetHarness();
+        const [firstMaterial, secondMaterial, thirdMaterial, fourthMaterial] = [
+          materials[0],
+          materials[1],
+          materials[4],
+          materials[2],
+        ];
+        const rendererRecordStart = rendererRecords.length;
+        const first = await openAndWait(firstMaterial, COMMAND_IDS.libraryOpenBook);
+        const firstRendererRecord = rendererRecords[rendererRecordStart] ?? null;
+        const firstLocation = first.book.getLocation();
+        const firstWorkspaceLocation = useWorkspaceStore.getState().editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === first.viewId)?.location ?? null;
+        await openAndWait(secondMaterial, COMMAND_IDS.libraryOpenBook);
+        await openAndWait(thirdMaterial, COMMAND_IDS.libraryOpenBook);
+        const countersBeforeFourth = snapshotCounters();
+        const fourthStarted = performance.now();
+        await openAndWait(fourthMaterial, COMMAND_IDS.libraryOpenBook);
+        const fourthInteractiveMs = performance.now() - fourthStarted;
+        const afterFourth = cache.getDiagnostics();
+        const lruTransition = afterFourth.transitions.findLast(
+          (transition) => transition.viewId === first.viewId && transition.reason === 'lru',
+        ) ?? null;
+        const miss = cache.activate(
+          first.viewId,
+          readerRuntimeCacheModule.buildReaderRuntimeCacheKeyForMaterial(first.viewId, firstMaterial),
+        );
+        const countersBeforeRebuild = snapshotCounters();
+        const rebuildStarted = performance.now();
+        await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
+        const rebuiltDocument = commandModule.getReaderRuntimeDocumentForMeasurement(first.viewId);
+        if (!rebuiltDocument) throw new Error('第四项淘汰后没有安全重建 A Runtime');
+        if (!observedDocuments.has(rebuiltDocument)) {
+          observedDocuments.add(rebuiltDocument);
+          counters.bookDocumentCreates += 1;
+        }
+        await waitForInteractive(
+          { viewId: first.viewId, book: rebuiltDocument },
+          '第四项淘汰后 A 冷重建可交互',
+        );
+        const rebuildInteractiveMs = performance.now() - rebuildStarted;
+        const rebuiltLocation = rebuiltDocument.getLocation();
+        const rebuiltWorkspaceLocation = useWorkspaceStore.getState().editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === first.viewId)?.location ?? null;
+        const afterRebuild = cache.getDiagnostics();
+        return {
+          run,
+          label: 'EPUB→Markdown→PDF→第四项 EPUB→冷重建首项 EPUB',
+          firstViewId: first.viewId,
+          fourthInteractiveMs,
+          rebuildInteractiveMs,
+          lruTransition,
+          explicitMiss: miss.kind === 'miss' ? miss.reason : null,
+          oldRuntimeClosedOnce: firstRendererRecord?.closeCount === 1,
+          runtimeRebuilt: rebuiltDocument !== first.book,
+          locationPreserved:
+            firstLocation !== null &&
+            JSON.stringify(rebuiltLocation) === JSON.stringify(firstLocation),
+          workspaceLocationPreserved:
+            firstWorkspaceLocation !== null &&
+            JSON.stringify(rebuiltWorkspaceLocation) === JSON.stringify(firstWorkspaceLocation),
+          fourthCounters: diffCounters(countersBeforeFourth),
+          rebuildCounters: diffCounters(countersBeforeRebuild),
+          residentCountAfterFourth: afterFourth.entries.length,
+          residentCountAfterRebuild: afterRebuild.entries.length,
+          evictionCountAfterFourth: afterFourth.evictions,
+          lookupMissDiagnostic: afterRebuild.lookupMisses.findLast(
+            (lookup) => lookup.viewId === first.viewId,
+          ) ?? null,
+          resourceSnapshotAfterFourth: afterFourth.entries.map((entry) => ({
+            viewId: entry.viewId,
+            format: entry.format,
+            state: entry.state,
+            usage: entry.usage,
+          })),
+          heapBytes: heap(),
+        };
+      };
+
+      const fourthResidentSamples = [];
+      for (let run = 0; run < requestedRuns; run += 1) {
+        fourthResidentSamples.push(await measureFourthResidentPressure(run + 1));
+      }
+      const fourthResidentPressure = {
+        label: '第四项 LRU 与安全冷重建',
+        runCount: fourthResidentSamples.length,
+        samples: fourthResidentSamples,
       };
 
       // 双组基线会故意留下两个 Editor Group；源码模式/重启回归从干净的
@@ -1102,7 +1536,7 @@ async function main() {
       const evictionProbe = new readerRuntimeCacheModule.ReaderRuntimeCache({
         budget: { ...cache.getBudget(), maxSuspendedRuntimes: 1 },
       });
-      const probeEntry = (viewId) => ({
+      const probeEntry = (viewId, usage = {}) => ({
         viewId,
         materialId: `probe-${viewId}`,
         format: 'markdown',
@@ -1114,11 +1548,39 @@ async function main() {
           decodedPageCount: 0,
           rangeCacheBytes: 0,
           estimatedBytes: 0,
+          inFlightRangeReadCount: 0,
+          ...usage,
         },
       });
       evictionProbe.suspend(probeEntry('a'));
       evictionProbe.suspend(probeEntry('b'));
       const runtimeEvictionObserved = evictionProbe.getDiagnostics().evictions === 1;
+      const singleItemProbe = new readerRuntimeCacheModule.ReaderRuntimeCache({
+        budget: { ...cache.getBudget(), maxSuspendedEstimatedBytes: 4 },
+      });
+      const singleItemResult = singleItemProbe.suspend(
+        probeEntry('single-over-budget', { estimatedBytes: 5 }),
+      );
+      const cumulativeProbe = new readerRuntimeCacheModule.ReaderRuntimeCache({
+        budget: { ...cache.getBudget(), maxSuspendedEstimatedBytes: 6 },
+      });
+      cumulativeProbe.suspend(probeEntry('cumulative-oldest', { estimatedBytes: 4 }));
+      const cumulativeResult = cumulativeProbe.suspend(
+        probeEntry('cumulative-newest', { estimatedBytes: 4 }),
+      );
+      const resourcePressure = {
+        singleItem: {
+          admitted: singleItemResult.admitted,
+          reason: singleItemResult.reason,
+          diagnostics: singleItemProbe.getDiagnostics(),
+        },
+        cumulative: {
+          admitted: cumulativeResult.admitted,
+          reason: cumulativeResult.reason,
+          evictedViewIds: cumulativeResult.evicted.map((entry) => entry.viewId),
+          diagnostics: cumulativeProbe.getDiagnostics(),
+        },
+      };
 
       await waitFrames(4);
       await flushAndCloseAllReaderViews();
@@ -1140,16 +1602,20 @@ async function main() {
         })(),
       };
       return {
-        schemaVersion: 'reader-runtime-cache.v5',
-        issue: 62,
-        inheritedFromIssue: 61,
-        inheritedFromIssues: [61, 60, 57],
+        schemaVersion: 'reader-runtime-cache.v6',
+        issue: 63,
+        inheritedFromIssue: 62,
+        inheritedFromIssues: [62, 61, 60, 57],
         status: 'measured',
         runCount: requestedRuns,
         samples,
         formatMatrix,
+        sameFormatTriple,
         residentTriple,
+        pdfResidentTriple,
         dualGroupResident,
+        fourthResidentPressure,
+        resourcePressure,
         shutdownCleanup,
         sourceMode: {
           entered: sourceModeEntered,
@@ -1173,6 +1639,24 @@ async function main() {
     const coldValues = result.samples.map((sample) => sample.epub.coldReturnInteractiveMs);
     const markdownHitValues = result.samples.map((sample) => sample.markdown.hitReturnInteractiveMs);
     const markdownColdValues = result.samples.map((sample) => sample.markdown.coldReturnInteractiveMs);
+    const residentTripleReturnValues = result.residentTriple.samples.map(
+      (sample) => sample.returnInteractiveMs,
+    );
+    const sameFormatTripleReturnValues = result.sameFormatTriple.flatMap((entry) =>
+      entry.samples.flatMap((sample) => sample.returns.map((returned) => returned.returnInteractiveMs)),
+    );
+    const firstOpenInteractiveValues = result.sameFormatTriple.flatMap((entry) =>
+      entry.samples.flatMap((sample) => sample.firstInteractiveMs),
+    );
+    const pdfResidentTripleReturnValues = result.pdfResidentTriple.samples.flatMap(
+      (sample) => [sample.firstReturn.returnInteractiveMs, sample.secondReturn.returnInteractiveMs],
+    );
+    const fourthInteractiveValues = result.fourthResidentPressure.samples.map(
+      (sample) => sample.fourthInteractiveMs,
+    );
+    const fourthColdRebuildValues = result.fourthResidentPressure.samples.map(
+      (sample) => sample.rebuildInteractiveMs,
+    );
     const thresholds = {
       source: '同一 Chrome 进程、同一材料、同一机器的冷回切中位数与 P95',
       epub: {
@@ -1227,6 +1711,60 @@ async function main() {
       mixedFormatPairsCovered: result.formatMatrix
         .filter((pair) => pair.firstFormat !== pair.secondFormat)
         .length === 3,
+      sameFormatTripleCovered:
+        result.sameFormatTriple.length === 3 &&
+        result.sameFormatTriple.every((entry) =>
+          entry.runCount >= 3 &&
+          entry.samples.every((sample) =>
+            sample.viewIds.length === 3 &&
+            sample.residentCount === 3 &&
+            sample.activeCount === 1 &&
+            sample.suspendedCount === 2 &&
+            sample.returns.length === 3,
+          ),
+        ),
+      sameFormatTripleAllThreeReturnAsHits:
+        result.sameFormatTriple.every((entry) =>
+          entry.samples.every((sample) =>
+            sample.returns.every((returned) =>
+              returned.cacheHit === true &&
+              returned.runtimeIdentityPreserved === true &&
+              returned.locationPreserved === true &&
+              returned.workspaceLocationPreserved === true &&
+              returned.noNewSourceOpen === true &&
+              returned.noNewBookDocument === true &&
+              returned.noNewRenderer === true &&
+              returned.noNewRanges === true &&
+              returned.noPdfPageWorkBeforeInteractive === true &&
+              returned.pdfFirstFramePreserved === true,
+            ),
+          ),
+        ),
+      sameFormatTripleResourcesWithinBudget:
+        result.sameFormatTriple.every((entry) =>
+          entry.samples.every((sample) => {
+            const suspended = sample.resourceSnapshot.filter((item) => item.state === 'suspended');
+            const totals = suspended.reduce((sum, item) => ({
+              canvasCount: sum.canvasCount + item.usage.canvasCount,
+              decodedPageCount: sum.decodedPageCount + item.usage.decodedPageCount,
+              estimatedBytes: sum.estimatedBytes + item.usage.estimatedBytes,
+              rangeCacheBytes: sum.rangeCacheBytes + item.usage.rangeCacheBytes,
+              inFlightRangeReadCount:
+                sum.inFlightRangeReadCount + (item.usage.inFlightRangeReadCount ?? 0),
+            }), {
+              canvasCount: 0,
+              decodedPageCount: 0,
+              estimatedBytes: 0,
+              rangeCacheBytes: 0,
+              inFlightRangeReadCount: 0,
+            });
+            return totals.canvasCount <= sample.budget.maxSuspendedCanvases &&
+              totals.decodedPageCount <= sample.budget.maxSuspendedDecodedPages &&
+              totals.estimatedBytes <= sample.budget.maxSuspendedEstimatedBytes &&
+              totals.rangeCacheBytes <= sample.budget.maxSuspendedRangeCacheBytes &&
+              totals.inFlightRangeReadCount === 0;
+          }),
+        ),
       pdfSuspendedUsageWithinBudget: result.formatMatrix
         .filter((pair) => pair.firstFormat === 'pdf')
         .every((pair) =>
@@ -1348,34 +1886,158 @@ async function main() {
         sample.runtimeIdentityPreserved === true &&
         sample.noNewBookDocument === true,
       ),
+      dualGroupStateAndInteractionIsolation: result.dualGroupResident.samples.every((sample) =>
+        sample.workspacePositionsIndependent === true &&
+        sample.secondGroupFocused === true &&
+        sample.firstGroupFocused === true &&
+        sample.primaryMaterialStableAcrossFocus === true &&
+        sample.searchScopedToTargetView === true &&
+        sample.annotationScopedToMaterial === true &&
+        sample.inactiveViewsDoNotExposeInputTargets === true,
+      ),
+      pdfResidentTripleCovered:
+        result.pdfResidentTriple.runCount >= 3 &&
+        result.pdfResidentTriple.samples.every((sample) =>
+          sample.label === 'PDF→EPUB→Markdown→PDF→EPUB→Markdown→PDF' &&
+          sample.residentCount === 3,
+        ),
+      pdfResidentTripleRestoresFirstFrameWithoutPageWork:
+        result.pdfResidentTriple.samples.every((sample) =>
+          [sample.firstReturn, sample.secondReturn].every((entry) =>
+            entry.cacheHit === true &&
+            entry.locationPreserved === true &&
+            entry.firstFrameNoPageWork === true &&
+            entry.inputObservedBeforeDeferredWork === true &&
+            entry.firstFrameState.currentPagePresent === true &&
+            entry.firstFrameState.canvasReady === true &&
+            entry.firstFrameState.textLayerPresent === true &&
+            entry.firstFrameState.highlightLayerPresent === true &&
+            entry.firstFrameState.pagePreserved === true &&
+            entry.firstFrameState.canvasPreserved === true &&
+            entry.firstFrameState.textLayerPreserved === true &&
+            entry.firstFrameState.highlightLayerPreserved === true,
+          ),
+        ),
+      pdfResidentTripleSuspendedResourcesWithinBudget:
+        result.pdfResidentTriple.samples.every((sample) =>
+          sample.suspendedResourceUsage.every((entry) =>
+            entry.usage.canvasCount <= 1 &&
+            entry.usage.decodedPageCount <= 1 &&
+            (entry.usage.inFlightRangeReadCount ?? 0) === 0,
+          ),
+        ),
+      fourthResidentPressureCovered:
+        result.fourthResidentPressure.runCount >= 3 &&
+        result.fourthResidentPressure.samples.every((sample) =>
+          sample.residentCountAfterFourth === 3 &&
+          sample.residentCountAfterRebuild === 3 &&
+          sample.evictionCountAfterFourth >= 1,
+        ),
+      fourthResidentEvictsOnceAndColdRebuildsSafely:
+        result.fourthResidentPressure.samples.every((sample) =>
+          sample.lruTransition?.reason === 'lru' &&
+          sample.explicitMiss === 'not-found' &&
+          sample.lookupMissDiagnostic?.reason === 'not-found' &&
+          sample.oldRuntimeClosedOnce === true &&
+          sample.runtimeRebuilt === true &&
+          sample.locationPreserved === true &&
+          sample.workspaceLocationPreserved === true &&
+          sample.rebuildCounters.sourceOpens === 1 &&
+          sample.rebuildCounters.bookDocumentCreates === 1 &&
+          sample.rebuildCounters.rendererCreates === 1,
+        ),
+      singleItemOverBudgetRejectedWithDiagnostic:
+        result.resourcePressure.singleItem.admitted === false &&
+        result.resourcePressure.singleItem.reason === 'resource-budget' &&
+        result.resourcePressure.singleItem.diagnostics.admissionRejections.some(
+          (entry) =>
+            entry.viewId === 'single-over-budget' && entry.reason === 'resource-budget',
+        ),
+      cumulativeOverBudgetEvictsLruWithDiagnostic:
+        result.resourcePressure.cumulative.admitted === true &&
+        result.resourcePressure.cumulative.evictedViewIds.join(',') === 'cumulative-oldest' &&
+        result.resourcePressure.cumulative.diagnostics.transitions.some(
+          (entry) =>
+            entry.viewId === 'cumulative-oldest' &&
+            entry.to === 'evicted' &&
+            entry.reason === 'lru',
+        ),
     };
     result.thresholds = thresholds;
     result.summary = {
+      firstOpenInteractiveMs: {
+        median: median(firstOpenInteractiveValues),
+        p95: percentile(firstOpenInteractiveValues, 0.95),
+      },
       cacheHitReturnInteractiveMs: { median: median(hitValues), p95: percentile(hitValues, 0.95) },
       coldReturnInteractiveMs: { median: median(coldValues), p95: percentile(coldValues, 0.95) },
       markdownCacheHitReturnInteractiveMs: { median: median(markdownHitValues), p95: percentile(markdownHitValues, 0.95) },
       markdownColdReturnInteractiveMs: { median: median(markdownColdValues), p95: percentile(markdownColdValues, 0.95) },
+      sameFormatTripleReturnInteractiveMs: {
+        median: median(sameFormatTripleReturnValues),
+        p95: percentile(sameFormatTripleReturnValues, 0.95),
+      },
+      residentTripleReturnInteractiveMs: {
+        median: median(residentTripleReturnValues),
+        p95: percentile(residentTripleReturnValues, 0.95),
+      },
+      pdfResidentTripleReturnInteractiveMs: {
+        median: median(pdfResidentTripleReturnValues),
+        p95: percentile(pdfResidentTripleReturnValues, 0.95),
+      },
+      fourthResidentInteractiveMs: {
+        median: median(fourthInteractiveValues),
+        p95: percentile(fourthInteractiveValues, 0.95),
+      },
+      fourthColdRebuildInteractiveMs: {
+        median: median(fourthColdRebuildValues),
+        p95: percentile(fourthColdRebuildValues, 0.95),
+      },
     };
     result.checks = checks;
     if (Object.values(checks).some((value) => value !== true)) {
       console.error(`Reader Runtime 缓存附加验收详情:${JSON.stringify(result.sourceMode)}`);
       console.error(`Reader Runtime 格式矩阵详情:${JSON.stringify(result.formatMatrix)}`);
+      console.error(`Reader Runtime 双组隔离详情:${JSON.stringify(result.dualGroupResident)}`);
+      console.error(`Reader Runtime PDF 三材料详情:${JSON.stringify(result.pdfResidentTriple)}`);
+      console.error(`Reader Runtime 第四项压力详情:${JSON.stringify(result.fourthResidentPressure)}`);
       throw new Error(`Reader Runtime 缓存门禁失败:${JSON.stringify(checks)}`);
     }
-    mkdirSync('scripts/artifacts', { recursive: true });
-    writeFileSync(ARTIFACT, JSON.stringify(result, null, 2));
+    result.status = 'passed';
+    result.recordedAt = new Date().toISOString();
+    result.browser = await browser.version();
+    passedReport = result;
     console.log('Reader Runtime 缓存真实浏览器基线结果:');
     console.log(JSON.stringify(result, null, 2));
-    console.log(`报告:${ARTIFACT}`);
-    console.log('通过:三 resident 单组/双组回切、按 View 隔离的 LRU 淘汰、PDF 首帧复用及既有格式矩阵均符合门禁。');
   } catch (error) {
-    failureReport = error instanceof Error ? error.message : String(error);
+    failureReport = sanitizeFailure(error instanceof Error ? error.message : String(error));
     throw error;
   } finally {
     await flushRuntimeInPage(appPage);
     appPage = null;
     await browser?.close().catch(() => undefined);
     killDevServer();
+    const cleanup = {
+      runtimeFlushed: true,
+      browserClosed: true,
+      devServerClosed: true,
+    };
+    mkdirSync('scripts/artifacts', { recursive: true });
+    if (passedReport) {
+      passedReport.cleanup = cleanup;
+      writeFileSync(ARTIFACT, JSON.stringify(passedReport, null, 2));
+      console.log(`报告:${ARTIFACT}`);
+      console.log('通过:三 resident 单组/双组与 PDF 连续回切、第四项/资源超预算退化、冷重建及既有格式矩阵均符合门禁。');
+    } else if (failureReport) {
+      writeFileSync(ARTIFACT, JSON.stringify({
+        schemaVersion: 'reader-runtime-cache.v6',
+        issue: 63,
+        status: 'failed',
+        recordedAt: new Date().toISOString(),
+        error: failureReport,
+        cleanup,
+      }, null, 2));
+    }
   }
 }
 

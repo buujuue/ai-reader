@@ -94,8 +94,8 @@ export const READER_RUNTIME_CACHE_BUDGETS: Readonly<
     maxActiveRuntimes: 2,
     maxSuspendedRuntimes: 2,
     maxSuspendedIframes: 4,
-    maxSuspendedCanvases: 1,
-    maxSuspendedDecodedPages: 1,
+    maxSuspendedCanvases: 2,
+    maxSuspendedDecodedPages: 2,
     maxSuspendedInFlightRangeReads: 0,
     maxSuspendedRangeCacheBytes: 16 * BYTES_PER_MEBIBYTE,
     maxSuspendedEstimatedBytes: 16 * BYTES_PER_MEBIBYTE,
@@ -158,6 +158,15 @@ export interface ReaderRuntimeCacheDiagnostics {
   rejectedAdmissions: number;
   evictions: number;
   invalidations: number;
+  lookupMisses: Array<{
+    viewId: string;
+    reason: ReaderRuntimeCacheMissReason;
+  }>;
+  admissionRejections: Array<{
+    viewId: string;
+    reason: Exclude<ReaderRuntimeCacheSuspendResult['reason'], 'admitted'>;
+    usage: ReaderRuntimeResourceUsage;
+  }>;
   transitions: Array<{
     viewId: string;
     from: ReaderRuntimeCacheLifecycle | null;
@@ -195,6 +204,8 @@ export class ReaderRuntimeCache<T = BookDocument> {
   private rejectedAdmissions = 0;
   private evictions = 0;
   private invalidations = 0;
+  private readonly lookupMisses: ReaderRuntimeCacheDiagnostics['lookupMisses'] = [];
+  private readonly admissionRejections: ReaderRuntimeCacheDiagnostics['admissionRejections'] = [];
   private readonly transitions: ReaderRuntimeCacheDiagnostics['transitions'] = [];
 
   constructor(options: ReaderRuntimeCacheOptions<T> = {}) {
@@ -249,6 +260,7 @@ export class ReaderRuntimeCache<T = BookDocument> {
     const entry = this.entries.get(viewId);
     if (!entry) {
       this.misses += 1;
+      this.recordLookupMiss(viewId, 'not-found');
       return { kind: 'miss', reason: 'not-found' };
     }
     if (entry.key !== key) {
@@ -256,6 +268,7 @@ export class ReaderRuntimeCache<T = BookDocument> {
       this.recordTransition(viewId, entry.state, 'evicted', 'key-mismatch');
       this.misses += 1;
       this.invalidations += 1;
+      this.recordLookupMiss(viewId, 'key-mismatch');
       return { kind: 'miss', reason: 'key-mismatch', invalidated: entry };
     }
     this.recordTransition(viewId, entry.state, 'active', 'cache-hit');
@@ -270,16 +283,19 @@ export class ReaderRuntimeCache<T = BookDocument> {
   ): ReaderRuntimeCacheSuspendResult<T> {
     if (entry.format !== 'epub' && entry.format !== 'markdown' && entry.format !== 'pdf') {
       this.rejectedAdmissions += 1;
+      this.recordAdmissionRejection(entry, 'unsupported-format');
       return { admitted: false, reason: 'unsupported-format', evicted: [] };
     }
     if (!this.isReady(entry.document)) {
       this.rejectedAdmissions += 1;
+      this.recordAdmissionRejection(entry, 'not-ready');
       return { admitted: false, reason: 'not-ready', evicted: [] };
     }
     const existing = this.entries.get(entry.viewId);
     const usage = normalizeUsage(entry.usage);
     if (!fitsBudget(usage, this.budget)) {
       this.rejectedAdmissions += 1;
+      this.recordAdmissionRejection({ ...entry, usage }, 'resource-budget');
       return { admitted: false, reason: 'resource-budget', evicted: [] };
     }
     this.entries.set(entry.viewId, {
@@ -342,6 +358,11 @@ export class ReaderRuntimeCache<T = BookDocument> {
       rejectedAdmissions: this.rejectedAdmissions,
       evictions: this.evictions,
       invalidations: this.invalidations,
+      lookupMisses: this.lookupMisses.map((miss) => ({ ...miss })),
+      admissionRejections: this.admissionRejections.map((rejection) => ({
+        ...rejection,
+        usage: { ...rejection.usage },
+      })),
       transitions: [...this.transitions],
       entries: this.getEntries().map((entry) => ({
         viewId: entry.viewId,
@@ -371,6 +392,8 @@ export class ReaderRuntimeCache<T = BookDocument> {
     this.rejectedAdmissions = 0;
     this.evictions = 0;
     this.invalidations = 0;
+    this.lookupMisses.length = 0;
+    this.admissionRejections.length = 0;
     this.transitions.length = 0;
     return existing;
   }
@@ -383,6 +406,25 @@ export class ReaderRuntimeCache<T = BookDocument> {
   ): void {
     this.transitions.push({ viewId, from, to, reason });
     if (this.transitions.length > MAX_RUNTIME_TRANSITION_RECORDS) this.transitions.shift();
+  }
+
+  private recordLookupMiss(viewId: string, reason: ReaderRuntimeCacheMissReason): void {
+    this.lookupMisses.push({ viewId, reason });
+    if (this.lookupMisses.length > MAX_RUNTIME_TRANSITION_RECORDS) this.lookupMisses.shift();
+  }
+
+  private recordAdmissionRejection(
+    entry: Omit<ReaderRuntimeCacheEntry<T>, 'state' | 'lastUsedAt'>,
+    reason: Exclude<ReaderRuntimeCacheSuspendResult['reason'], 'admitted'>,
+  ): void {
+    this.admissionRejections.push({
+      viewId: entry.viewId,
+      reason,
+      usage: normalizeUsage(entry.usage),
+    });
+    if (this.admissionRejections.length > MAX_RUNTIME_TRANSITION_RECORDS) {
+      this.admissionRejections.shift();
+    }
   }
 
   private canRegisterAnotherResident(

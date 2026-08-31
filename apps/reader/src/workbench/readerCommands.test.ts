@@ -1312,12 +1312,19 @@ describe('Reader 命令', () => {
   it('切换时清理阅读输入接线,第四个 resident 触发 LRU 且 Runtime 只关闭一次', async () => {
     const materials = await setupWithEpubMaterials(4);
     const readerRuntimeCache = new ReaderRuntimeCache();
-    const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
+    const hosts: Array<FoliateViewHost & {
+      close: ReturnType<typeof vi.fn>;
+      goToLocation: ReturnType<typeof vi.fn>;
+    }> = [];
     registerReaderCommands(registry, {
       importRepository,
       workspaceRepository,
       viewHostFactory: () => {
-        const host = { ...createFakeViewHost(), close: vi.fn() };
+        const host = {
+          ...createFakeViewHost(),
+          close: vi.fn(),
+          goToLocation: vi.fn(async () => undefined),
+        };
         hosts.push(host);
         return host;
       },
@@ -1334,6 +1341,8 @@ describe('Reader 命令', () => {
     await vi.waitFor(() => expect(firstDocument.isRuntimeReady?.()).toBe(true));
     const inputCleanup = vi.fn();
     const unregisterInputCleanup = registerReaderRuntimeInputCleanup(firstViewId, inputCleanup);
+    const savedLocation = { kind: 'epub' as const, cfi: 'epubcfi(/6/4)' };
+    useWorkspaceStore.getState().setViewLocation(firstViewId, savedLocation);
 
     await registry.execute(COMMAND_IDS.libraryOpenBook, materials[1]);
     const secondViewId = useWorkspaceStore.getState().editorGroups[0]!.views[1]!.id;
@@ -1359,6 +1368,23 @@ describe('Reader 命令', () => {
     expect(hosts[0]!.close).toHaveBeenCalledOnce();
     expect(useReaderRuntime.getState().getDocument(firstViewId)).toBeUndefined();
     expect(readerRuntimeCache.getEntries().some((entry) => entry.viewId === firstViewId)).toBe(false);
+    expect(readerRuntimeCache.getDiagnostics().transitions).toContainEqual({
+      viewId: firstViewId,
+      from: 'suspended',
+      to: 'evicted',
+      reason: 'lru',
+    });
+
+    await registry.execute(COMMAND_IDS.readerActivateView, firstViewId, materials[0]);
+    const rebuiltDocument = useReaderRuntime.getState().getDocument(firstViewId)!;
+    expect(rebuiltDocument).not.toBe(firstDocument);
+    mountViewDocument(rebuiltDocument, firstViewId, document.createElement('div'), savedLocation, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(rebuiltDocument.isRuntimeReady?.()).toBe(true));
+    expect(hosts.at(-1)?.goToLocation).toHaveBeenCalledWith(savedLocation.cfi);
+    expect(hosts[0]!.close).toHaveBeenCalledOnce();
     unregisterInputCleanup();
   });
 
