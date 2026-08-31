@@ -30,7 +30,7 @@ export interface ReaderRuntimeState {
   getDocumentCacheKey: (viewId: string) => string | undefined;
   setDocumentState: (viewId: string, state: ReaderDocumentStatus) => void;
   getDocument: (viewId: string) => BookDocument | undefined;
-  removeDocument: (viewId: string) => void;
+  removeDocument: (viewId: string, options?: { close?: boolean }) => void;
   closeAll: () => void;
 }
 
@@ -81,9 +81,9 @@ export const useReaderRuntime = create<ReaderRuntimeState>()((set, get) => ({
 
   getDocument: (viewId) => get().documents.get(viewId),
 
-  removeDocument: (viewId) => {
+  removeDocument: (viewId, options) => {
     const document = get().documents.get(viewId);
-    document?.close();
+    if (options?.close !== false) document?.close();
     set((state) => {
       const documents = new Map(state.documents);
       documents.delete(viewId);

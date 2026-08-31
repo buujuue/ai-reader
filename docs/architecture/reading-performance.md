@@ -30,6 +30,6 @@ pnpm --dir apps/reader test:reading-performance
 
 本地样本不进入仓库。浏览器基线为了构造真实 `File` 会在计时前通过临时 loopback 服务器完整载入样本；该导入/装载读取不计入 PDF.js 打开范围指标，计时从 `BookDocument.open` 或 Reader Command 开始。报告只保留样本大小、页数、耗时、范围、解析轮次、内存与 Canvas 指标，不写入样本路径、正文或可还原元数据。成功和失败路径都会关闭阅读运行时、浏览器连接、Vite 与临时样本服务器；Tauri 模式只断开调试连接，不关闭用户启动的 Tauri 进程。
 
-## Issue #57 总验收衔接
+## Issue #60 总验收衔接
 
 `pnpm --dir apps/reader test:reader-runtime-cache` 在真实 Chrome 中验证三种格式的同格式与跨格式标签回切、双 Editor Group 隔离、缓存预算与 Markdown 生命周期；本脚本验证 600 页以上 PDF 的读取/Canvas 门禁和 Windows Tauri `managed-range`。两条命令共同构成有限活 Reader Runtime 的总验收入口，不能用浏览器设备模拟替代 macOS、iPadOS 或 Android 原生证据。

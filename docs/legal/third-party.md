@@ -75,6 +75,7 @@ AI Reader 本身以 AGPL-3.0 发布(见根目录 `LICENSE`)。本文件记录当
 - upstream 许可文本随 npm 包保留在 `node_modules/.pnpm/pdfjs-dist@5.7.284/node_modules/pdfjs-dist/LICENSE`。
 
 - Issue #57 的跨格式 Runtime 缓存总验收未引入新的第三方依赖，也未直接移植 Readest 代码；真实 PDF.js/Canvas/范围读取证据继续使用上述 `pdfjs-dist` 记录及本项目 `domain/reader/pdf/` 的独立实现。
+- Issue #60 的三 resident Runtime 契约检查了 Readest `apps/readest-app/src/store/bookDataStore.ts`、`apps/readest-app/src/store/readerStore.ts`、`packages/foliate-js/fixed-layout.js` 与 `packages/foliate-js/pdf.js` 的文档复用和页面 LRU 行为；AI Reader 仅继承可复用已解析对象与有界淘汰的行为，没有直接复制代码，不新增第三方许可义务。
 
 ## marked 引入记录
 

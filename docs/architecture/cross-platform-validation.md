@@ -20,11 +20,11 @@ CI 证据覆盖“原生应用可以构建、安装、启动并显示 WebView”
 
 浏览器 `pnpm dev`、浏览器端设备模拟或只在 Windows 本地运行，都不能替代 iPadOS 原生证据。
 
-## Issue #57 Reader Runtime 缓存证据边界
+## Issue #60 三 resident Reader Runtime 证据边界
 
-Windows job 在真实 Chrome 中执行 `pnpm --dir apps/reader test:reader-runtime-cache`，并上传 `reader-runtime-cache.json`；Windows Tauri 的 600 页以上 PDF 范围协议与 Canvas 门禁仍由 `pnpm --dir apps/reader test:reading-performance` 按显式远程调试步骤执行。该两项是桌面总验收证据。
+Windows job 在真实 Chrome 中执行 `pnpm --dir apps/reader test:reader-runtime-cache`，并上传 `reader-runtime-cache.json`；该脚本现包含 Issue #60 的 EPUB→Markdown→PDF→EPUB 三 resident 基线及 Issue #57 的格式回归。Windows Tauri 的 600 页以上 PDF 范围协议与 Canvas 门禁仍由 `pnpm --dir apps/reader test:reading-performance` 按显式远程调试步骤执行。该两项是桌面总验收证据。
 
-macOS、iPadOS 和 Android 平板的构建 job 只证明原生 WebView 的构建、安装、启动与基础触摸/重启链路。三端的 Runtime 缓存命中、超预算安全重建、后台返回和位置恢复必须在真实原生 WebView 中按各自冒烟文档记录，至少覆盖 EPUB↔PDF↔Markdown 的一组切换；浏览器脚本结果只能作为逻辑补充，不能填充原生证据空缺。
+macOS、iPadOS 和 Android 平板的构建 job 只证明原生 WebView 的构建、安装、启动与基础触摸/重启链路。三端的三 resident Runtime 命中、超预算安全重建、后台返回和位置恢复必须在真实原生 WebView 中按各自冒烟文档记录，至少覆盖 EPUB→Markdown→PDF→EPUB 的一组切换；浏览器脚本结果只能作为逻辑补充，不能填充原生证据空缺。
 
 ## Android 平板原生证据边界
 

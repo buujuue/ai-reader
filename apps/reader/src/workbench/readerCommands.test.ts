@@ -1122,8 +1122,8 @@ describe('Reader 命令', () => {
     expect(openManagedFileSource).toHaveBeenCalledTimes(1);
   });
 
-  it('切换时清理阅读输入接线,LRU 淘汰的 Runtime 只关闭一次', async () => {
-    const materials = await setupWithEpubMaterials(3);
+  it('切换时清理阅读输入接线,第四个 resident 触发 LRU 且 Runtime 只关闭一次', async () => {
+    const materials = await setupWithEpubMaterials(4);
     const readerRuntimeCache = new ReaderRuntimeCache();
     const hosts: Array<FoliateViewHost & { close: ReturnType<typeof vi.fn> }> = [];
     registerReaderCommands(registry, {
@@ -1158,6 +1158,15 @@ describe('Reader 命令', () => {
     await vi.waitFor(() => expect(secondDocument.isRuntimeReady?.()).toBe(true));
 
     await registry.execute(COMMAND_IDS.libraryOpenBook, materials[2]);
+    const thirdViewId = useWorkspaceStore.getState().editorGroups[0]!.views[2]!.id;
+    const thirdDocument = useReaderRuntime.getState().getDocument(thirdViewId)!;
+    mountViewDocument(thirdDocument, thirdViewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(thirdDocument.isRuntimeReady?.()).toBe(true));
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, materials[3]);
 
     expect(inputCleanup).toHaveBeenCalledOnce();
     expect(hosts[0]!.close).toHaveBeenCalledOnce();

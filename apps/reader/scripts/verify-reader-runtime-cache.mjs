@@ -1,8 +1,9 @@
 /**
- * Reader Runtime 有界缓存的真实浏览器总验收（工单 #57）。
+ * Reader Runtime 有界缓存的真实浏览器总验收（工单 #60，继承 #57）。
  *
  * 在真实 Chrome 中使用 library.openBook / reader.activateView Command 构造
- * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，并对 PDF pair 额外执行
+ * EPUB、PDF 与 Markdown 的同格式/跨格式 A→B→A 流程，并新增三视图
+ * EPUB→Markdown→PDF→EPUB resident 流程；对 PDF pair 额外执行
  * A→B→A→B→A 连续回切，记录冷启动与缓存回切的
  * 可交互时间、文档/renderer 创建、ManagedFileSource 范围读取、Runtime 资源和可获得的堆内存。
  * 门槛从同一台机器的冷启动中位数派生，不写死毫秒数。
@@ -191,7 +192,10 @@ async function main() {
         rendererCreates: 0,
         pdfDocumentLoads: 0,
         pdfPageGets: 0,
+        pdfRasterizations: 0,
+        bookDocumentCreates: 0,
       };
+      const observedDocuments = new WeakSet();
       const originalOpenManagedFileSource = importRepository.openManagedFileSource.bind(importRepository);
       importRepository.openManagedFileSource = async (materialId) => {
         counters.sourceOpens += 1;
@@ -237,6 +241,14 @@ async function main() {
           };
         },
       });
+      const pdfRasterize = (page, canvas, scale) => {
+        counters.pdfRasterizations += 1;
+        const canvasContext = canvas.getContext('2d');
+        if (!canvasContext) {
+          return { promise: Promise.resolve(), cancel: () => undefined };
+        }
+        return page.render({ canvasContext, viewport: page.getViewport({ scale }) });
+      };
       const cache = new readerRuntimeCacheModule.ReaderRuntimeCache();
       // 使用应用正式服务组装器，确保总验收走与实际应用相同的 Command/Repository
       // 注册路径，而不是只手工注册阅读命令。
@@ -253,6 +265,7 @@ async function main() {
         workspaceRepository,
         viewHostFactory,
         pdfLib,
+        pdfRasterize,
         readerRuntimeCache: cache,
       });
       const registry = services.commands;
@@ -281,6 +294,8 @@ async function main() {
         rendererCreates: counters.rendererCreates - before.rendererCreates,
         pdfDocumentLoads: counters.pdfDocumentLoads - before.pdfDocumentLoads,
         pdfPageGets: counters.pdfPageGets - before.pdfPageGets,
+        pdfRasterizations: counters.pdfRasterizations - before.pdfRasterizations,
+        bookDocumentCreates: counters.bookDocumentCreates - before.bookDocumentCreates,
         heapDeltaBytes:
           before.heapBytes === null || heap() === null ? null : heap() - before.heapBytes,
       });
@@ -299,6 +314,10 @@ async function main() {
         await waitFor(() => commandModule.getReaderRuntimeDocumentForMeasurement(viewId) !== undefined, `${material.title} BookDocument 创建`);
         const book = commandModule.getReaderRuntimeDocumentForMeasurement(viewId);
         if (!book) throw new Error(`没有创建 ${material.title} 的 BookDocument`);
+        if (!observedDocuments.has(book)) {
+          observedDocuments.add(book);
+          counters.bookDocumentCreates += 1;
+        }
         await waitFor(
           () => {
             const status = commandModule.getReaderRuntimeStatusForMeasurement(viewId);
@@ -310,6 +329,9 @@ async function main() {
           },
           `${material.title} 首次可见`,
         );
+        const firstVisibleMs = performance.now() - started;
+        await waitForInteractive({ viewId, book }, `${material.title} 首次可交互`);
+        const firstInteractiveMs = performance.now() - started;
         await waitFrames(4);
         const workspaceLocation = useWorkspaceStore.getState().editorGroups
           .flatMap((group) => group.views)
@@ -320,7 +342,8 @@ async function main() {
           locationBeforeSwitch: workspaceLocation ?? book.getLocation(),
           tocBeforeSwitch: book.getTOC(),
           format: book.format,
-          firstVisibleMs: performance.now() - started,
+          firstVisibleMs,
+          firstInteractiveMs,
         };
       };
 
@@ -672,10 +695,107 @@ async function main() {
         formatMatrix.push(await measurePair(firstMaterial, secondMaterial, label));
       }
 
+      const measureResidentTriple = async (run) => {
+        await resetHarness();
+        const [firstMaterial, secondMaterial, thirdMaterial] = [materials[0], materials[1], materials[4]];
+        const sequenceStarted = snapshotCounters();
+        const first = await openAndWait(firstMaterial, COMMAND_IDS.libraryOpenBook);
+        const second = await openAndWait(secondMaterial, COMMAND_IDS.libraryOpenBook);
+        const third = await openAndWait(thirdMaterial, COMMAND_IDS.libraryOpenBook);
+        const expectedViewIds = [first.viewId, second.viewId, third.viewId];
+        const residentBeforeReturn = cache.getDiagnostics().entries.filter(
+          (entry) => expectedViewIds.includes(entry.viewId),
+        );
+        const firstLocationBeforeReturn = first.book.getLocation();
+        const firstWorkspaceLocationBeforeReturn = useWorkspaceStore.getState().editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === first.viewId)?.location ?? null;
+        const hitsBeforeReturn = cache.getDiagnostics().hits;
+        const countersBeforeReturn = snapshotCounters();
+        const returnStarted = performance.now();
+        await registry.execute(COMMAND_IDS.readerActivateView, first.viewId, firstMaterial);
+        await waitForInteractive(first, 'EPUB→Markdown→PDF→EPUB 回切首次可交互');
+        await waitFrames(8);
+        const residentAfterReturn = cache.getDiagnostics().entries.filter(
+          (entry) => expectedViewIds.includes(entry.viewId),
+        );
+        const returnedDocument = commandModule.getReaderRuntimeDocumentForMeasurement(first.viewId);
+        const firstLocationAfterReturn = first.book.getLocation();
+        const firstWorkspaceLocationAfterReturn = useWorkspaceStore.getState().editorGroups
+          .flatMap((group) => group.views)
+          .find((view) => view.id === first.viewId)?.location ?? null;
+        const returnCounters = diffCounters(countersBeforeReturn);
+        const sequenceCounters = diffCounters(sequenceStarted);
+        return {
+          run,
+          label: 'EPUB→Markdown→PDF→EPUB',
+          firstFormat: first.book.format,
+          secondFormat: second.book.format,
+          thirdFormat: third.book.format,
+          viewIds: expectedViewIds,
+          firstVisibleMs: {
+            epub: first.firstVisibleMs,
+            markdown: second.firstVisibleMs,
+            pdf: third.firstVisibleMs,
+          },
+          firstInteractiveMs: {
+            epub: first.firstInteractiveMs,
+            markdown: second.firstInteractiveMs,
+            pdf: third.firstInteractiveMs,
+          },
+          returnInteractiveMs: performance.now() - returnStarted,
+          cacheHit: cache.getDiagnostics().hits - hitsBeforeReturn === 1,
+          residentBeforeReturn,
+          residentAfterReturn,
+          residentCountBeforeReturn: residentBeforeReturn.length,
+          residentCountAfterReturn: residentAfterReturn.length,
+          suspendedCountBeforeReturn: residentBeforeReturn.filter((entry) => entry.state === 'suspended').length,
+          suspendedCountAfterReturn: residentAfterReturn.filter((entry) => entry.state === 'suspended').length,
+          activeCountAfterReturn: residentAfterReturn.filter((entry) => entry.state === 'active').length,
+          runtimeIdentityPreserved: returnedDocument === first.book,
+          locationPreserved: firstLocationBeforeReturn !== null &&
+            JSON.stringify(firstLocationAfterReturn) === JSON.stringify(firstLocationBeforeReturn),
+          workspaceLocationPreserved: firstWorkspaceLocationBeforeReturn !== null &&
+            JSON.stringify(firstWorkspaceLocationAfterReturn) === JSON.stringify(firstLocationAfterReturn),
+          noNewSourceOpen: returnCounters.sourceOpens === 0,
+          noNewBookDocument: returnCounters.bookDocumentCreates === 0 &&
+            returnedDocument === first.book,
+          noNewFoliateRenderer: returnCounters.rendererCreates === 0,
+          noNewPdfDocument: returnCounters.pdfDocumentLoads === 0,
+          noNewPdfPageGet: returnCounters.pdfPageGets === 0,
+          noNewPdfRasterization: returnCounters.pdfRasterizations === 0,
+          noNewRanges: returnCounters.rangeReads === 0,
+          counters: {
+            sequence: sequenceCounters,
+            return: returnCounters,
+          },
+          budget: cache.getBudget(),
+        };
+      };
+
+      const residentTripleSamples = [];
+      for (let run = 0; run < requestedRuns; run += 1) {
+        residentTripleSamples.push(await measureResidentTriple(run + 1));
+      }
+      const residentTriple = {
+        label: 'EPUB→Markdown→PDF→EPUB',
+        runCount: residentTripleSamples.length,
+        samples: residentTripleSamples,
+      };
+
       // 在真实 Chrome 中验证 Markdown 源码模式的 Runtime 生命周期：进入源码模式
       // 后 Foliate 挂起，编辑会使旧对象失效，放弃修改并退出时按共享会话重建。
       const markdownViewId = viewIdForMaterial(materials[1].id);
       if (!markdownViewId) throw new Error('源码模式验收没有找到 Markdown ReadingView');
+      // 三 resident 流程结束时 EPUB 是活动视图；源码模式只对当前活动
+      // ReadingView 有意义，因此先通过正式 Command 把 Markdown 提升为 active。
+      await registry.execute(COMMAND_IDS.readerActivateView, markdownViewId, materials[1]);
+      const activeMarkdownDocument = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
+      if (!activeMarkdownDocument) throw new Error('源码模式验收没有找到活动 Markdown Runtime');
+      await waitForInteractive(
+        { viewId: markdownViewId, book: activeMarkdownDocument },
+        '源码模式验收前 Markdown Runtime 可交互',
+      );
       const sourceModeBefore = commandModule.getReaderRuntimeDocumentForMeasurement(markdownViewId);
       await registry.execute(COMMAND_IDS.markdownToggleSourceMode, markdownViewId);
       const sourceModeEntered = useWorkspaceStore.getState().editorGroups
@@ -823,12 +943,14 @@ async function main() {
         })(),
       };
       return {
-        schemaVersion: 'reader-runtime-cache.v2',
-        issue: 57,
+        schemaVersion: 'reader-runtime-cache.v3',
+        issue: 60,
+        inheritedFromIssue: 57,
         status: 'measured',
         runCount: requestedRuns,
         samples,
         formatMatrix,
+        residentTriple,
         shutdownCleanup,
         sourceMode: {
           entered: sourceModeEntered,
@@ -941,6 +1063,43 @@ async function main() {
         result.sourceMode.dualGroupRuntimeIndependent &&
         result.sourceMode.sharedSessionPresent &&
         result.sourceMode.runtimeEvictionObserved,
+      residentTripleCovered: result.residentTriple.label === 'EPUB→Markdown→PDF→EPUB' &&
+        result.residentTriple.runCount >= 3 &&
+        result.residentTriple.samples.every((sample) =>
+          sample.firstFormat === 'epub' &&
+          sample.secondFormat === 'markdown' &&
+          sample.thirdFormat === 'pdf',
+        ),
+      residentTripleKeepsThreeResidents: result.residentTriple.samples.every((sample) =>
+        sample.residentCountBeforeReturn === 3 &&
+        sample.residentCountAfterReturn === 3 &&
+        sample.suspendedCountBeforeReturn === 2 &&
+        sample.suspendedCountAfterReturn === 2 &&
+        sample.activeCountAfterReturn === 1,
+      ),
+      residentTripleCacheHit: result.residentTriple.samples.every((sample) =>
+        sample.cacheHit &&
+        sample.runtimeIdentityPreserved &&
+        sample.locationPreserved &&
+        sample.workspaceLocationPreserved,
+      ),
+      residentTripleInitialMetrics: result.residentTriple.samples.every((sample) =>
+        sample.counters.sequence.sourceOpens >= 3 &&
+        sample.counters.sequence.rendererCreates >= 2 &&
+        sample.counters.sequence.pdfDocumentLoads >= 1 &&
+        sample.counters.sequence.pdfPageGets >= 1 &&
+        sample.counters.sequence.pdfRasterizations >= 1 &&
+        sample.counters.sequence.rangeReads >= 1,
+      ),
+      residentTripleCacheHitCreatesNoReaderObjects: result.residentTriple.samples.every((sample) =>
+        sample.noNewSourceOpen &&
+        sample.noNewBookDocument &&
+        sample.noNewFoliateRenderer &&
+        sample.noNewPdfDocument &&
+        sample.noNewPdfPageGet &&
+        sample.noNewPdfRasterization &&
+        sample.noNewRanges,
+      ),
     };
     result.thresholds = thresholds;
     result.summary = {
@@ -960,7 +1119,7 @@ async function main() {
     console.log('Reader Runtime 缓存真实浏览器基线结果:');
     console.log(JSON.stringify(result, null, 2));
     console.log(`报告:${ARTIFACT}`);
-    console.log('通过:PDF A→B→A→B→A 及 EPUB/Markdown A→B→A 缓存命中不重复创建文档、renderer 或范围读取。');
+    console.log('通过:EPUB→Markdown→PDF→EPUB 三视图常驻回切及既有格式矩阵均未重复创建文档、renderer、PDF 页面或范围读取。');
   } catch (error) {
     failureReport = error instanceof Error ? error.message : String(error);
     throw error;

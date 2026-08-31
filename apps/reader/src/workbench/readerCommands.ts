@@ -321,8 +321,28 @@ export function restoreReaderViewRuntime(
 }
 
 /** 关闭一个不再可缓存的 Runtime,先移除缓存索引再由 Runtime Store 统一 close。 */
-function closeReaderRuntime(viewId: string, cache: ReaderRuntimeCache): void {
-  cache.remove(viewId);
+function closeReaderRuntime(
+  viewId: string,
+  cache: ReaderRuntimeCache,
+  expectedDocument?: BookDocument,
+): void {
+  const removed = cache.remove(viewId, expectedDocument);
+  if (expectedDocument) {
+    const current = useReaderRuntime.getState().getDocument(viewId);
+    if (current === expectedDocument && !removed) {
+      // LRU 登记已先从缓存索引移除旧对象；关闭后只从 Store 忘记它，避免
+      // removeDocument 再次 close，确保每个 Runtime 只关闭一次。
+      expectedDocument.close();
+      useReaderRuntime.getState().removeDocument(viewId, { close: false });
+      return;
+    }
+    if (current !== expectedDocument) {
+      // 同一 viewId 被新文档替换时，不能通过 viewId 删除新对象；这里只关闭
+      // 已从缓存索引移除的旧对象，Runtime Store 仍保留当前文档。
+      expectedDocument.close();
+      return;
+    }
+  }
   useReaderRuntime.getState().removeDocument(viewId);
 }
 
@@ -618,7 +638,7 @@ async function suspendViewRuntime(
     closeReaderRuntime(viewId, cache);
   }
   for (const evicted of result.evicted) {
-    closeReaderRuntime(evicted.viewId, cache);
+    closeReaderRuntime(evicted.viewId, cache, evicted.document);
   }
 }
 
@@ -791,7 +811,7 @@ async function ensureActiveViewDocument(
   const cacheKey = buildReaderRuntimeCacheKeyForMaterial(viewId, targetMaterial);
   if (existing && runtime.getDocumentLifecycle(viewId) === 'active') {
     if (runtime.getDocumentCacheKey(viewId) === cacheKey) {
-      cache.registerActive({
+      const registered = cache.registerActive({
         viewId,
         materialId: targetMaterial.id,
         format: existing.format,
@@ -799,6 +819,9 @@ async function ensureActiveViewDocument(
         document: existing,
         usage: estimateReaderRuntimeResourceUsage(existing),
       });
+      for (const evicted of registered) {
+        closeReaderRuntime(evicted.viewId, cache, evicted.document);
+      }
       runtime.setDocumentState(viewId, { status: 'ready' });
       return existing;
     }
@@ -857,7 +880,7 @@ async function ensureActiveViewDocument(
     lifecycle: 'active',
     cacheKey,
   });
-  cache.registerActive({
+  const registered = cache.registerActive({
     viewId,
     materialId: targetMaterial.id,
     format: document.format,
@@ -865,6 +888,9 @@ async function ensureActiveViewDocument(
     document,
     usage: estimateReaderRuntimeResourceUsage(document),
   });
+  for (const evicted of registered) {
+    closeReaderRuntime(evicted.viewId, cache, evicted.document);
+  }
   return document;
 }
 
@@ -893,7 +919,7 @@ async function activateViewRuntime(
 
     // 源码模式不需要可见 Foliate，但未修改内容仍可以保留一个受保护的
     // suspended Runtime。先提升目标缓存项，再挂起上一个活动视图，避免
-    // 单槽位 LRU 把源码视图的无损回切对象淘汰。
+    // resident LRU 把源码视图的无损回切对象淘汰。
     if (
       targetIsSourceMode &&
       targetDocument &&
@@ -917,8 +943,8 @@ async function activateViewRuntime(
       return null;
     }
 
-    // 先提升目标缓存项再挂起旧活动项。缓存只有一个挂起槽位时，若反过来处理，
-    // 旧项会把即将回切的目标 LRU 淘汰，A→B→A 会错误地退化为重建。
+    // 先提升目标缓存项再挂起旧活动项。若反过来处理，旧项可能在 resident
+    // 容量收缩时把即将回切的目标 LRU 淘汰，A→B→A 会错误地退化为重建。
     if (
       targetDocument &&
       useReaderRuntime.getState().getDocumentLifecycle(viewId) === 'suspended' &&

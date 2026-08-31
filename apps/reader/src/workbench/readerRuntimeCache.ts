@@ -64,9 +64,11 @@ export function buildReaderRuntimeCacheKeyForMaterial(
 
 export interface ReaderRuntimeCacheBudget {
   profile: ReaderRuntimeCacheProfile;
+  /** 所有仍由缓存/Runtime 持有、可直接恢复的 ReadingView Runtime 总上限。 */
+  maxResidentRuntimes: number;
   /** 活动 Runtime 的总上限；当前最多两个 Editor Group。 */
   maxActiveRuntimes: number;
-  /** 允许保留的挂起 Runtime 数量。 */
+  /** 在 resident 上限内允许保留的挂起 Runtime 数量。 */
   maxSuspendedRuntimes: number;
   maxSuspendedIframes: number;
   maxSuspendedCanvases: number;
@@ -88,8 +90,9 @@ export const READER_RUNTIME_CACHE_BUDGETS: Readonly<
 > = Object.freeze({
   desktop: Object.freeze({
     profile: 'desktop',
+    maxResidentRuntimes: 3,
     maxActiveRuntimes: 2,
-    maxSuspendedRuntimes: 1,
+    maxSuspendedRuntimes: 2,
     maxSuspendedIframes: 4,
     maxSuspendedCanvases: 1,
     maxSuspendedDecodedPages: 1,
@@ -99,8 +102,9 @@ export const READER_RUNTIME_CACHE_BUDGETS: Readonly<
   }),
   tablet: Object.freeze({
     profile: 'tablet',
+    maxResidentRuntimes: 3,
     maxActiveRuntimes: 2,
-    maxSuspendedRuntimes: 1,
+    maxSuspendedRuntimes: 2,
     maxSuspendedIframes: 2,
     maxSuspendedCanvases: 1,
     maxSuspendedDecodedPages: 1,
@@ -203,20 +207,42 @@ export class ReaderRuntimeCache<T = BookDocument> {
     return this.budget;
   }
 
-  registerActive(entry: Omit<ReaderRuntimeCacheEntry<T>, 'state' | 'lastUsedAt'>): void {
+  registerActive(
+    entry: Omit<ReaderRuntimeCacheEntry<T>, 'state' | 'lastUsedAt'>,
+  ): ReaderRuntimeCacheEntry<T>[] {
     // 未知格式不进入该缓存，避免“活动登记”留下一个看似可命中的条目。
-    if (entry.format !== 'epub' && entry.format !== 'markdown' && entry.format !== 'pdf') return;
+    if (entry.format !== 'epub' && entry.format !== 'markdown' && entry.format !== 'pdf') return [];
+    const evicted: ReaderRuntimeCacheEntry<T>[] = [];
     const existing = this.entries.get(entry.viewId);
-    if (existing?.document !== entry.document) {
+    const sameDocument = existing?.document === entry.document;
+    if (existing && !sameDocument) {
       this.entries.delete(entry.viewId);
+      this.recordTransition(existing.viewId, existing.state, 'evicted', 'replaced');
+      evicted.push(existing);
+      this.evictions += 1;
     }
-    this.recordTransition(entry.viewId, existing?.state ?? null, 'active', 'register');
+    const current = sameDocument ? existing : undefined;
+    const activeCount = [...this.entries.values()].filter(
+      (candidate) => candidate.state === 'active' && candidate.viewId !== entry.viewId,
+    ).length;
+    if (activeCount >= this.budget.maxActiveRuntimes && current?.state !== 'active') return evicted;
+    while (!this.canRegisterAnotherResident(current, entry)) {
+      const oldest = this.evictOldestSuspended();
+      if (!oldest) {
+        // 合法的调用路径最多只有两个活动组；若调用方违反该边界，拒绝
+        // 登记比突破 resident 硬预算更安全，调用方仍可按完整打开路径工作。
+        return evicted;
+      }
+      evicted.push(oldest);
+    }
+    this.recordTransition(entry.viewId, current?.state ?? null, 'active', 'register');
     this.entries.set(entry.viewId, {
       ...entry,
       usage: normalizeUsage(entry.usage),
       state: 'active',
       lastUsedAt: this.now(),
     });
+    return evicted;
   }
 
   activate(viewId: string, key: string): ReaderRuntimeCacheLookup<T> {
@@ -265,15 +291,10 @@ export class ReaderRuntimeCache<T = BookDocument> {
     this.recordTransition(entry.viewId, existing?.state ?? 'active', 'suspended', 'suspend');
     this.admissions += 1;
     const evicted: ReaderRuntimeCacheEntry<T>[] = [];
-    while (!fitsSuspendedBudget(this.entries, this.budget)) {
-      const oldest = [...this.entries.values()]
-        .filter((candidate) => candidate.state === 'suspended')
-        .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0];
+    while (!fitsResidentBudget(this.entries, this.budget)) {
+      const oldest = this.evictOldestSuspended();
       if (!oldest) break;
-      this.entries.delete(oldest.viewId);
-      this.recordTransition(oldest.viewId, oldest.state, 'evicted', 'lru');
       evicted.push(oldest);
-      this.evictions += 1;
     }
     const admitted = this.entries.get(entry.viewId)?.document === entry.document;
     return {
@@ -283,8 +304,9 @@ export class ReaderRuntimeCache<T = BookDocument> {
     };
   }
 
-  remove(viewId: string): ReaderRuntimeCacheEntry<T> | undefined {
+  remove(viewId: string, expectedDocument?: T): ReaderRuntimeCacheEntry<T> | undefined {
     const entry = this.entries.get(viewId);
+    if (expectedDocument !== undefined && entry?.document !== expectedDocument) return undefined;
     this.entries.delete(viewId);
     if (entry) this.recordTransition(viewId, entry.state, 'closed', 'remove');
     return entry;
@@ -362,6 +384,33 @@ export class ReaderRuntimeCache<T = BookDocument> {
     this.transitions.push({ viewId, from, to, reason });
     if (this.transitions.length > MAX_RUNTIME_TRANSITION_RECORDS) this.transitions.shift();
   }
+
+  private canRegisterAnotherResident(
+    existing: ReaderRuntimeCacheEntry<T> | undefined,
+    entry: Omit<ReaderRuntimeCacheEntry<T>, 'state' | 'lastUsedAt'>,
+  ): boolean {
+    const activeCount = [...this.entries.values()].filter(
+      (candidate) => candidate.state === 'active' && candidate.viewId !== entry.viewId,
+    ).length;
+    if (activeCount >= this.budget.maxActiveRuntimes && existing?.state !== 'active') return false;
+    const residentCount = existing ? this.entries.size : this.entries.size + 1;
+    return residentCount <= this.budget.maxResidentRuntimes;
+  }
+
+  private findOldestSuspended(): ReaderRuntimeCacheEntry<T> | undefined {
+    return [...this.entries.values()]
+      .filter((candidate) => candidate.state === 'suspended')
+      .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0];
+  }
+
+  private evictOldestSuspended(): ReaderRuntimeCacheEntry<T> | undefined {
+    const oldest = this.findOldestSuspended();
+    if (!oldest) return undefined;
+    this.entries.delete(oldest.viewId);
+    this.recordTransition(oldest.viewId, oldest.state, 'evicted', 'lru');
+    this.evictions += 1;
+    return oldest;
+  }
 }
 
 export function estimateReaderRuntimeResourceUsage(
@@ -414,10 +463,11 @@ function fitsBudget(
   );
 }
 
-function fitsSuspendedBudget<T>(
+function fitsResidentBudget<T>(
   entries: Map<string, ReaderRuntimeCacheEntry<T>>,
   budget: ReaderRuntimeCacheBudget,
 ): boolean {
+  if (entries.size > budget.maxResidentRuntimes) return false;
   const suspended = [...entries.values()].filter((entry) => entry.state === 'suspended');
   if (suspended.length > budget.maxSuspendedRuntimes) return false;
   const total = suspended.reduce(

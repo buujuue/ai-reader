@@ -120,10 +120,12 @@ const checks = [
       workflow.includes('ai-reader-reading-performance-${{ github.sha }}'),
   },
   {
-    name: 'Issue #57 跨格式 Reader Runtime 总验收入口已接入',
+    name: 'Issue #60 三 resident Reader Runtime 总验收入口已接入',
     pass:
-      runtimeCacheScript.includes('issue: 57') &&
-      runtimeCacheScript.includes("schemaVersion: 'reader-runtime-cache.v2'") &&
+      runtimeCacheScript.includes('issue: 60') &&
+      runtimeCacheScript.includes("schemaVersion: 'reader-runtime-cache.v3'") &&
+      runtimeCacheScript.includes('EPUB→Markdown→PDF→EPUB') &&
+      runtimeCacheScript.includes('residentTriple') &&
       runtimeCacheScript.includes('EPUB↔EPUB') &&
       runtimeCacheScript.includes('Markdown↔Markdown') &&
       runtimeCacheScript.includes('PDF↔PDF') &&
@@ -131,6 +133,8 @@ const checks = [
       runtimeCacheScript.includes('shutdownCleanup') &&
       runtimeCacheScript.includes('buildLargePdfFixture') &&
       runtimeCacheScript.includes('pdfDocumentLoads') &&
+      runtimeCacheScript.includes('pdfRasterizations') &&
+      runtimeCacheScript.includes('bookDocumentCreates') &&
       workflow.includes('pnpm --dir apps/reader test:reader-runtime-cache') &&
       workflow.includes('ai-reader-reader-runtime-cache-${{ github.sha }}'),
   },

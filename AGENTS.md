@@ -83,7 +83,7 @@ pnpm verify:ipados          # 校验 iPadOS 核心阅读冒烟的原生配置与
 pnpm verify:android         # 校验 Android 平板核心阅读冒烟的原生配置与工作流步骤
 pnpm --dir apps/reader test:real-epub-p0 # 真实 Chrome 验证 EPUB 2/3 P0 阅读矩阵
 pnpm --dir apps/reader test:reading-performance # 真实 Chrome 验证大型 EPUB/PDF 范围读取性能
-pnpm --dir apps/reader test:reader-runtime-cache # 真实 Chrome 验证 EPUB/PDF/Markdown Reader Runtime 总验收
+pnpm --dir apps/reader test:reader-runtime-cache # 真实 Chrome 验证三 resident Runtime 与 EPUB/PDF/Markdown Reader Runtime 总验收
 pnpm verify:v1              # 第一版跨端交付静态总验收
 cargo test                  # Rust 迁移与 workspace 持久化契约
 cargo clippy --workspace --all-targets -- -D warnings
@@ -99,7 +99,7 @@ JS 依赖以 `pnpm-lock.yaml` 固定，Rust 依赖以 `Cargo.lock` 固定;提交
 - EPUB、PDF 与 Markdown 统一通过 `BookDocument` 能力面向上层；外部模块不得直接操纵具体阅读器运行时对象。
 - 同一 Editor Group 内每个阅读材料最多对应一个 ReadingView；第一版最多两个 Editor Group，允许同一材料跨组同时打开。再次从书库打开时优先在当前组激活已有标签，不创建同组重复标签。
 - 用户意图通过稳定的 Command 表达，已经发生的事实通过 Event 表达。按钮、菜单、键盘和触摸适配器执行同一 Command。
-- Workspace State 必须可序列化；Foliate/PDF View、加载任务、当前选区等 Reader Runtime 活对象不得混入持久化状态。每组只保留一个活动渲染器，全应用最多两个；EPUB/Markdown/PDF 已完成 Runtime 可按 ADR-0040 进入有界挂起缓存，PDF 挂起只保留 PDF.js 文档和当前页的预算内结果。
+- Workspace State 必须可序列化；Foliate/PDF View、加载任务、当前选区等 Reader Runtime 活对象不得混入持久化状态。每组只保留一个活动渲染器，全应用最多两个 active、全应用最多三个 resident Runtime；EPUB/Markdown/PDF 已完成 Runtime 可按 ADR-0041 进入有界 suspended 缓存，resident 超限只按 LRU 淘汰 suspended，PDF 挂起只保留 PDF.js 文档和当前页的预算内结果。
 - Markdown 源码模式由共享 `MarkdownDocumentSession` 与 CodeMirror 独占可见编辑区域；切换到源码模式时挂起 Foliate Runtime，缓冲区变化、正式保存、恢复快照和版本变化必须先失效旧渲染结果，再按最新会话文本重建。
 - 阅读材料一律视为不可信内容。禁止执行书内脚本、加载未经允许的远程资源或把任意文件系统能力暴露给阅读内容。
 - 所有导入材料进入托管书库；稳定 `BookId` 与完整内容指纹职责分离。不得仅按标题、作者或文件路径合并资料。

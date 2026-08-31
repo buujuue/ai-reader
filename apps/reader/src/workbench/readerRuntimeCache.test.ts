@@ -28,6 +28,75 @@ function makeEntry(id: string, usage = {
 }
 
 describe('ReaderRuntimeCache', () => {
+  it('默认把三个 ReadingView Runtime 作为 resident 硬上限', () => {
+    expect(READER_RUNTIME_CACHE_BUDGETS.desktop).toMatchObject({
+      maxResidentRuntimes: 3,
+      maxActiveRuntimes: 2,
+      maxSuspendedRuntimes: 2,
+    });
+    expect(READER_RUNTIME_CACHE_BUDGETS.tablet).toMatchObject({
+      maxResidentRuntimes: 3,
+      maxActiveRuntimes: 2,
+      maxSuspendedRuntimes: 2,
+    });
+  });
+
+  it('A→B→C 保留三个按 ReadingView 隔离的 resident Runtime', () => {
+    let now = 0;
+    const cache = new ReaderRuntimeCache<{ id: string }>({
+      budget: makeBudget(),
+      now: () => now,
+    });
+    const first = makeEntry('first');
+    const second = makeEntry('second');
+    const third = makeEntry('third');
+
+    expect(cache.suspend(first).admitted).toBe(true);
+    now = 1;
+    expect(cache.suspend(second).admitted).toBe(true);
+    now = 2;
+    expect(cache.registerActive(third)).toEqual([]);
+
+    expect(cache.getEntries()).toHaveLength(3);
+    expect(cache.getEntries().filter((entry) => entry.state === 'suspended')).toHaveLength(2);
+    expect(cache.activate('first', 'key-first').kind).toBe('hit');
+    expect(cache.getEntries().find((entry) => entry.viewId === 'first')?.state).toBe('active');
+  });
+
+  it('新增第四个 resident Runtime 时只按 LRU 淘汰挂起对象', () => {
+    let now = 0;
+    const cache = new ReaderRuntimeCache<{ id: string }>({
+      budget: makeBudget(),
+      now: () => now,
+    });
+    expect(cache.suspend(makeEntry('a')).admitted).toBe(true);
+    now = 1;
+    expect(cache.suspend(makeEntry('b')).admitted).toBe(true);
+    now = 2;
+    cache.registerActive(makeEntry('c'));
+    now = 3;
+    const result = cache.suspend(makeEntry('d'));
+
+    expect(result.admitted).toBe(true);
+    expect(result.evicted.map((entry) => entry.viewId)).toEqual(['a']);
+    expect(cache.getEntries()).toHaveLength(3);
+    expect(cache.getEntries().map((entry) => entry.viewId)).toEqual(['b', 'c', 'd']);
+    expect(cache.getEntries().find((entry) => entry.viewId === 'c')?.state).toBe('active');
+  });
+
+  it('同一 View 注册新文档时返回旧条目供所有者安全关闭', () => {
+    const cache = new ReaderRuntimeCache<{ id: string }>({ budget: makeBudget() });
+    const previous = makeEntry('same-view');
+    const replacement = { ...makeEntry('same-view'), key: 'replacement-key' };
+
+    cache.registerActive(previous);
+    const evicted = cache.registerActive(replacement);
+
+    expect(evicted).toHaveLength(1);
+    expect(evicted[0]?.document).toBe(previous.document);
+    expect(cache.getEntries()[0]?.document).toBe(replacement.document);
+  });
+
   it('缓存键隔离视图、材料、完整指纹、文档版本和算法版本', () => {
     const base = {
       viewId: 'view-a',
