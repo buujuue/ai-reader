@@ -59,20 +59,22 @@ function percentile(values, fraction) {
 
 function sanitizeFailure(value) {
   return String(value)
-    .replace(/file:\/\/\/[^\s;]+/gi, '<local-path>')
-    .replace(/[A-Za-z]:[\\/][^\s;]+/g, '<local-path>');
+    .replace(/file:\/\/\/[A-Za-z]:[\\/][^"'<>|`\r\n;,)]+/gi, '<local-path>')
+    .replace(/[A-Za-z]:[\\/][^"'<>|`\r\n;,)]+/g, '<local-path>');
 }
 
 async function flushRuntimeInPage(page) {
-  if (!page) return;
-  await page.evaluate(async () => {
+  if (!page) return true;
+  return page.evaluate(async () => {
     try {
       const { flushAndCloseAllReaderViews } = await import('/src/workbench/readerCommands.ts');
       await flushAndCloseAllReaderViews();
+      return true;
     } catch {
       /* 页面已关闭或应用尚未完成初始化;关闭浏览器仍会释放 WebView 运行时。 */
+      return false;
     }
-  }).catch(() => undefined);
+  }).catch(() => false);
 }
 
 async function main() {
@@ -2013,21 +2015,38 @@ async function main() {
     failureReport = sanitizeFailure(error instanceof Error ? error.message : String(error));
     throw error;
   } finally {
-    await flushRuntimeInPage(appPage);
+    const runtimeFlushed = await flushRuntimeInPage(appPage);
     appPage = null;
-    await browser?.close().catch(() => undefined);
-    killDevServer();
+    let browserClosed = true;
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        browserClosed = false;
+      }
+    }
+    const devServerClosed = killDevServer();
     const cleanup = {
-      runtimeFlushed: true,
-      browserClosed: true,
-      devServerClosed: true,
+      runtimeFlushed,
+      browserClosed,
+      devServerClosed,
     };
+    const cleanupSucceeded = Object.values(cleanup).every((value) => value === true);
     mkdirSync('scripts/artifacts', { recursive: true });
     if (passedReport) {
       passedReport.cleanup = cleanup;
+      if (!cleanupSucceeded) {
+        passedReport.status = 'failed';
+        passedReport.cleanupFailure = true;
+        process.exitCode = 1;
+      }
       writeFileSync(ARTIFACT, JSON.stringify(passedReport, null, 2));
       console.log(`报告:${ARTIFACT}`);
-      console.log('通过:三 resident 单组/双组与 PDF 连续回切、第四项/资源超预算退化、冷重建及既有格式矩阵均符合门禁。');
+      console.log(
+        cleanupSucceeded
+          ? '通过:三 resident 单组/双组与 PDF 连续回切、第四项/资源超预算退化、冷重建及既有格式矩阵均符合门禁。'
+          : '失败:验收断言通过,但辅助进程或 Runtime 清理未完成。',
+      );
     } else if (failureReport) {
       writeFileSync(ARTIFACT, JSON.stringify({
         schemaVersion: 'reader-runtime-cache.v6',
@@ -2042,17 +2061,23 @@ async function main() {
 }
 
 function killDevServer() {
-  if (!dev) return;
+  if (!dev) return true;
+  let succeeded = true;
   if (process.platform !== 'win32') {
     dev.kill();
-    return;
+    return true;
   }
-  dev.kill();
+  try {
+    dev.kill();
+  } catch {
+    succeeded = false;
+  }
   try {
     execSync(`taskkill /F /T /PID ${dev.pid}`, { stdio: 'ignore' });
   } catch {
-    /* already gone */
+    if (!dev.killed && dev.exitCode === null) succeeded = false;
   }
+  return succeeded;
 }
 
 main().catch((error) => {
