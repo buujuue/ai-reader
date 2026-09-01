@@ -846,7 +846,12 @@ async function ensureActiveViewDocument(
       for (const evicted of registered) {
         closeReaderRuntime(evicted.viewId, cache, evicted.document);
       }
-      runtime.setDocumentState(viewId, { status: 'ready' });
+      // 同一活动标签可能在 ReadingView 的首次 open() 尚未结束时被再次激活。
+      // 此时保留 loading，由 mountViewDocument 的完成回调写入 ready；提前标记
+      // 会让源码模式把尚未完成的 Runtime 当成可缓存对象并立即触发安全关闭。
+      if (existing.isRuntimeReady?.() !== false) {
+        runtime.setDocumentState(viewId, { status: 'ready' });
+      }
       return existing;
     }
     // 活动对象也必须有可验证的当前版本键；没有证明就关闭后重建。

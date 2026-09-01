@@ -292,6 +292,41 @@ describe('Reader 命令', () => {
     await vi.waitFor(() => expect(host.open).toHaveBeenCalledOnce());
   });
 
+  it('活动 Runtime 首次打开未完成时重复激活不会提前标记为 ready', async () => {
+    const material = await setupWithEpub();
+    let resolveInit: (() => void) | undefined;
+    const init = vi.fn(
+      () => new Promise<void>((resolve) => {
+        resolveInit = resolve;
+      }),
+    );
+    registerReaderCommands(registry, {
+      importRepository,
+      workspaceRepository,
+      viewHostFactory: () => createFakeViewHost({ init }),
+    });
+
+    await registry.execute(COMMAND_IDS.libraryOpenBook, material);
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    const book = useReaderRuntime.getState().getDocument(viewId)!;
+    mountViewDocument(book, viewId, document.createElement('div'), null, {
+      importRepository,
+      workspaceRepository,
+    });
+    await vi.waitFor(() => expect(init).toHaveBeenCalledOnce());
+
+    await registry.execute(COMMAND_IDS.readerActivateView, viewId, material);
+
+    expect(book.isRuntimeReady?.()).toBe(false);
+    expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({ status: 'loading' });
+
+    resolveInit?.();
+    await vi.waitFor(() => {
+      expect(book.isRuntimeReady?.()).toBe(true);
+      expect(useReaderRuntime.getState().documentStates.get(viewId)).toEqual({ status: 'ready' });
+    });
+  });
+
   it('恢复 PDF 位置时不会让恢复完成后的过期位置事件覆盖目标位置', async () => {
     const viewId = 'pdf-restore-view';
     const savedLocation: PdfReadingLocation = {

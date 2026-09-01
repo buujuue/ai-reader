@@ -394,6 +394,7 @@ async function main() {
               Boolean(container?.querySelector('.pdf-page canvas'));
           }
           return status?.status === 'ready' &&
+            Boolean(sample.book.isRuntimeReady?.()) &&
             sample.book.getContentDocs().some((content) => content.defaultView?.frameElement?.isConnected);
         }, label);
       };
