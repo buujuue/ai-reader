@@ -245,8 +245,10 @@ export class PdfBookDocument implements BookDocument {
       rangeCacheBytes: 0,
       estimatedBytes: 0,
     };
+    const sourceUsage = this.source.getRuntimeResourceUsage?.();
     return {
       ...usage,
+      rangeCacheBytes: sourceUsage?.rangeCacheBytes ?? usage.rangeCacheBytes,
       inFlightRangeReadCount: this.rangeTransport?.runtime.active ?? 0,
     };
   }

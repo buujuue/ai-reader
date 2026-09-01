@@ -78,7 +78,7 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 ### Workbench
 
-拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态；已完成的 EPUB/Markdown/PDF Runtime 按 ADR-0041 进入最多三个 resident 的按 ReadingView 身份隔离缓存，其中最多两个 active，其余为 suspended，容量不足只按 LRU 淘汰 suspended，PDF 挂起只保留 PDF.js 文档和当前页的预算内结果。书库文件夹树的用户展开集合 `expandedLibraryFolderIds` 与位于树下方、回收站上方的未归类区块状态 `unfiledMaterialsExpanded` 同属 Workspace State；书库搜索投影、命中路径和搜索期间的临时展开覆盖只存在于 `PrimarySidebar` 运行时，清空搜索后回到搜索前状态。材料更多菜单位于阅读工具栏右侧，提供查看/导出材料批注、设置主要阅读材料、编辑材料元数据和移入回收站；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
+拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态；已完成的 EPUB/Markdown/PDF Runtime 按 ADR-0041/0043 进入最多三个 resident 的按 ReadingView 身份隔离缓存，其中最多两个 active，其余为 suspended，容量不足只按 LRU 淘汰 suspended，PDF 挂起只保留 PDF.js 文档和当前页的预算内结果。书库文件夹树的用户展开集合 `expandedLibraryFolderIds` 与位于树下方、回收站上方的未归类区块状态 `unfiledMaterialsExpanded` 同属 Workspace State；书库搜索投影、命中路径和搜索期间的临时展开覆盖只存在于 `PrimarySidebar` 运行时，清空搜索后回到搜索前状态。材料更多菜单位于阅读工具栏右侧，提供查看/导出材料批注、设置主要阅读材料、编辑材料元数据和移入回收站；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
 ### Command Registry
 
@@ -203,7 +203,7 @@ macOS 核心阅读冒烟的原生壳配置与证据边界记录在 `docs/archite
 
 ## iPadOS 核心冒烟与验证
 
-工单 #56 的 PDF Runtime 缓存验收复用 `apps/reader/scripts/verify-reading-performance.mjs` 的 600 页以上结构型夹具：浏览器与 Windows Tauri 均验证 PDF A→B→A 命中不重复创建 PDF.js 文档或读取范围，分页/滚动位置与视口恢复、挂起资源收缩、LRU 淘汰和退出清理，并记录回切首次可见、解析轮次、范围读取、峰值内存和活跃 Canvas。
+工单 #56 的 PDF Runtime 缓存验收复用 `apps/reader/scripts/verify-reading-performance.mjs` 的 600 页以上结构型夹具：浏览器与 Windows Tauri 均验证 PDF A→B→A 命中不重复创建 PDF.js 文档或读取范围，分页/滚动位置与视口恢复、挂起资源收缩、LRU 淘汰和退出清理，并记录回切首次可见、解析轮次、范围读取、峰值内存和活跃 Canvas；Issue #63 额外要求报告 ManagedFileSource 范围缓存字节，避免以固定 0 虚报预算。
 
 iPadOS 原生入口、系统文件选择器、安全区元数据、紧凑容器布局和触摸选区优先级由前端与 Tauri 移动壳共同提供。`.github/workflows/cross-platform.yml` 的 iPadOS job 在 macOS runner 上生成并启动 iPad Simulator 原生应用，上传真实 WebView 启动日志与截图；完整人工验收步骤记录在 `docs/architecture/ipados-core-smoke.md`。
 

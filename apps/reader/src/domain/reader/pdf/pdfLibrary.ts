@@ -112,6 +112,8 @@ export interface PdfLoadingTask {
 export interface PdfFileSource {
   readonly size: number;
   slice(begin?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
+  /** 可选的来源缓存诊断，不暴露正文或路径。 */
+  getRuntimeResourceUsage?(): { rangeCacheBytes: number };
 }
 
 /** PDF.js 库的窄接口(用于注入与测试)。 */

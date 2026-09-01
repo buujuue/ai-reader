@@ -66,6 +66,22 @@ describe('PdfBookDocument', () => {
     expect(book.getLocation()).toBeNull();
   });
 
+  it('资源快照包含 ManagedFileSource 已缓存的范围字节', async () => {
+    const source = new ManagedFileSource(
+      { name: '缓存.pdf', size: 256 * 1024 },
+      async (_offset, length) => new Uint8Array(length),
+    );
+    await source.readRange(0, 128);
+    const book = new PdfBookDocument({
+      source,
+      metadata: { title: '缓存 PDF', author: null, language: null },
+      pdfLib: makeFakeLib(makeFakeDocument(1)),
+      rasterize: makeFakeRasterizer(),
+    });
+
+    expect(book.getRuntimeResourceUsage().rangeCacheBytes).toBeGreaterThan(0);
+  });
+
   it('挂起只保留当前页资源,重新挂载复用同一个 PDF.js 文档', async () => {
     const { book, lib, document } = createDocument({ pageCount: 8 });
     const firstContainer = makeContainer();
