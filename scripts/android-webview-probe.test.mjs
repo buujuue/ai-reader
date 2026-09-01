@@ -7,8 +7,9 @@ import { deflateSync } from 'node:zlib';
 
 import {
   AndroidWebViewReadyTimeoutError,
-  parseForegroundWindow,
+  parseForegroundActivity,
   validateAndroidScreenshot,
+  validateAndroidUiHierarchy,
   waitForAndroidWebViewReady,
 } from './android-webview-probe.mjs';
 
@@ -41,12 +42,24 @@ const makeRgbaPng = (pixels, width, height) => {
 describe('Android WebView 就绪探测', () => {
   it('能解析 Android 前台窗口中以相对类名表示的 Activity', () => {
     assert.deepEqual(
-      parseForegroundWindow(
+      parseForegroundActivity(
         'mCurrentFocus=Window{abc u0 com.example.reader/.MainActivity}',
       ),
       {
         packageId: 'com.example.reader',
         activity: 'com.example.reader/.MainActivity',
+      },
+    );
+  });
+
+  it('能解析 Android 35 Activity 管理器中的 resumed Activity', () => {
+    assert.deepEqual(
+      parseForegroundActivity(
+        'mResumedActivity: ActivityRecord{8b1f25b u0 com.buujuue.ai_reader/.MainActivity t8}',
+      ),
+      {
+        packageId: 'com.buujuue.ai_reader',
+        activity: 'com.buujuue.ai_reader/.MainActivity',
       },
     );
   });
@@ -62,6 +75,29 @@ describe('Android WebView 就绪探测', () => {
       assert.equal(validateAndroidScreenshot(visiblePath).valid, true);
       assert.equal(validateAndroidScreenshot(blankPath).valid, false);
       assert.match(validateAndroidScreenshot(blankPath).reason, /完全一致/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('接受目标应用语义树并拒绝覆盖工作台的系统 ANR 对话框', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ai-reader-android-ui-'));
+    try {
+      const appPath = join(directory, 'app.xml');
+      const anrPath = join(directory, 'anr.xml');
+      writeFileSync(
+        appPath,
+        '<hierarchy><node package="com.example.reader" resource-id="com.example.reader:id/root" /></hierarchy>',
+      );
+      writeFileSync(
+        anrPath,
+        '<hierarchy><node package="android" resource-id="android:id/aerr_close" text="Close app" /></hierarchy>',
+      );
+
+      assert.equal(validateAndroidUiHierarchy(appPath, 'com.example.reader').valid, true);
+      const anr = validateAndroidUiHierarchy(anrPath, 'com.example.reader');
+      assert.equal(anr.valid, false);
+      assert.match(anr.reason, /系统错误对话框/);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

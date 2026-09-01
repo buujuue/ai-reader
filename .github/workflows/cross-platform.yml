@@ -332,7 +332,7 @@ jobs:
           EVIDENCE_DIR: ${{ runner.temp }}/ai-reader-android-evidence
         with:
           api-level: 35
-          target: google_apis
+          target: default
           arch: x86_64
           profile: pixel_c
           ram-size: 1536M

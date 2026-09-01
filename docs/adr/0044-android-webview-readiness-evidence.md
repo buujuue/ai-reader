@@ -11,7 +11,10 @@ Android 35 平板模拟器的冷启动速度不是固定值。单次固定等待
 ## 决策
 
 - `.github/scripts/android-emulator-smoke.sh` 的 `start`、`touch` 和 `restart` 阶段都先调用根脚本 `scripts/android-webview-probe.mjs`。
+- Android 35 Job 使用普通 AOSP `default` 系统镜像；当前验收不依赖 Google Play 服务，因此不让 Google 首次设置进程和系统错误弹窗进入应用证据。ATD 会削弱截图所需的渲染能力，不用于本验收。
 - 探测必须在有界上限内同时满足目标进程存活、目标包位于前台、WebView DevTools socket 可转发、CDP 页面可连接，以及 AI Reader 工作台关键 DOM 节点可见且文档状态为 `complete`。
+- 前台包以 `dumpsys activity activities` 的 resumed Activity 判定，不依赖 Android 35 已不再稳定提供的旧 `dumpsys window windows` 焦点摘要。
+- UIAutomator 证据必须包含目标包，并拒绝 `android:id/aerr_*` 系统错误对话框；应用 DOM 已就绪但被系统弹窗覆盖时不得报告成功。
 - 探测使用有界轮询；单次探测也受当前剩余上限约束，超时报告阶段、尝试次数、最后状态和上限，不允许把空白截图视为成功。
 - 证据按阶段保存截图、UIAutomator 语义树、前台 Activity、目标进程、WebView 探测 JSON、动作日志和最终 `adb logcat`。动作、探测或证据校验失败时，退出钩子仍尽力保存当前设备状态，并以失败阶段作为诊断入口。
 - `pnpm test:android-smoke` 只测试探测器的成功、重试和超时语义，不伪造 Android 原生证据；真实 Android 证据仍由跨端 Job 和平台冒烟流程提供。

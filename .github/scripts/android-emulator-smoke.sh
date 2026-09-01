@@ -71,7 +71,7 @@ capture_phase_evidence() {
   local phase="$1"
   phase_paths "$phase"
 
-  adb shell dumpsys window windows > "$EVIDENCE_DIR/${phase}-foreground-activity.txt" 2>&1 || true
+  adb shell dumpsys activity activities > "$EVIDENCE_DIR/${phase}-foreground-activity.txt" 2>&1 || true
   ensure_text_evidence \
     "$EVIDENCE_DIR/${phase}-foreground-activity.txt" \
     "阶段 $phase 未能读取前台 Activity。"
@@ -114,6 +114,10 @@ validate_phase_evidence() {
   fi
   if ! test -s "$phase_ui"; then
     echo "::error::Android $phase 阶段语义证据为空：$phase_ui" >&2
+    return 1
+  fi
+  if ! node scripts/android-webview-probe.mjs --validate-ui "$phase_ui" --package-id "$package_id"; then
+    echo "::error::Android $phase 阶段语义证据不属于目标应用或被系统错误对话框覆盖：$phase_ui" >&2
     return 1
   fi
   if ! test -s "$phase_probe"; then

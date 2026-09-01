@@ -56,6 +56,8 @@ assert(
 assert(workflow.includes('pnpm tauri android init'), 'The Android job must generate the native project');
 assert(workflow.includes('pnpm tauri android build'), 'The Android job must build a native APK');
 assert(workflow.includes('android-emulator-runner'), 'The Android job must use a real Android emulator');
+assert(workflow.includes('target: default'), 'The Android job must use the AOSP image without unrelated Google setup apps');
+assert(!workflow.includes('target: google_apis'), 'The Android job must not use the Google image that can show setup ANR dialogs');
 assert(workflow.includes('Enable KVM for Android emulator'), 'The Android job must enable KVM before starting the emulator');
 assert(workflow.includes('sudo chmod 666 /dev/kvm'), 'The Android job must make KVM accessible to the runner user');
 assert(workflow.includes("if [ ! -e /dev/kvm ]; then"), 'The Android job must report runners that do not expose KVM');
@@ -81,6 +83,10 @@ assert(
 assert(androidSmoke.includes('screencap -p'), 'The Android smoke script must capture real WebView tablet evidence');
 assert(androidSmoke.includes('adb logcat'), 'The Android smoke script must upload Android runtime logs');
 assert(
+  androidSmoke.includes('dumpsys activity activities'),
+  'The Android smoke script must capture the resumed Activity on Android 35',
+);
+assert(
   /run_phase_probe\(\)\s*\{[\s\S]*?node scripts\/android-webview-probe\.mjs \\\s*--phase/.test(androidSmoke),
   'The Android smoke script must invoke the root WebView probe from run_phase_probe',
 );
@@ -91,11 +97,16 @@ assert(
 assert(androidSmoke.includes('capture_phase_evidence'), 'The Android smoke script must retain phase evidence on failure');
 assert(androidSmoke.includes('validate_phase_evidence'), 'The Android smoke script must reject empty or invalid phase evidence');
 assert(androidSmoke.includes('--validate-png'), 'The Android smoke script must reject uniform or blank PNG evidence');
+assert(androidSmoke.includes('--validate-ui'), 'The Android smoke script must reject system dialogs and unrelated UI evidence');
 assert(androidSmoke.includes("report.result !== \"ready\""), 'The Android smoke script must reject non-ready WebView probe reports');
 assert(androidSmoke.includes("grep -q '<hierarchy'"), 'The Android smoke script must require a real UIAutomator hierarchy');
 assert(!androidSmoke.includes('sleep 8'), 'The Android smoke script must not use a fixed eight-second readiness wait');
 assert(!androidSmoke.includes('sleep 2'), 'The Android smoke script must not use a fixed two-second readiness wait');
 assert(androidProbe.includes('webview_devtools_remote_'), 'Android readiness must discover the WebView DevTools socket from the live process');
+assert(
+  androidProbe.includes("['shell', 'dumpsys', 'activity', 'activities']"),
+  'Android readiness must read the resumed Activity instead of deprecated window focus summaries',
+);
 assert(androidProbe.includes('Runtime.evaluate'), 'Android readiness must inspect the live WebView DOM through CDP');
 assert(androidProbe.includes('ws://127.0.0.1:${port}/devtools/page/${target.id}'), 'Android CDP must connect through the adb-forwarded host port');
 assert(androidProbe.includes('documentReadyState'), 'Android readiness must require a settled WebView document');
@@ -104,6 +115,7 @@ assert(androidProbe.includes('AndroidWebViewReadyTimeoutError'), 'Android readin
 assert(androidProbeTest.includes('立即成功'), 'Android readiness regression must cover immediate success');
 assert(androidProbeTest.includes('重试后成功'), 'Android readiness regression must cover retry success');
 assert(androidProbeTest.includes('超时'), 'Android readiness regression must cover bounded timeout diagnostics');
+assert(androidProbeTest.includes('系统 ANR 对话框'), 'Android evidence regression must reject system ANR dialogs');
 assert(workflow.includes('pnpm test:android-smoke'), 'The Android job must run the bounded readiness regression tests');
 assert(
   workflow.includes(

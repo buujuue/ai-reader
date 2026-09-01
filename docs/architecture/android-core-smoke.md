@@ -7,7 +7,7 @@ Issue #30 的 Android 平板验收分为自动化原生证据与真机手工流�
 `.github/workflows/cross-platform.yml` 的 `android` job 会：
 
 - 生成 Tauri Android 工程并构建 debug APK；
-- 将 APK 安装到 `Pixel_C` Android 35 模拟器；
+- 将 APK 安装到使用普通 AOSP `default` 系统镜像的 `Pixel_C` Android 35 模拟器，避免无关 Google 首次设置进程与系统弹窗污染原生证据；
 - 启动真实 Android WebView，先按有界轮询确认目标进程位于前台、WebView DevTools 页面可连接且 AI Reader 工作台已完成绘制，再保存启动、触摸后、进程强制终止并重启后的截图；
 - 保存安装日志、启动日志、重启日志和 `adb logcat`；
 - 在构建与测试前运行 `pnpm verify:android`、类型检查、前端测试和 Rust 测试。
@@ -19,11 +19,11 @@ Issue #30 的 Android 平板验收分为自动化原生证据与真机手工流�
 `.github/scripts/android-emulator-smoke.sh` 不以固定等待时间判断启动成功，而是调用 `scripts/android-webview-probe.mjs`，在有界时间内轮询以下条件：
 
 - 目标包进程仍然存活；
-- 前台窗口属于目标包；
+- Activity 管理器报告的 resumed Activity 属于目标包；
 - `webview_devtools_remote_<pid>` 调试 socket 已出现并可通过 `adb forward` 访问；
 - CDP `Runtime.evaluate` 能看到可见的 `.app-shell`、应用顶栏、`AI Reader` 标识、`#reader-main` 和编辑器区。
 
-探测超时会指出 `start`、`touch` 或 `restart` 阶段、尝试次数、最后一次状态和上限，不会把空白截图误判为成功。每个阶段都保存 `*-webview-probe.json`、`*-foreground-activity.txt`、`*-target-process.txt`、截图和 UIAutomator 语义树；任一阶段失败时，退出钩子仍会采集当前设备状态和 `android-logcat.txt`，避免后续读取不存在文件掩盖原始原因。探测器的立即成功、重试成功和超时诊断由 `pnpm test:android-smoke` 覆盖。
+探测通过 `dumpsys activity activities` 读取 Android 35 的 resumed Activity，不依赖新版系统已不稳定输出的旧窗口焦点摘要。UIAutomator 语义树必须包含目标包，并拒绝 `android:id/aerr_*` 系统错误对话框，避免把被 ANR 弹窗覆盖的工作台误当成有效证据。探测超时会指出 `start`、`touch` 或 `restart` 阶段、尝试次数、最后一次状态和上限，不会把空白截图误判为成功。每个阶段都保存 `*-webview-probe.json`、`*-foreground-activity.txt`、`*-target-process.txt`、截图和 UIAutomator 语义树；任一阶段失败时，退出钩子仍会采集当前设备状态和 `android-logcat.txt`，避免后续读取不存在文件掩盖原始原因。探测器的立即成功、重试成功和超时诊断由 `pnpm test:android-smoke` 覆盖。
 
 ## 真机验收流程
 

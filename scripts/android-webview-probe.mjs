@@ -130,10 +130,12 @@ export function parseProcessId(output) {
   return match ? match[1] : null;
 }
 
-export function parseForegroundWindow(output) {
+export function parseForegroundActivity(output) {
   const lines = String(output ?? '')
     .split(/\r?\n/)
-    .filter((line) => /mCurrentFocus|mFocusedApp/.test(line));
+    .filter((line) =>
+      /mCurrentFocus|mFocusedApp|mResumedActivity|topResumedActivity|ResumedActivity/.test(line),
+    );
   for (const line of lines) {
     const match = line.match(/\b([A-Za-z][\w.-]*)\/([A-Za-z0-9_.$-]+)\b/);
     if (match) {
@@ -268,6 +270,30 @@ export function validateAndroidScreenshot(path) {
   if (!hasVisiblePixel) return { valid: false, width, height, reason: '截图像素全部透明' };
   if (!hasDifferentPixel) return { valid: false, width, height, reason: '截图像素完全一致，疑似空白界面' };
   return { valid: true, width, height, nonUniform: true };
+}
+
+export function validateAndroidUiHierarchy(path, packageId) {
+  let hierarchy;
+  try {
+    hierarchy = readFileSync(path, 'utf8');
+  } catch (error) {
+    return { valid: false, reason: `无法读取 UIAutomator 语义树：${safeErrorMessage(error)}` };
+  }
+
+  if (!hierarchy.includes('<hierarchy')) {
+    return { valid: false, reason: 'UIAutomator 语义树格式无效' };
+  }
+  if (hierarchy.includes('android:id/aerr_')) {
+    return { valid: false, reason: '系统错误对话框覆盖了目标应用工作台' };
+  }
+  if (
+    packageId
+    && !hierarchy.includes(`package="${packageId}"`)
+    && !hierarchy.includes(`package='${packageId}'`)
+  ) {
+    return { valid: false, reason: `UIAutomator 语义树不包含目标包 ${packageId}` };
+  }
+  return { valid: true };
 }
 
 function safeErrorMessage(error) {
@@ -484,8 +510,8 @@ async function probeAndroidWebViewOnce({ adb, packageId, port, phase }) {
   status.pid = pid;
   status.processAlive = Boolean(pid);
 
-  const windowResult = await safeAdb(adb, ['shell', 'dumpsys', 'window', 'windows']);
-  const foreground = parseForegroundWindow(windowResult.stdout);
+  const activityResult = await safeAdb(adb, ['shell', 'dumpsys', 'activity', 'activities']);
+  const foreground = parseForegroundActivity(activityResult.stdout);
   status.foregroundPackage = foreground.packageId;
   status.foregroundActivity = foreground.activity;
 
@@ -494,7 +520,7 @@ async function probeAndroidWebViewOnce({ adb, packageId, port, phase }) {
     return status;
   }
   if (status.foregroundPackage !== packageId) {
-    status.reason = windowResult.error
+    status.reason = activityResult.error
       ? '读取前台 Activity 失败'
       : `目标应用尚未位于前台（当前：${status.foregroundPackage ?? '未知'}）`;
     return status;
@@ -630,6 +656,18 @@ async function main() {
       : { valid: false, reason: '缺少 PNG 路径' };
     if (result.valid) console.log(`Android 截图有效且包含可见内容：${result.width}x${result.height}`);
     else console.error(`Android 截图校验失败：${result.reason}`);
+    process.exitCode = result.valid ? 0 : 1;
+    return;
+  }
+  if (process.argv[2] === '--validate-ui') {
+    const path = process.argv[3];
+    const packageArgumentIndex = process.argv.indexOf('--package-id');
+    const packageId = packageArgumentIndex >= 0 ? process.argv[packageArgumentIndex + 1] : null;
+    const result = path
+      ? validateAndroidUiHierarchy(path, packageId)
+      : { valid: false, reason: '缺少 UIAutomator 语义树路径' };
+    if (result.valid) console.log(`Android UIAutomator 语义树有效且属于目标包：${packageId}`);
+    else console.error(`Android UIAutomator 语义树校验失败：${result.reason}`);
     process.exitCode = result.valid ? 0 : 1;
     return;
   }
