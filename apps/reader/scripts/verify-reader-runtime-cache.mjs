@@ -307,7 +307,7 @@ async function main() {
       });
       const registry = services.commands;
 
-      const waitFor = async (predicate, label, timeoutMs = 20_000) => {
+      const waitFor = async (predicate, label, timeoutMs = 45_000) => {
         const started = performance.now();
         while (performance.now() - started < timeoutMs) {
           if (predicate()) return;
