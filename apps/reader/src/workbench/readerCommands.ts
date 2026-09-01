@@ -1773,22 +1773,26 @@ export async function flushReaderPositions(): Promise<void> {
 }
 
 /** 应用关闭时把当前视图位置 flush、取消搜索并关闭渲染器。 */
-export async function flushAndCloseAllReaderViews(): Promise<void> {
-  runtimeGeneration += 1;
-  pendingDocumentCreations.clear();
-  for (const persister of persisters.values()) {
-    await persister.dispose();
-  }
-  persisters.clear();
-  for (const activeMount of activeMounts.values()) {
-    activeMount.dispose();
-  }
-  activeMounts.clear();
-  navigationIntents.clear();
-  for (const viewId of runtimeInputCleanups.keys()) clearReaderRuntimeInput(viewId);
-  for (const readiness of viewMountReadiness.values()) readiness.resolve();
-  viewMountReadiness.clear();
-  cancelAllSearches();
-  useReaderRuntime.getState().closeAll();
-  registeredReaderRuntimeCache?.clear();
+export function flushAndCloseAllReaderViews(): Promise<void> {
+  // 全量清理也必须排在 Runtime 转换队列之后;否则 React 可见性 effect
+  // 产生的旧挂起/恢复命令可能在清理完成后继续执行并重新修改全局 Store。
+  return enqueueRuntimeTransition(async () => {
+    runtimeGeneration += 1;
+    pendingDocumentCreations.clear();
+    for (const persister of persisters.values()) {
+      await persister.dispose();
+    }
+    persisters.clear();
+    for (const activeMount of activeMounts.values()) {
+      activeMount.dispose();
+    }
+    activeMounts.clear();
+    navigationIntents.clear();
+    for (const viewId of runtimeInputCleanups.keys()) clearReaderRuntimeInput(viewId);
+    for (const readiness of viewMountReadiness.values()) readiness.resolve();
+    viewMountReadiness.clear();
+    cancelAllSearches();
+    useReaderRuntime.getState().closeAll();
+    registeredReaderRuntimeCache?.clear();
+  });
 }

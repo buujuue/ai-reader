@@ -1585,8 +1585,8 @@ async function main() {
 
       await waitFrames(4);
       await flushAndCloseAllReaderViews();
-      // Harness 显式拥有注入的缓存实例；页面正式 App 也注册了自己的缓存，
-      // 因此总验收 teardown 直接清空本实例，避免模块级注册指针的测试顺序干扰。
+      // Harness 显式拥有并注入这一份缓存实例;全量关闭已经在 Runtime 队列中
+      // 完成，因此这里直接清空本实例即可结束验收。
       cache.clear();
       await waitFrames();
       const shutdownCleanup = {
