@@ -16,6 +16,18 @@ const packageJson = JSON.parse(read('package.json'));
 const tauriConfig = JSON.parse(read('apps/reader/src-tauri/tauri.conf.json'));
 const capability = JSON.parse(read('apps/reader/src-tauri/capabilities/default.json'));
 const workflow = read('.github/workflows/cross-platform.yml');
+const workflowActionReferences = [...workflow.matchAll(/^\s+uses:\s+(\S+)(?:\s+#\s*(.*))?$/gm)].map(
+  ([, reference, comment]) => ({ reference, comment: comment?.trim() ?? '' }),
+);
+const expectedWorkflowActionComments = new Map([
+  ['actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0', 'v7.0.0'],
+  ['pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271', 'v6'],
+  ['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020', 'v6'],
+  ['actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a', 'v5'],
+  ['dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8', 'stable'],
+  ['actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', 'v7.0.1'],
+  ['reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d', 'v2'],
+]);
 const csp = tauriConfig.app?.security?.csp ?? '';
 const dependencies = Object.keys({
   ...(packageJson.dependencies ?? {}),
@@ -60,6 +72,16 @@ const checks = [
       workflow.includes('pnpm tauri ios build') &&
       workflow.includes('pnpm tauri android build') &&
       androidSmoke.includes('screencap -p'),
+  },
+  {
+    name: '跨端基础 Action 使用 Node.js 24 兼容版本并固定不可变提交',
+    pass:
+      workflowActionReferences.length > 0 &&
+      workflowActionReferences.every(
+        ({ reference, comment }) =>
+          /^[^@\s]+@[0-9a-f]{40}$/.test(reference) &&
+          expectedWorkflowActionComments.get(reference) === comment,
+      ),
   },
   {
     name: '书籍内容安全边界已配置且未授予任意文件/命令/数据库权限',

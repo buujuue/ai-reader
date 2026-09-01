@@ -98,7 +98,12 @@ assert(androidProbeTest.includes('立即成功'), 'Android readiness regression 
 assert(androidProbeTest.includes('重试后成功'), 'Android readiness regression must cover retry success');
 assert(androidProbeTest.includes('超时'), 'Android readiness regression must cover bounded timeout diagnostics');
 assert(workflow.includes('pnpm test:android-smoke'), 'The Android job must run the bounded readiness regression tests');
-assert(workflow.includes('actions/upload-artifact@v7'), 'The workflow must use the Node 24 artifact action');
+assert(
+  workflow.includes(
+    'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+  ),
+  'The workflow must use the pinned Node 24 artifact action',
+);
 assert(readingInput.includes("type: 'touch'"), 'Touch input must remain part of the reader input seam');
 assert(readingInput.includes('setSelecting'), 'Touch input must preserve text-selection priority');
 assert(backButtonTest.includes('delegateToWebView'), 'Back behavior must have resolver tests');

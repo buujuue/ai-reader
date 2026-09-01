@@ -33,21 +33,21 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: 配置 pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10.18.2
 
       - name: 配置 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: 22
           cache: pnpm
 
       - name: 配置 Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy
 
@@ -73,7 +73,7 @@ jobs:
 
       - name: 上传大型阅读范围性能记录
         if: always() && matrix.native-build == 'windows'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-reader-reading-performance-${{ github.sha }}
           if-no-files-found: warn
@@ -81,7 +81,7 @@ jobs:
 
       - name: 上传跨格式 Reader Runtime 缓存记录
         if: always() && matrix.native-build == 'windows'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-reader-reader-runtime-cache-${{ github.sha }}
           if-no-files-found: warn
@@ -106,7 +106,7 @@ jobs:
 
       - name: 上传 Windows 安装包
         if: success() && matrix.native-build == 'windows'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-reader-windows-${{ github.sha }}
           if-no-files-found: error
@@ -114,7 +114,7 @@ jobs:
 
       - name: 上传 macOS 构建产物
         if: success() && matrix.native-build == 'macos'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-reader-macos-${{ github.sha }}
           if-no-files-found: error
@@ -130,7 +130,7 @@ jobs:
       XCODE_VERSION: '16.4'
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: 初始化 iPadOS 证据目录
         run: |
@@ -148,18 +148,18 @@ jobs:
           xcodebuild -version | tee "$RUNNER_TEMP/ai-reader-ipados-evidence/xcode-version.txt"
 
       - name: 配置 pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10.18.2
 
       - name: 配置 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: 22
           cache: pnpm
 
       - name: 配置 Rust 与 iOS Simulator 目标
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy
           targets: aarch64-apple-ios-sim
@@ -214,7 +214,7 @@ jobs:
 
       - name: 上传 iPadOS 原生证据
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-reader-ipados-${{ github.sha }}
           if-no-files-found: warn
@@ -228,7 +228,7 @@ jobs:
       ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: 初始化 Android 证据目录
         run: |
@@ -238,18 +238,18 @@ jobs:
           printf '%s\n' 'Android tablet evidence directory initialized' > "$evidence_dir/workflow-started.txt"
 
       - name: 配置 pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10.18.2
 
       - name: 配置 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: 22
           cache: pnpm
 
       - name: 配置 Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
           distribution: temurin
           java-version: '17'
@@ -285,7 +285,7 @@ jobs:
           ls -l /dev/kvm
 
       - name: 配置 Rust Android 目标
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
@@ -327,7 +327,7 @@ jobs:
           apps/reader/src-tauri/gen/android/gradlew --stop || true
 
       - name: 启动 Android 平板模拟器并采集真实 WebView 证据
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         env:
           EVIDENCE_DIR: ${{ runner.temp }}/ai-reader-android-evidence
         with:
@@ -342,7 +342,7 @@ jobs:
 
       - name: 上传 Android 原生证据
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-reader-android-${{ github.sha }}
           if-no-files-found: warn

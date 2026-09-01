@@ -53,7 +53,12 @@ assert(
 assert(workflow.includes('xcrun simctl launch'), 'The iPadOS job must launch the native app');
 assert(workflow.includes('xcrun simctl io'), 'The iPadOS job must capture real WebView evidence');
 assert(workflow.includes('mkdir -p "$evidence_dir"'), 'The iPadOS job must initialize its evidence directory before building');
-assert(workflow.includes('actions/upload-artifact@v7'), 'The workflow must use the Node 24 artifact action');
+assert(
+  workflow.includes(
+    'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+  ),
+  'The workflow must use the pinned Node 24 artifact action',
+);
 assert(workflow.includes('if-no-files-found: warn'), 'The iPadOS evidence upload must not mask the original build failure');
 
 console.log('iPadOS core configuration is valid');
