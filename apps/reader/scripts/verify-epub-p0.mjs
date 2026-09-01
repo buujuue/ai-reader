@@ -261,8 +261,9 @@ function killDevServer() {
     dev.kill();
     return;
   }
+  dev.kill();
   try {
-    execSync(`taskkill /F /T /PID ${dev.pid}`, { stdio: 'ignore' });
+    execSync(`taskkill /F /T /PID ${dev.pid}`, { stdio: 'ignore', timeout: 5_000 });
   } catch {
     /* already stopped */
   }
