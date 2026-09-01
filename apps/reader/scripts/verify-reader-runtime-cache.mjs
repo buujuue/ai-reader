@@ -24,7 +24,7 @@ import {
 } from './reader-runtime-cache-metrics.mjs';
 
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const APP_URL = 'http://localhost:5173';
+const APP_URL = 'http://localhost:5173/?runtime-cache-harness=1';
 const ARTIFACT = 'scripts/artifacts/reader-runtime-cache.json';
 const VITE_CLI = resolve(process.cwd(), 'node_modules/vite/bin/vite.js');
 const runCount = Math.max(3, Number.parseInt(process.env.READER_RUNTIME_CACHE_RUNS ?? '5', 10) || 5);
@@ -99,7 +99,7 @@ async function main() {
     const result = await appPage.evaluate(async ({ runCount: requestedRuns, interactivePollIntervalMs }) => {
       const [commandModule, commandRegistryModule, importModule, epubWriterModule, epubInspectorModule,
         markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeModule, readerRuntimeCacheModule,
-        managedSourceModule, hostModule, bootstrapModule, filePickerModule, libraryStoreModule,
+        managedSourceModule, hostModule, bootstrapModule, mainModule, filePickerModule, libraryStoreModule,
         markdownSessionModule, searchStoreModule, annotationStoreModule, workbenchCommandsModule,
         pdfLibraryModule, pdfFixtureModule] = await Promise.all([
         import('/src/workbench/readerCommands.ts'),
@@ -115,6 +115,7 @@ async function main() {
         import('/src/domain/library/managedFileSource.ts'),
         import('/src/domain/reader/foliateViewHost.ts'),
         import('/src/app/bootstrap.ts'),
+        import('/src/main.tsx'),
         import('/src/app/filePicker.ts'),
         import('/src/workbench/libraryStore.ts'),
         import('/src/workbench/markdownSessionStore.ts'),
@@ -142,6 +143,7 @@ async function main() {
       const { ManagedFileSource } = managedSourceModule;
       const { createFoliateViewHostFactory } = hostModule;
       const { createAppServices } = bootstrapModule;
+      const { renderApplication } = mainModule;
       const { createInMemoryFilePicker } = filePickerModule;
       const { loadPdfLib } = pdfLibraryModule;
       const { buildLargePdfFixture } = pdfFixtureModule;
@@ -299,6 +301,9 @@ async function main() {
         pdfRasterize,
         readerRuntimeCache: cache,
       });
+      // main.tsx 已经创建过默认 AppServices。把测试服务重新渲染进同一个
+      // React 根节点，确保 ReadingView 的异步副作用也使用本次验收的服务。
+      await new Promise((resolve) => renderApplication(services, resolve));
       const registry = services.commands;
 
       const waitFor = async (predicate, label, timeoutMs = 45_000) => {

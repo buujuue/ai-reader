@@ -25,7 +25,13 @@ import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { getVisibleSidebars, useLayoutPolicy } from '../workbench/layoutPolicy';
 import { useAppServices } from './AppServicesContext';
 
-export function App() {
+export function App({
+  onReady,
+  skipStartupRestore = false,
+}: {
+  onReady?: () => void;
+  skipStartupRestore?: boolean;
+} = {}) {
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const layoutPolicy = useLayoutPolicy(workbenchRef);
   const {
@@ -98,6 +104,10 @@ export function App() {
   }, [activeViewId, compactActivityPanelDismissRequestToken, layoutPolicy.mode]);
 
   useEffect(() => {
+    if (skipStartupRestore) {
+      onReady?.();
+      return;
+    }
     let cancelled = false;
     workspaceRepository
       .loadState()
@@ -126,11 +136,14 @@ export function App() {
           await commands.execute(COMMAND_IDS.libraryRefresh).catch(() => undefined);
           await commands.execute(COMMAND_IDS.markdownCheckRecoveries).catch(() => undefined);
         }
+      })
+      .finally(() => {
+        if (!cancelled) onReady?.();
       });
     return () => {
       cancelled = true;
     };
-  }, [commands, workspaceRepository]);
+  }, [commands, onReady, skipStartupRestore, workspaceRepository]);
 
   // Android 返回键只退出次级状态；脏 Markdown 仍必须经过保存/丢弃确认。
   useEffect(() => {
