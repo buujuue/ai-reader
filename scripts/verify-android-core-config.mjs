@@ -80,7 +80,14 @@ assert(
 );
 assert(androidSmoke.includes('screencap -p'), 'The Android smoke script must capture real WebView tablet evidence');
 assert(androidSmoke.includes('adb logcat'), 'The Android smoke script must upload Android runtime logs');
-assert(androidSmoke.includes('android-webview-probe.mjs'), 'The Android smoke script must probe the real WebView before evidence capture');
+assert(
+  /run_phase_probe\(\)\s*\{[\s\S]*?node scripts\/android-webview-probe\.mjs \\\s*--phase/.test(androidSmoke),
+  'The Android smoke script must invoke the root WebView probe from run_phase_probe',
+);
+assert(
+  !androidSmoke.includes('node .github/scripts/android-webview-probe.mjs'),
+  'The Android smoke script must not resolve the WebView probe from .github/scripts',
+);
 assert(androidSmoke.includes('capture_phase_evidence'), 'The Android smoke script must retain phase evidence on failure');
 assert(androidSmoke.includes('validate_phase_evidence'), 'The Android smoke script must reject empty or invalid phase evidence');
 assert(androidSmoke.includes('--validate-png'), 'The Android smoke script must reject uniform or blank PNG evidence');

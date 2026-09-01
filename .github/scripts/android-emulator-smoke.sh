@@ -166,7 +166,7 @@ run_phase_probe() {
   local phase="$1"
   current_phase="$phase"
   phase_paths "$phase"
-  node .github/scripts/android-webview-probe.mjs \
+  node scripts/android-webview-probe.mjs \
     --phase "$phase" \
     --package-id "$package_id" \
     --port "$cdp_port" \
