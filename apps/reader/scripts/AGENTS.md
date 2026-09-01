@@ -8,6 +8,7 @@
 | `verify-epub-p0.mjs` | 真实浏览器 EPUB P0 矩阵:直接创建 foliate-view,验证 EPUB 2/NCX、EPUB 3/NAV、目录 href/页内链接、位置反馈、前后章节、关闭后 CFI 恢复、固定版式、RTL/竖排、图片/SVG、脚注、混淆字体与 MathML。 | `pnpm test:real-epub-p0` |
 | `verify-reading-performance.mjs` | 工单 #46 大型 PDF 性能门禁:真实 Chrome 运行浏览器 File 基线与完整 `library.openBook → mountViewDocument → ManagedFileSource` 路径,默认三次测量并输出中位数；Tauri 模式连接 Windows WebView2 远程调试页,验证生产 `managed-range` 二进制范围协议。 | `pnpm test:reading-performance`；Tauri 见 `docs/architecture/reading-performance.md` |
 | `verify-reader-runtime-cache.mjs` | 工单 #63 Reader Runtime 压力总验收（继承 #62/#61/#60/#57）:真实 Chrome 验证 EPUB/Markdown/PDF 同格式三材料逐项命中、混合格式与双组隔离、PDF 连续回切、第四项 LRU、单项/累计超预算、关闭一次与位置冷重建；报告中位数/P95、结构化 miss/拒绝和资源快照。 | `pnpm test:reader-runtime-cache`；详见 ADR-0043 |
+| `reader-runtime-cache-metrics.mjs` / `reader-runtime-cache-metrics.test.mjs` | Reader Runtime 冷/命中耗时的中位数、P95 与可观测轮询容差；回归覆盖 Windows 小样本 P95 抖动，避免把单次轮询误差判定为缓存失败。 | `pnpm test:reader-runtime-cache-metrics` |
 | `verify-pdfjs-wasm-assets.mjs` | 构建后校验 PDF.js Worker 引用的 WASM/JS 解码资源均已输出,防止 JBIG2 等扫描 PDF 解码器漏包。 | `pnpm verify:pdfjs-wasm` |
 | `verify-search.mjs` | 真实浏览器搜索验证测试:打开示例书 → Ctrl+F → 输入关键词 → 断言异步产生命中、正文渲染命中高亮、上一项/下一项跳转改变位置、关闭搜索清理高亮与结果。 | `pnpm test:real-search` |
 | `verify-annotations.mjs` | 真实浏览器批注验证测试:打开示例书 → 选中正文 → 弹出「高亮」工具栏 → 创建高亮并断言 overlayer 绘制覆盖层、锚点含 CFI/引文/前后文/恢复状态,再 reload 断言批注从持久化恢复并重新绘制。 | `pnpm test:real-annotations` |

@@ -16,6 +16,12 @@ import { execSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
+import {
+  INTERACTIVE_POLL_INTERVAL_MS,
+  buildPerformanceThresholds,
+  median,
+  percentile,
+} from './reader-runtime-cache-metrics.mjs';
 
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const APP_URL = 'http://localhost:5173';
@@ -43,18 +49,6 @@ function waitForServer(url, timeoutMs = 30_000) {
     };
     poll();
   });
-}
-
-function median(values) {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((left, right) => left - right);
-  return sorted[Math.floor(sorted.length / 2)];
-}
-
-function percentile(values, fraction) {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((left, right) => left - right);
-  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
 }
 
 function sanitizeFailure(value) {
@@ -102,7 +96,7 @@ async function main() {
     // 等待应用自身的异步工作区恢复完成，避免测量 harness 与启动恢复争用全局 Runtime Store。
     await new Promise((resolve) => setTimeout(resolve, 1_000));
 
-    const result = await appPage.evaluate(async ({ runCount: requestedRuns }) => {
+    const result = await appPage.evaluate(async ({ runCount: requestedRuns, interactivePollIntervalMs }) => {
       const [commandModule, commandRegistryModule, importModule, epubWriterModule, epubInspectorModule,
         markdownInspectorModule, workspaceRepoModule, workspaceStoreModule, readerRuntimeModule, readerRuntimeCacheModule,
         managedSourceModule, hostModule, bootstrapModule, filePickerModule, libraryStoreModule,
@@ -311,7 +305,7 @@ async function main() {
         const started = performance.now();
         while (performance.now() - started < timeoutMs) {
           if (predicate()) return;
-          await new Promise((resolve) => setTimeout(resolve, 25));
+          await new Promise((resolve) => setTimeout(resolve, interactivePollIntervalMs));
         }
         throw new Error(`${label} 未在 ${timeoutMs}ms 内完成`);
       };
@@ -1634,7 +1628,7 @@ async function main() {
           runtimeEvictionObserved,
         },
       };
-    }, { runCount });
+    }, { runCount, interactivePollIntervalMs: INTERACTIVE_POLL_INTERVAL_MS });
 
     if (pageErrors.length > 0) throw new Error(`页面错误:${pageErrors.join('; ')}`);
     const hitValues = result.samples.map((sample) => sample.epub.hitReturnInteractiveMs);
@@ -1660,15 +1654,8 @@ async function main() {
       (sample) => sample.rebuildInteractiveMs,
     );
     const thresholds = {
-      source: '同一 Chrome 进程、同一材料、同一机器的冷回切中位数与 P95',
-      epub: {
-        hitReturnInteractiveMedianMs: median(coldValues),
-        hitReturnInteractiveP95Ms: percentile(coldValues, 0.95),
-      },
-      markdown: {
-        hitReturnInteractiveMedianMs: median(markdownColdValues),
-        hitReturnInteractiveP95Ms: percentile(markdownColdValues, 0.95),
-      },
+      source: '同一 Chrome 进程、同一材料、同一机器的冷回切中位数与 P95（P95 加一次可观测轮询容差）',
+      ...buildPerformanceThresholds(coldValues, markdownColdValues),
       stableMeasurementCount: result.runCount,
     };
     const checks = {

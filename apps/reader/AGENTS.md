@@ -24,6 +24,7 @@ pnpm verify:android # 校验 Android 平板原生核心冒烟配置
 pnpm test:real-epub-p0 # 真实 Chrome 验证 EPUB 2/3 P0 阅读矩阵
 pnpm test:reading-performance # 真实 Chrome 验证大型 EPUB/PDF 范围读取性能
 pnpm test:reader-runtime-cache # 真实 Chrome 验证三材料同/混合格式轮换、资源压力与安全冷重建
+pnpm test:reader-runtime-cache-metrics # 回归 Reader Runtime 耗时统计与 Windows 小样本 P95 抖动
 pnpm test         # Vitest
 pnpm typecheck    # TypeScript 严格模式类型检查
 pnpm tauri dev    # Vite + Tauri 完整桌面开发
