@@ -296,6 +296,9 @@ jobs:
       - name: 校验 Android 核心配置
         run: pnpm verify:android
 
+      - name: Android WebView 就绪探测回归
+        run: pnpm test:android-smoke
+
       - name: TypeScript 类型检查
         run: pnpm typecheck
 

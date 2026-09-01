@@ -15,6 +15,7 @@
     "verify:macos": "node scripts/verify-macos-core-config.mjs",
     "verify:ipados": "node scripts/verify-ipados-core-config.mjs",
     "verify:android": "pnpm --filter @ai-reader/app verify:android",
+    "test:android-smoke": "node --test scripts/android-webview-probe.test.mjs",
     "verify:v1": "node scripts/verify-v1-delivery.mjs"
   }
 }

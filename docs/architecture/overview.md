@@ -209,4 +209,4 @@ iPadOS 原生入口、系统文件选择器、安全区元数据、紧凑容器�
 
 ## Android 平板核心冒烟与验证
 
-Android 原生入口、系统文档选择器、最小文件权限、系统返回键、紧凑布局和触摸选区优先级由前端与 Tauri Android 壳共同提供。`.github/workflows/cross-platform.yml` 的 Android job 在 Linux runner 上生成并安装 Android APK，启动平板模拟器真实 WebView，执行触摸与进程重启并上传截图和日志；完整人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。
+Android 原生入口、系统文档选择器、最小文件权限、系统返回键、紧凑布局和触摸选区优先级由前端与 Tauri Android 壳共同提供。`.github/workflows/cross-platform.yml` 的 Android job 在 Linux runner 上生成并安装 Android APK，以 `scripts/android-webview-probe.mjs` 有界轮询目标进程、前台 Activity、WebView DevTools/CDP 和可识别工作台 DOM，再执行触摸与进程重启并上传三阶段截图、语义树和诊断日志；具体就绪与证据决策见 ADR-0044，完整人工验收步骤记录在 `docs/architecture/android-core-smoke.md`。

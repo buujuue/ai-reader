@@ -81,6 +81,7 @@ pnpm typecheck              # TypeScript 严格模式类型检查
 pnpm verify:macos           # 校验 macOS 核心阅读冒烟的 Tauri 打包、窗口与权限配置
 pnpm verify:ipados          # 校验 iPadOS 核心阅读冒烟的原生配置与工作流步骤
 pnpm verify:android         # 校验 Android 平板核心阅读冒烟的原生配置与工作流步骤
+pnpm test:android-smoke     # 回归 Android WebView 有界就绪探测的成功、重试与超时诊断
 pnpm --dir apps/reader test:real-epub-p0 # 真实 Chrome 验证 EPUB 2/3 P0 阅读矩阵
 pnpm --dir apps/reader test:reading-performance # 真实 Chrome 验证大型 EPUB/PDF 范围读取性能
 pnpm --dir apps/reader test:reader-runtime-cache # 真实 Chrome 验证三材料同/混合格式轮换、资源压力与安全冷重建
