@@ -11,12 +11,23 @@ export function createInMemoryWorkspaceRepository(): WorkspaceRepository {
   return {
     async loadState(): Promise<WorkspaceState> {
       const source = stored ?? DEFAULT_WORKSPACE_STATE;
-      return structuredClone(source);
+      return structuredClone({
+        ...source,
+        ...normalizeSidebarVisibility(
+          source.primarySidebarVisible,
+          source.tocVisible,
+          source.interfacePanelVisible,
+        ),
+      });
     },
     async saveState(state: WorkspaceState): Promise<void> {
       stored = structuredClone({
         ...state,
-        ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+        ...normalizeSidebarVisibility(
+          state.primarySidebarVisible,
+          state.tocVisible,
+          state.interfacePanelVisible,
+        ),
         unfiledMaterialsExpanded: state.unfiledMaterialsExpanded ?? true,
       });
     },

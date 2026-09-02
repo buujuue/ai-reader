@@ -6,6 +6,7 @@ import { ApplicationBar } from '../components/ApplicationBar';
 import { EditorArea } from '../components/EditorArea';
 import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
 import { FolderDeleteConfirmDialog } from '../components/FolderDeleteConfirmDialog';
+import { InterfaceSidebar } from '../components/InterfaceSidebar';
 import { MarkdownDirtyCloseDialog } from '../components/MarkdownDirtyCloseDialog';
 import { MarkdownRecoveryDialog } from '../components/MarkdownRecoveryDialog';
 import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
@@ -43,6 +44,7 @@ export function App({
   } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
+  const interfacePanelVisible = useWorkspaceStore((state) => state.interfacePanelVisible);
   const activityPanelWidth = useWorkspaceStore((state) => state.activityPanelWidth);
   const activeViewId = useWorkspaceStore((state) => {
     const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
@@ -85,7 +87,8 @@ export function App({
   const visibleSidebars = getVisibleSidebars(layoutPolicy, {
     primary: primarySidebarVisible,
     toc: tocVisible,
-  }, tocVisible ? 'toc' : 'primary');
+    interface: interfacePanelVisible,
+  }, interfacePanelVisible ? 'interface' : tocVisible ? 'toc' : 'primary');
   const effectiveVisibleSidebars =
     layoutPolicy.mode === 'compact' && compactActivityPanelDismissed ? [] : visibleSidebars;
   const hasInlineSidebar =
@@ -153,13 +156,14 @@ export function App({
     const sidebarCommands = {
       primary: COMMAND_IDS.workbenchTogglePrimarySidebar,
       toc: COMMAND_IDS.workbenchToggleToc,
+      interface: COMMAND_IDS.workbenchToggleInterfacePanel,
     } as const;
 
     void androidBackButton
       .onBackButtonPress((event) => {
         const action = resolveAndroidBackAction({
           compactLayout: layoutPolicy.mode === 'compact',
-          visibleSidebars: effectiveVisibleSidebars as Array<'primary' | 'toc'>,
+          visibleSidebars: effectiveVisibleSidebars as Array<'primary' | 'toc' | 'interface'>,
           activeViewId,
           activeViewSourceMode,
           activeSearchViewId,
@@ -379,6 +383,7 @@ export function App({
             <>
               {effectiveVisibleSidebars.includes('toc') ? <TocSidebar /> : null}
               {effectiveVisibleSidebars.includes('primary') ? <PrimarySidebar /> : null}
+              {effectiveVisibleSidebars.includes('interface') ? <InterfaceSidebar /> : null}
             </>
           ) : null}
         </div>
@@ -413,6 +418,15 @@ export function App({
                   className={`app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50 ${compactActivityPanelDismissed ? 'hidden' : ''}`}
                 >
                   <PrimarySidebar />
+                  <SidebarResizeHandle />
+                </div>
+              ) : null}
+              {visibleSidebars.includes('interface') ? (
+                <div
+                  aria-hidden={compactActivityPanelDismissed ? 'true' : undefined}
+                  className={`app-compact-sidebar-drawer pointer-events-auto absolute inset-y-0 left-[3.375rem] shadow-2xl shadow-black/50 ${compactActivityPanelDismissed ? 'hidden' : ''}`}
+                >
+                  <InterfaceSidebar />
                   <SidebarResizeHandle />
                 </div>
               ) : null}

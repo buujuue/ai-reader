@@ -28,6 +28,7 @@ import {
 export interface WorkspaceStoreState {
   primarySidebarVisible: boolean;
   tocVisible: boolean;
+  interfacePanelVisible: boolean;
   activityPanelWidth: number;
   primaryMaterialId: string | null;
   splitDirection: EditorGroupSplitDirection | null;
@@ -41,6 +42,7 @@ export interface WorkspaceStoreState {
   unfiledMaterialsExpanded: boolean;
   setPrimarySidebarVisible: (visible: boolean) => void;
   setTocVisible: (visible: boolean) => void;
+  setInterfacePanelVisible: (visible: boolean) => void;
   setActivityPanelWidth: (width: number) => void;
   setPrimaryMaterial: (materialId: string | null) => void;
   focusEditorGroup: (groupId: string) => void;
@@ -145,6 +147,7 @@ function normalizeWorkspaceViews(
 export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
   primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
   tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
+  interfacePanelVisible: DEFAULT_WORKSPACE_STATE.interfacePanelVisible,
   activityPanelWidth: DEFAULT_WORKSPACE_STATE.activityPanelWidth,
   primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
   splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,
@@ -157,12 +160,29 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
 
   setPrimarySidebarVisible: (visible) =>
     set((state) => ({
-      ...normalizeSidebarVisibility(visible, state.tocVisible),
+      ...normalizeSidebarVisibility(
+        visible,
+        visible ? false : state.tocVisible,
+        visible ? false : state.interfacePanelVisible,
+      ),
     })),
 
   setTocVisible: (visible) =>
     set((state) => ({
-      ...normalizeSidebarVisibility(state.primarySidebarVisible, visible),
+      ...normalizeSidebarVisibility(
+        visible ? false : state.primarySidebarVisible,
+        visible,
+        visible ? false : state.interfacePanelVisible,
+      ),
+    })),
+
+  setInterfacePanelVisible: (visible) =>
+    set((state) => ({
+      ...normalizeSidebarVisibility(
+        visible ? false : state.primarySidebarVisible,
+        visible ? false : state.tocVisible,
+        visible,
+      ),
     })),
 
   setActivityPanelWidth: (width) => set({ activityPanelWidth: clampActivityPanelWidth(width) }),
@@ -449,7 +469,11 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     );
     const materials = uniqueMaterialIds(normalized.editorGroups);
     set({
-      ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+      ...normalizeSidebarVisibility(
+        state.primarySidebarVisible,
+        state.tocVisible,
+        state.interfacePanelVisible ?? false,
+      ),
       activityPanelWidth: normalizeActivityPanelWidth(state.activityPanelWidth),
       primaryMaterialId:
         state.primaryMaterialId ?? (materials.length === 1 ? materials[0]! : null),
@@ -469,6 +493,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()((set, get) => ({
     set({
       primarySidebarVisible: DEFAULT_WORKSPACE_STATE.primarySidebarVisible,
       tocVisible: DEFAULT_WORKSPACE_STATE.tocVisible,
+      interfacePanelVisible: DEFAULT_WORKSPACE_STATE.interfacePanelVisible,
       activityPanelWidth: DEFAULT_WORKSPACE_STATE.activityPanelWidth,
       primaryMaterialId: DEFAULT_WORKSPACE_STATE.primaryMaterialId,
       splitDirection: DEFAULT_WORKSPACE_STATE.splitDirection,

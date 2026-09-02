@@ -1,4 +1,4 @@
-export type AndroidBackSidebar = 'primary' | 'toc';
+export type AndroidBackSidebar = 'primary' | 'toc' | 'interface';
 
 export interface AndroidBackState {
   compactLayout: boolean;

@@ -5,11 +5,12 @@ export const WIDE_LAYOUT_MIN_WIDTH = 1200;
 
 export type LayoutMode = 'compact' | 'medium' | 'wide';
 export type SidebarPresentation = 'inline' | 'overlay';
-export type SidebarId = 'toc' | 'primary';
+export type SidebarId = 'toc' | 'primary' | 'interface';
 
 export interface SidebarVisibility {
   toc: boolean;
   primary: boolean;
+  interface: boolean;
 }
 
 /**
@@ -34,7 +35,7 @@ export function getVisibleSidebars(
   preferredSidebar: SidebarId = 'primary',
 ): SidebarId[] {
   const requested: SidebarId[] = [preferredSidebar];
-  for (const sidebar of ['primary', 'toc'] as const) {
+  for (const sidebar of ['primary', 'toc', 'interface'] as const) {
     if (sidebar !== preferredSidebar) requested.push(sidebar);
   }
   const visible = requested.filter((sidebar) => visibility[sidebar]);

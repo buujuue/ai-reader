@@ -13,6 +13,7 @@ describe('Workspace Store', () => {
 
     expect(state.primarySidebarVisible).toBe(DEFAULT_WORKSPACE_STATE.primarySidebarVisible);
     expect(state.tocVisible).toBe(DEFAULT_WORKSPACE_STATE.tocVisible);
+    expect(state.interfacePanelVisible).toBe(false);
     expect(state.activityPanelWidth).toBe(DEFAULT_WORKSPACE_STATE.activityPanelWidth);
     expect(state.primaryMaterialId).toBe(DEFAULT_WORKSPACE_STATE.primaryMaterialId);
     expect(state.editorGroups).toEqual(DEFAULT_WORKSPACE_STATE.editorGroups);
@@ -22,6 +23,29 @@ describe('Workspace Store', () => {
     useWorkspaceStore.getState().setPrimarySidebarVisible(false);
 
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
+  });
+
+  it('界面面板可见性属于可序列化状态并与其它活动面板互斥', () => {
+    useWorkspaceStore.getState().setInterfacePanelVisible(true);
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
+
+    useWorkspaceStore.getState().hydrate({
+      ...DEFAULT_WORKSPACE_STATE,
+      interfacePanelVisible: true,
+      primarySidebarVisible: true,
+      tocVisible: true,
+    });
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
   });
 
   it('删除文件夹子树后只清理对应展开状态', () => {

@@ -7,7 +7,8 @@
 
 - `SelectionToolbar.tsx`：监听正文文本选区与 PDF 扫描页区域选区；EPUB 选区提交前校验是否处于单一 spine section，跨章节显示阻止原因；按选区类型显示高亮动作，经 `annotation.createHighlight` 或 `annotation.createPdfArea` Command 创建批注，不把选区活对象写入工作区状态。
 
-- `ActivityBar.tsx`：左侧活动栏只提供“书库”与“目录”两个互斥入口，分别执行 `workbench.togglePrimarySidebar` 与 `workbench.toggleToc`；导入动作位于真实书库面板与文件菜单。
+- `ActivityBar.tsx`：左侧活动栏提供“书库”“目录”“界面”三个互斥入口，分别执行 `workbench.togglePrimarySidebar`、`workbench.toggleToc` 与 `workbench.toggleInterfacePanel`；导入动作位于真实书库面板与文件菜单。
+- `InterfaceSidebar.tsx`：界面设置活动面板的生产壳，复用活动面板宽度、行内/紧凑覆盖抽屉和可恢复 Workspace State；主题与阅读排版控件由后续设置切片接入，不创建第二套设置通道。
 - `SidebarPanelHeader.tsx`：书库与目录共用的固定顶栏结构，统一标题、图标、右侧操作槽、行高和触控命中区，不承载具体业务行为。
 - `SidebarResizeHandle.tsx`：书库与目录共用的可拖动/可键盘调整宽度手柄；拖动过程更新活动面板宽度，结束时经 `workbench.setActivityPanelWidth` 持久化，不直接访问 Repository。
 - `PrimarySidebar.tsx`：书库侧栏默认展示 `libraryStore.folders` 的真实五层文件夹树，阅读材料按唯一 `folderId` 作为叶子节点；未归类材料在文件夹树下方、回收站上方以独立可折叠区块展示并显示数量，折叠状态经 `workbench.setUnfiledMaterialsExpanded` 持久化，区块交互与回收站一致。材料按有效标题稳定排序，文件夹名/材料标题/作者筛选由 `libraryFilter.ts` 生成树投影，命中材料显示完整路径并只在搜索会话内临时展开祖先，清空后恢复 Workspace State 原值。文件夹树使用 `tree/treeitem/group` 语义和 roving focus，支持方向键、Home/End、Enter/Space、Escape；材料更多菜单和精确指针下的单本材料指针拖放都执行同一个 `library.moveMaterial` Command；拖动时通过 `elementFromPoint` 将文件夹空白子区域归一到文件夹目标，文件夹与未归类目标以虚线轮廓和文字反馈区分有效、同归属和无效状态，触控指针不启动拖动以保护滚动。保留原生拖放事件作为兼容路径，拖放失败不乐观改写 Store。顶层/子文件夹新建、改名和删除均执行稳定 Command，删除由 `FolderDeleteConfirmDialog` 一次明确确认，命名输入支持 Enter 保存、Escape 取消，五层入口禁用并带可访问提示。保留按需封面、打开、元数据编辑、重新关联、回收站和既有封面网格能力；点击或键盘激活材料仍执行 `library.openBook`。

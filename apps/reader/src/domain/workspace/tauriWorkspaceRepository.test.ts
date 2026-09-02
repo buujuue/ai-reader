@@ -111,11 +111,23 @@ describe('TauriWorkspaceRepository 边界映射', () => {
     });
   });
 
+  it('加载旧 DTO 时为缺失的界面面板状态使用关闭默认值', async () => {
+    const legacyState = structuredClone(DEFAULT_WORKSPACE_STATE) as Partial<WorkspaceState>;
+    delete legacyState.interfacePanelVisible;
+    const invoke: TauriInvoke = async () => legacyState;
+
+    const repository = createTauriWorkspaceRepository(invoke);
+
+    await expect(repository.loadState()).resolves.toMatchObject({
+      interfacePanelVisible: false,
+    });
+  });
+
   it('线格式与 Rust 端锁定的 camelCase DTO 一致', () => {
-    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(12);
+    expect(WORKSPACE_STATE_SCHEMA_VERSION).toBe(13);
     expect(DEFAULT_WORKSPACE_STATE.activeEditorGroupId).toBe(DEFAULT_EDITOR_GROUP_ID);
     expect(JSON.stringify(DEFAULT_WORKSPACE_STATE)).toBe(
-      '{"schemaVersion":12,"primarySidebarVisible":true,"tocVisible":false,"activityPanelWidth":304,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{},"expandedLibraryFolderIds":[],"unfiledMaterialsExpanded":true}',
+      '{"schemaVersion":13,"primarySidebarVisible":true,"tocVisible":false,"interfacePanelVisible":false,"activityPanelWidth":304,"primaryMaterialId":null,"splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[{"id":"group-1","views":[],"activeViewId":null}],"globalReadingTypography":{"fontFamily":"sansSerif","fontSize":18,"lineHeight":1.6,"margin":48,"gap":7,"flow":"paginated","theme":"light"},"materialTypography":{},"expandedLibraryFolderIds":[],"unfiledMaterialsExpanded":true}',
     );
   });
 });

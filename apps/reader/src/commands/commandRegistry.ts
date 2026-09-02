@@ -4,6 +4,7 @@ export const COMMAND_IDS = {
   workbenchOpenAnnotationPanel: 'workbench.openAnnotationPanel',
   workbenchSetPrimaryMaterial: 'workbench.setPrimaryMaterial',
   workbenchToggleToc: 'workbench.toggleToc',
+  workbenchToggleInterfacePanel: 'workbench.toggleInterfacePanel',
   workbenchSetActivityPanelWidth: 'workbench.setActivityPanelWidth',
   workbenchSetLibraryFolderExpanded: 'workbench.setLibraryFolderExpanded',
   workbenchSetUnfiledMaterialsExpanded: 'workbench.setUnfiledMaterialsExpanded',

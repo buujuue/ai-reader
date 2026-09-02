@@ -57,6 +57,15 @@ describe('resolveAndroidBackAction', () => {
     ).toEqual({ kind: 'exitMarkdownSourceMode', viewId: 'view-1' });
   });
 
+  it('紧凑布局返回键可以关闭界面活动面板抽屉', () => {
+    expect(
+      resolveAndroidBackAction({
+        ...baseState,
+        visibleSidebars: ['interface'],
+      }),
+    ).toEqual({ kind: 'closeSidebar', sidebar: 'interface' });
+  });
+
   it('在恢复对话框中保持当前界面，避免返回键静默丢弃快照', () => {
     expect(
       resolveAndroidBackAction({

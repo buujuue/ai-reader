@@ -2,7 +2,7 @@
 
 ## 功能
 
-- `App.tsx`：默认渲染 C 风格暗色生产工作台，读取 `LayoutPolicy`，为中等/紧凑容器渲染互斥的覆盖式书库/目录抽屉，并保留 Editor Group、侧栏和阅读位置等工作区状态；活动面板宽度由 `Workspace Store` 驱动并由 `SidebarResizeHandle` 调整；材料批注面板是按 materialId 绑定的运行时覆盖层；根容器承接平台安全区。`WorkbenchPrototype` 仍仅用于视觉对比，内含默认极夜黑与四套新增浅色配色、每套对应背景光及临时开关，并在活动栏提供界面面板预览阅读排版；主题配色在面板底部默认折叠，不接入生产主题状态。
+- `App.tsx`：默认渲染 C 风格暗色生产工作台，读取 `LayoutPolicy`，为中等/紧凑容器渲染互斥的覆盖式书库/目录/界面抽屉，并保留 Editor Group、侧栏和阅读位置等工作区状态；活动面板宽度由 `Workspace Store` 驱动并由 `SidebarResizeHandle` 调整；材料批注面板是按 materialId 绑定的运行时覆盖层；根容器承接平台安全区。`WorkbenchPrototype` 仍仅用于视觉对比，内含默认极夜黑与四套新增浅色配色、每套对应背景光及临时开关，并在活动栏提供界面面板预览阅读排版；主题配色在面板底部默认折叠，不接入生产主题状态。
 
 - `main.tsx`（位于 `src/` 根，不在本目录）通过 `createRoot` 挂载，组合 `AppServicesProvider` 与 `App`。
 - `bootstrap.ts`：组装 `AppServices`（含 `EpubNativeAccelerator`）。`isTauriRuntime()` 检测 `__TAURI_INTERNALS__`，据此选择 Tauri Adapter 或内存 Adapter；Tauri 原生预取默认经过协议、能力、语义来源与平台门控，当前仅启用已验证的 Windows，其他平台返回不可用 Adapter；任意失败由阅读命令透明回退纯 JS。桌面端的 `WindowLifecycle` 只暴露关闭请求监听与销毁窗口两项能力，Android 端通过 Tauri `onBackButtonPress` 注入系统返回事件；`createAppServices()` 注册工作台、书库、批注导出、备份与阅读命令，内存降级时用演示 EPUB 种子化书库，可注入平台窄接口供测试。书库命令、Markdown 命令与阅读命令共享同一组依赖；bootstrap 将 Markdown 的 Runtime 挂起/恢复和材料刷新接到 `readerCommands.ts`，确保源码编辑与阅读渲染遵循同一缓存/失效协议；重新关联或重新导入资料后，Tauri 端重载应用，浏览器降级端重建该材料的活动阅读视图。
@@ -13,7 +13,7 @@
 - `backupDestinationPicker.ts`：备份目标保存对话框窄接口。Tauri 端经 `@tauri-apps/plugin-dialog` 的 `save`；取消返回 `null`，浏览器降级明确不提供目标。
 - `annotationExportDestinationPicker.ts`：单本批注 Markdown 的系统保存位置选择器；Tauri 端经 `save` 选择 `.md` 文件，取消返回 `null`，浏览器降级不写任意本地文件。
 - `AppServicesContext.tsx`：React 上下文，向组件树提供 `AppServices`；`useAppServices()` 供任意组件取用。
-- `App.tsx`：工作台顶层外壳，默认接入 `ApplicationBar`、两入口 `ActivityBar`、真实书库/目录侧栏与材料批注覆盖层；启动时恢复工作区与书库、经 `reader.restoreView` 重建持久化标签，再执行 `markdown.recovery.check` 展示 Recovery Snapshot；组合工作台组件与各类对话框，包括 EPUB 版本迁移确认与恢复快照。Tauri 关闭请求会先阻止默认关闭，等待阅读位置与 Markdown 恢复快照 flush 后销毁窗口；页面隐藏/卸载保留尽力 flush。
+- `App.tsx`：工作台顶层外壳，默认接入 `ApplicationBar`、三个互斥入口 `ActivityBar`、真实书库/目录/界面侧栏与材料批注覆盖层；启动时恢复工作区与书库、经 `reader.restoreView` 重建持久化标签，再执行 `markdown.recovery.check` 展示 Recovery Snapshot；组合工作台组件与各类对话框，包括 EPUB 版本迁移确认与恢复快照。Tauri 关闭请求会先阻止默认关闭，等待阅读位置与 Markdown 恢复快照 flush 后销毁窗口；页面隐藏/卸载保留尽力 flush。
 - `App.test.tsx`：应用级测试，含“打开 EPUB 并重启续读”验收路径、“关闭请求等待恢复快照落盘”、“回收站:安全删除资料”流程、“目录与外部链接”流程，以及单本材料拖放到文件夹/未归类、同归属无操作、非法载荷、失败回滚和重启归属、顶栏完整备份导出/恢复入口验收。
 
 ## 依赖其它文件夹（树）

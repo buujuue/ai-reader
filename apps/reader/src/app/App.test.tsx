@@ -159,7 +159,7 @@ describe('阅读工作台外壳', () => {
     await expect(repository.loadState()).resolves.toMatchObject({ activityPanelWidth: 316 });
   });
 
-  it('默认生产入口呈现 C 工作台顶栏并只保留书库与目录活动入口', () => {
+  it('默认生产入口呈现 C 工作台顶栏并提供三个活动入口', () => {
     renderApp(services);
 
     expect(document.querySelector('.app-shell.workbench-prototype')).toHaveAttribute(
@@ -169,6 +169,7 @@ describe('阅读工作台外壳', () => {
     expect(screen.getByRole('banner', { name: '应用顶栏' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '书库' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '目录' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '界面' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '切换批注侧栏' })).not.toBeInTheDocument();
   });
@@ -268,6 +269,59 @@ describe('阅读工作台外壳', () => {
     });
   });
 
+  it('界面活动入口通过 Command 切换面板并与书库、目录互斥', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    const toggle = screen.getByRole('button', { name: '界面' });
+    expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByRole('complementary', { name: '界面侧栏' })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('complementary', { name: '书库侧栏' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: '目录侧栏' })).not.toBeInTheDocument();
+    await expect(repository.loadState()).resolves.toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
+    });
+    await expect(repository.loadState()).resolves.toMatchObject({ interfacePanelVisible: false });
+  });
+
+  it('紧凑布局以覆盖抽屉呈现界面面板并可由同一入口关闭', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
+    try {
+      const user = userEvent.setup();
+      renderApp(services);
+      await waitFor(() => {
+        expect(document.querySelector('[data-layout-mode="compact"]')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: '界面' }));
+      await waitFor(() => {
+        expect(screen.getByRole('complementary', { name: '界面侧栏' })).toBeInTheDocument();
+      });
+      expect(document.querySelector('[data-sidebar-presentation="overlay"]')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: '界面' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
+      });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
+    }
+  });
+
   it('紧凑布局打开材料后收起抽屉并允许切换目录', async () => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
@@ -323,6 +377,22 @@ describe('阅读工作台外壳', () => {
     expect(useWorkspaceStore.getState().primarySidebarVisible).toBe(false);
     expect(useWorkspaceStore.getState().tocVisible).toBe(true);
     expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument();
+  });
+
+  it('启动时恢复此前持久化的界面面板显示状态', async () => {
+    await repository.saveState({
+      ...structuredClone(DEFAULT_WORKSPACE_STATE),
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
+
+    renderApp(services);
+    await waitFor(() => {
+      expect(screen.getByRole('complementary', { name: '界面侧栏' })).toBeInTheDocument();
+    });
+    expect(useWorkspaceStore.getState().interfacePanelVisible).toBe(true);
+    expect(screen.queryByRole('complementary', { name: '书库侧栏' })).not.toBeInTheDocument();
   });
 
   it('启动恢复工作区后检查 Markdown 恢复快照', async () => {
@@ -1611,6 +1681,7 @@ describe('打开 EPUB 并重启续读', () => {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       tocVisible: workspace.tocVisible,
+      interfacePanelVisible: workspace.interfacePanelVisible,
       activityPanelWidth: workspace.activityPanelWidth,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,
@@ -1738,6 +1809,7 @@ describe('打开 EPUB 并重启续读', () => {
       schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
       primarySidebarVisible: workspace.primarySidebarVisible,
       tocVisible: workspace.tocVisible,
+      interfacePanelVisible: workspace.interfacePanelVisible,
       activityPanelWidth: workspace.activityPanelWidth,
       primaryMaterialId: workspace.primaryMaterialId,
       splitDirection: workspace.splitDirection,

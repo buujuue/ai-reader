@@ -126,11 +126,15 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
   const unfiledMaterialsExpanded = typeof candidate.unfiledMaterialsExpanded === 'boolean'
     ? candidate.unfiledMaterialsExpanded
     : (DEFAULT_WORKSPACE_STATE.unfiledMaterialsExpanded ?? true);
+  const interfacePanelVisible = typeof candidate.interfacePanelVisible === 'boolean'
+    ? candidate.interfacePanelVisible
+    : (DEFAULT_WORKSPACE_STATE.interfacePanelVisible ?? false);
   const sidebarVisibility = normalizeSidebarVisibility(
     candidate.primarySidebarVisible,
     typeof candidate.tocVisible === 'boolean'
       ? candidate.tocVisible
       : DEFAULT_WORKSPACE_STATE.tocVisible,
+    interfacePanelVisible,
   );
   return {
     schemaVersion: candidate.schemaVersion,
@@ -147,6 +151,7 @@ function assertWorkspaceStateShape(raw: unknown): WorkspaceState {
     materialTypography: Object.fromEntries(materialOverrideEntries),
     expandedLibraryFolderIds,
     unfiledMaterialsExpanded,
+    interfacePanelVisible: sidebarVisibility.interfacePanelVisible,
   };
 }
 
@@ -160,7 +165,11 @@ export function createTauriWorkspaceRepository(invoke: TauriInvoke): WorkspaceRe
       await invoke(WORKSPACE_COMMAND_NAMES.saveState, {
         state: {
           ...state,
-          ...normalizeSidebarVisibility(state.primarySidebarVisible, state.tocVisible),
+          ...normalizeSidebarVisibility(
+            state.primarySidebarVisible,
+            state.tocVisible,
+            state.interfacePanelVisible ?? false,
+          ),
         },
       });
     },

@@ -4,6 +4,7 @@ import type { AnnotationRepository } from '../domain/annotation/annotationReposi
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import {
   clampActivityPanelWidth,
+  normalizeSidebarVisibility,
   WORKSPACE_STATE_SCHEMA_VERSION,
   type WorkspaceState,
 } from '../domain/workspace/workspaceState';
@@ -35,6 +36,7 @@ export function serializeWorkspaceState(): WorkspaceState {
     schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
     primarySidebarVisible: store.primarySidebarVisible,
     tocVisible: store.tocVisible,
+    interfacePanelVisible: store.interfacePanelVisible,
     activityPanelWidth: store.activityPanelWidth,
     primaryMaterialId: store.primaryMaterialId,
     splitDirection: store.splitDirection,
@@ -44,6 +46,33 @@ export function serializeWorkspaceState(): WorkspaceState {
     materialTypography: store.materialTypography,
     expandedLibraryFolderIds: store.expandedLibraryFolderIds,
     unfiledMaterialsExpanded: store.unfiledMaterialsExpanded,
+  };
+}
+
+type ActivityPanelId = 'primary' | 'toc' | 'interface';
+
+function withActivityPanelVisibility(
+  state: WorkspaceState,
+  panel: ActivityPanelId,
+  visible: boolean,
+): WorkspaceState {
+  if (visible) {
+    return {
+      ...state,
+      ...normalizeSidebarVisibility(
+        panel === 'primary',
+        panel === 'toc',
+        panel === 'interface',
+      ),
+    };
+  }
+  return {
+    ...state,
+    ...normalizeSidebarVisibility(
+      panel === 'primary' ? visible : state.primarySidebarVisible,
+      panel === 'toc' ? visible : state.tocVisible,
+      panel === 'interface' ? visible : state.interfacePanelVisible,
+    ),
   };
 }
 
@@ -105,19 +134,15 @@ export function registerWorkbenchCommands(
     const nextVisible = !workspace.primarySidebarVisible;
 
     try {
-      const state = serializeWorkspaceState();
-      await dependencies.workspaceRepository.saveState({
-        ...state,
-        primarySidebarVisible: nextVisible,
-        tocVisible: nextVisible ? false : state.tocVisible,
-      });
+      await dependencies.workspaceRepository.saveState(
+        withActivityPanelVisibility(serializeWorkspaceState(), 'primary', nextVisible),
+      );
     } catch (error) {
       console.error('保存工作区状态失败', error);
       useShellUiStore.getState().setStatusMessage('保存工作区状态失败');
       throw error;
     }
 
-    if (nextVisible) useWorkspaceStore.getState().setTocVisible(false);
     useWorkspaceStore.getState().setPrimarySidebarVisible(nextVisible);
     if (nextVisible) useShellUiStore.getState().restoreCompactActivityPanel();
     useShellUiStore
@@ -127,13 +152,9 @@ export function registerWorkbenchCommands(
 
   registry.register(COMMAND_IDS.workbenchFocusLibraryFilter, async () => {
     if (!useWorkspaceStore.getState().primarySidebarVisible) {
-      const state = serializeWorkspaceState();
-      await dependencies.workspaceRepository.saveState({
-        ...state,
-        primarySidebarVisible: true,
-        tocVisible: false,
-      });
-      useWorkspaceStore.getState().setTocVisible(false);
+      await dependencies.workspaceRepository.saveState(
+        withActivityPanelVisibility(serializeWorkspaceState(), 'primary', true),
+      );
       useWorkspaceStore.getState().setPrimarySidebarVisible(true);
     }
     useShellUiStore.getState().restoreCompactActivityPanel();
@@ -163,21 +184,43 @@ export function registerWorkbenchCommands(
     const nextVisible = !workspace.tocVisible;
 
     try {
-      const state = serializeWorkspaceState();
-      await dependencies.workspaceRepository.saveState({
-        ...state,
-        tocVisible: nextVisible,
-        primarySidebarVisible: nextVisible ? false : state.primarySidebarVisible,
-      });
+      await dependencies.workspaceRepository.saveState(
+        withActivityPanelVisibility(serializeWorkspaceState(), 'toc', nextVisible),
+      );
     } catch (error) {
       console.error('保存目录侧栏状态失败', error);
       useShellUiStore.getState().setStatusMessage('保存目录侧栏状态失败');
       throw error;
     }
 
-    if (nextVisible) useWorkspaceStore.getState().setPrimarySidebarVisible(false);
     useWorkspaceStore.getState().setTocVisible(nextVisible);
     if (nextVisible) useShellUiStore.getState().restoreCompactActivityPanel();
+  });
+
+  registry.register(COMMAND_IDS.workbenchToggleInterfacePanel, async () => {
+    const workspace = useWorkspaceStore.getState();
+    const shell = useShellUiStore.getState();
+    if (workspace.interfacePanelVisible && shell.compactActivityPanelDismissed) {
+      shell.restoreCompactActivityPanel();
+      return;
+    }
+    const nextVisible = !workspace.interfacePanelVisible;
+
+    try {
+      await dependencies.workspaceRepository.saveState(
+        withActivityPanelVisibility(serializeWorkspaceState(), 'interface', nextVisible),
+      );
+    } catch (error) {
+      console.error('保存界面面板状态失败', error);
+      useShellUiStore.getState().setStatusMessage('保存界面面板状态失败');
+      throw error;
+    }
+
+    useWorkspaceStore.getState().setInterfacePanelVisible(nextVisible);
+    if (nextVisible) useShellUiStore.getState().restoreCompactActivityPanel();
+    useShellUiStore
+      .getState()
+      .setStatusMessage(nextVisible ? '已保存工作区状态:界面面板显示' : '已保存工作区状态:界面面板隐藏');
   });
 
   registry.register(COMMAND_IDS.workbenchSetActivityPanelWidth, async (...args: unknown[]) => {

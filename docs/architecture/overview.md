@@ -80,6 +80,8 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态；已完成的 EPUB/Markdown/PDF Runtime 按 ADR-0041/0043 进入最多三个 resident 的按 ReadingView 身份隔离缓存，其中最多两个 active，其余为 suspended，容量不足只按 LRU 淘汰 suspended，PDF 挂起只保留 PDF.js 文档和当前页的预算内结果。书库文件夹树的用户展开集合 `expandedLibraryFolderIds` 与位于树下方、回收站上方的未归类区块状态 `unfiledMaterialsExpanded` 同属 Workspace State；书库搜索投影、命中路径和搜索期间的临时展开覆盖只存在于 `PrimarySidebar` 运行时，清空搜索后回到搜索前状态。材料更多菜单位于阅读工具栏右侧，提供查看/导出材料批注、设置主要阅读材料、编辑材料元数据和移入回收站；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
+活动栏的书库、目录和界面入口共享一组严格互斥的 Workspace State 侧栏期望状态；界面面板默认关闭，切换与恢复均通过 `workbench.toggleInterfacePanel` 和 typed Workspace Repository 完成。`LayoutPolicy` 只把这三类状态投影为宽/中布局的行内侧栏或紧凑布局的覆盖抽屉。
+
 ### Command Registry
 
 所有按钮、菜单、键盘、触摸和拖放适配器执行稳定 Command ID。快捷键只负责按键到 Command 的映射，Event 只表达已经发生的事实。书库材料拖放只接受单个 `MaterialId` 并与“移动到……”菜单共用 `library.moveMaterial`；拖放不直接修改 Store 或 Repository，目标由 Command 再次按权威文件夹列表校验。PDF 分页模式的正文左右点击/轻触也通过同一组翻页 Command；由于 PDF 内容位于应用顶层文档，监听必须限定在当前 ReadingView 正文容器内，选择、批注区域拖选和交互控件优先。
@@ -116,7 +118,7 @@ EPUB 文本批注限制在单一 spine section 内，跨页/跨栏/跨段允许�
 
 ### Persistence
 
-SQLite 保存材料、批注、阅读位置、工作区和设置；材料表的 nullable `folder_id` 由外键指向书库文件夹，null 表示未归类，文件夹删除按既有规则转为 null。Workspace State schema 12 同时保存 `expandedLibraryFolderIds` 与 `unfiledMaterialsExpanded`；前者在加载书库权威文件夹列表后裁剪，旧 DTO 缺失后者时默认展开。文件系统分开保存 `covers/` 自定义封面与 `source-covers/` 来源封面，以及材料、恢复快照、版本迁移快照、普通删除的可恢复正文与可再生成缓存。普通删除移除活跃正文路径但保留这些用户数据，永久清理先切断迁移快照再清理记录与全部文件；因此真正缺失正文可明确显示且只能由同完整指纹重新关联。EPUB 缺失原生导航时的临时目录由 TypeScript 按标题推导，缓存由 Rust 经 typed 命令按材料完整指纹与算法版本原子保存，且不进入书库备份或同步边界。高频位置写入节流，关键写入使用事务或可恢复协议；显式 EPUB 版本迁移提交前保存一致的旧数据库与旧托管文件，迁移后快照持续保留。具体目录决策见 ADR-0027。
+SQLite 保存材料、批注、阅读位置、工作区和设置；材料表的 nullable `folder_id` 由外键指向书库文件夹，null 表示未归类，文件夹删除按既有规则转为 null。Workspace State schema 13 保存三类互斥活动面板的期望状态、`expandedLibraryFolderIds` 与 `unfiledMaterialsExpanded`；界面面板缺失于旧 DTO 时默认关闭，文件夹展开集合在加载书库权威文件夹列表后裁剪，旧 DTO 缺失未归类状态时默认展开。文件系统分开保存 `covers/` 自定义封面与 `source-covers/` 来源封面，以及材料、恢复快照、版本迁移快照、普通删除的可恢复正文与可再生成缓存。普通删除移除活跃正文路径但保留这些用户数据，永久清理先切断迁移快照再清理记录与全部文件；因此真正缺失正文可明确显示且只能由同完整指纹重新关联。EPUB 缺失原生导航时的临时目录由 TypeScript 按标题推导，缓存由 Rust 经 typed 命令按材料完整指纹与算法版本原子保存，且不进入书库备份或同步边界。高频位置写入节流，关键写入使用事务或可恢复协议；显式 EPUB 版本迁移提交前保存一致的旧数据库与旧托管文件，迁移后快照持续保留。具体目录决策见 ADR-0027。
 
 ### Markdown
 

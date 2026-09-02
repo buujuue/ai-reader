@@ -1,15 +1,16 @@
-import { LibraryBig, ListTree } from 'lucide-react';
+import { LibraryBig, ListTree, Settings2 } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 
-/** 一级区域入口只保留书库和目录;导入、备份等低频动作位于应用顶栏菜单。 */
+/** 一级区域入口提供书库、目录和界面;导入、备份等低频动作位于应用顶栏菜单。 */
 export function ActivityBar() {
   const { commands } = useAppServices();
   const primarySidebarVisible = useWorkspaceStore((state) => state.primarySidebarVisible);
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
+  const interfacePanelVisible = useWorkspaceStore((state) => state.interfacePanelVisible);
   const compactActivityPanelDismissed = useShellUiStore(
     (state) => state.compactActivityPanelDismissed,
   );
@@ -20,6 +21,10 @@ export function ActivityBar() {
 
   const toggleToc = () => {
     void commands.execute(COMMAND_IDS.workbenchToggleToc).catch(() => undefined);
+  };
+
+  const toggleInterfacePanel = () => {
+    void commands.execute(COMMAND_IDS.workbenchToggleInterfacePanel).catch(() => undefined);
   };
 
   return (
@@ -43,6 +48,16 @@ export function ActivityBar() {
         className="app-activity-button"
       >
         <ListTree size={20} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label="界面"
+        aria-pressed={interfacePanelVisible && !compactActivityPanelDismissed}
+        title={interfacePanelVisible ? '隐藏界面' : '显示界面'}
+        onClick={toggleInterfacePanel}
+        className="app-activity-button"
+      >
+        <Settings2 size={20} aria-hidden />
       </button>
     </nav>
   );

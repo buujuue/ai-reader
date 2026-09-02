@@ -35,10 +35,11 @@ describe('getLayoutPolicy', () => {
   });
 
   it('中等布局和紧凑布局只投影一个侧栏期望状态', () => {
-    const visibility = { primary: true, toc: true };
+    const visibility = { primary: true, toc: true, interface: true };
 
     expect(getVisibleSidebars(getLayoutPolicy(900), visibility)).toEqual(['primary']);
     expect(getVisibleSidebars(getLayoutPolicy(700), visibility, 'toc')).toEqual(['toc']);
+    expect(getVisibleSidebars(getLayoutPolicy(700), visibility, 'interface')).toEqual(['interface']);
     expect(getVisibleSidebars(getLayoutPolicy(1280), visibility)).toEqual([
       'primary',
     ]);

@@ -905,6 +905,13 @@ fn normalize_workspace_state_for_backup(
                 ));
             }
         }
+        if let Some(interface_visible) = object.get("interfacePanelVisible") {
+            if !interface_visible.is_boolean() {
+                return Err(AppError::BackupValidation(
+                    "界面面板状态格式不正确".to_string(),
+                ));
+            }
+        }
         if !object.contains_key("expandedLibraryFolderIds") {
             object.insert(
                 "expandedLibraryFolderIds".to_string(),
@@ -913,6 +920,9 @@ fn normalize_workspace_state_for_backup(
         }
         if !object.contains_key("unfiledMaterialsExpanded") {
             object.insert("unfiledMaterialsExpanded".to_string(), serde_json::json!(true));
+        }
+        if !object.contains_key("interfacePanelVisible") {
+            object.insert("interfacePanelVisible".to_string(), serde_json::json!(false));
         }
         let normalized = serde_json::to_string(&value)
             .map_err(|error| AppError::BackupValidation(format!("工作区状态无法写入:{error}")))?;
@@ -1032,6 +1042,7 @@ fn normalize_legacy_staged_library(stage_dir: &Path) -> Result<(), AppError> {
             if let Some(object) = value.as_object_mut() {
                 object.remove("expandedLibraryFolderIds");
                 object.remove("unfiledMaterialsExpanded");
+                object.remove("interfacePanelVisible");
                 let normalized = serde_json::to_string(&value).map_err(|error| {
                     AppError::BackupValidation(format!("旧版工作区状态无法写入:{error}"))
                 })?;
@@ -1186,6 +1197,13 @@ fn validate_workspace_tree(
         if !unfiled_expanded.is_boolean() {
             return Err(AppError::BackupValidation(
                 "未归类材料展开状态格式不正确".to_string(),
+            ));
+        }
+    }
+    if let Some(interface_visible) = object.get("interfacePanelVisible") {
+        if !interface_visible.is_boolean() {
+            return Err(AppError::BackupValidation(
+                "界面面板状态格式不正确".to_string(),
             ));
         }
     }
@@ -2130,7 +2148,7 @@ mod tests {
             .execute(
                 "UPDATE workspace_state SET json = ?1 WHERE id = 1",
                 [format!(
-                    r#"{{"schemaVersion":12,"primarySidebarVisible":true,"tocVisible":false,"activityPanelWidth":304,"primaryMaterialId":"material-1","splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[],"globalReadingTypography":{{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"}},"materialTypography":{{}},"expandedLibraryFolderIds":["{}","{}"],"unfiledMaterialsExpanded":false}}"#,
+                    r#"{{"schemaVersion":13,"primarySidebarVisible":true,"tocVisible":false,"interfacePanelVisible":true,"activityPanelWidth":304,"primaryMaterialId":"material-1","splitDirection":null,"activeEditorGroupId":"group-1","editorGroups":[],"globalReadingTypography":{{"fontFamily":"sansSerif","fontSize":18.0,"lineHeight":1.6,"margin":48.0,"gap":7.0,"flow":"paginated","theme":"light"}},"materialTypography":{{}},"expandedLibraryFolderIds":["{}","{}"],"unfiledMaterialsExpanded":false}}"#,
                     folder.id, child.id
                 )],
             )
@@ -2196,6 +2214,7 @@ mod tests {
             serde_json::json!([folder.id, child.id])
         );
         assert_eq!(workspace["unfiledMaterialsExpanded"], false);
+        assert_eq!(workspace["interfacePanelVisible"], true);
     }
 
     fn expect_folder(rows: &[(String, Option<String>)], name: &str, parent_id: Option<String>) {
@@ -2301,7 +2320,7 @@ mod tests {
             .execute(
                 "UPDATE workspace_state SET json = ?1 WHERE id = 1",
                 [format!(
-                    r#"{{"schemaVersion":12,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[],"expandedLibraryFolderIds":["{}"],"unfiledMaterialsExpanded":false}}"#,
+                    r#"{{"schemaVersion":13,"primarySidebarVisible":true,"activeEditorGroupId":"group-1","editorGroups":[],"expandedLibraryFolderIds":["{}"],"unfiledMaterialsExpanded":false}}"#,
                     folder.id
                 )],
             )
@@ -2424,6 +2443,25 @@ mod tests {
         let error = validate_workspace_tree(&connection, &HashSet::new(), true).unwrap_err();
 
         assert!(matches!(error, AppError::BackupValidation(message) if message.contains("缺少 Workspace State")));
+    }
+
+    #[test]
+    fn v2_workspace_validation_rejects_invalid_interface_panel_state() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE workspace_state (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    json TEXT NOT NULL
+                );
+                 INSERT INTO workspace_state (id, json)
+                 VALUES (1, '{\"interfacePanelVisible\":\"yes\"}');",
+            )
+            .unwrap();
+
+        let error = validate_workspace_tree(&connection, &HashSet::new(), false).unwrap_err();
+
+        assert!(matches!(error, AppError::BackupValidation(message) if message.contains("界面面板状态格式不正确")));
     }
 
     fn rewrite_archive_manifest(source: &Path, update: impl FnOnce(&mut BackupManifest)) {

@@ -3,7 +3,7 @@ import type { NavigationHistory } from '../reader/navigationHistory';
 import type { ReadingTypography } from '../reader/typography';
 import { DEFAULT_READING_TYPOGRAPHY } from '../reader/typography';
 
-export const WORKSPACE_STATE_SCHEMA_VERSION = 12;
+export const WORKSPACE_STATE_SCHEMA_VERSION = 13;
 
 export const DEFAULT_ACTIVITY_PANEL_WIDTH = 304;
 export const MIN_ACTIVITY_PANEL_WIDTH = 240;
@@ -52,7 +52,9 @@ export interface WorkspaceState {
   primarySidebarVisible: boolean;
   /** 目录侧栏的用户期望状态；紧凑布局只改变呈现方式，不改变此值。 */
   tocVisible: boolean;
-  /** 书库与目录共用的活动面板宽度，紧凑布局抽屉也复用此偏好。 */
+  /** 界面设置侧栏的用户期望状态；旧工作区缺失时默认关闭。 */
+  interfacePanelVisible: boolean;
+  /** 三类活动面板共用的宽度，紧凑布局抽屉也复用此偏好。 */
   activityPanelWidth: number;
   /** 用户显式指定的主要阅读材料;与当前焦点阅读视图独立。 */
   primaryMaterialId: string | null;
@@ -75,10 +77,19 @@ export const SECOND_EDITOR_GROUP_ID = 'group-2';
 export function normalizeSidebarVisibility(
   primarySidebarVisible: boolean,
   tocVisible: boolean,
-): Pick<WorkspaceState, 'primarySidebarVisible' | 'tocVisible'> {
+  interfacePanelVisible = false,
+): Pick<WorkspaceState, 'primarySidebarVisible' | 'tocVisible' | 'interfacePanelVisible'> {
+  const activePanel = interfacePanelVisible
+    ? 'interface'
+    : tocVisible
+      ? 'toc'
+      : primarySidebarVisible
+        ? 'primary'
+        : null;
   return {
-    primarySidebarVisible: primarySidebarVisible && !tocVisible,
-    tocVisible,
+    primarySidebarVisible: activePanel === 'primary',
+    tocVisible: activePanel === 'toc',
+    interfacePanelVisible: activePanel === 'interface',
   };
 }
 
@@ -86,6 +97,7 @@ export const DEFAULT_WORKSPACE_STATE: WorkspaceState = Object.freeze({
   schemaVersion: WORKSPACE_STATE_SCHEMA_VERSION,
   primarySidebarVisible: true,
   tocVisible: false,
+  interfacePanelVisible: false,
   activityPanelWidth: DEFAULT_ACTIVITY_PANEL_WIDTH,
   primaryMaterialId: null,
   splitDirection: null,

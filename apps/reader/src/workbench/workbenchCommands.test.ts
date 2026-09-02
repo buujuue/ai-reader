@@ -73,6 +73,35 @@ describe('工作台命令处理', () => {
     await expect(repository.loadState()).resolves.toMatchObject({ tocVisible: false });
   });
 
+  it('切换界面面板命令会持久化并保持三个活动面板互斥', async () => {
+    await registry.execute(COMMAND_IDS.workbenchToggleInterfacePanel);
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
+    await expect(repository.loadState()).resolves.toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
+
+    await registry.execute(COMMAND_IDS.workbenchToggleToc);
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: true,
+      interfacePanelVisible: false,
+    });
+
+    await registry.execute(COMMAND_IDS.workbenchToggleToc);
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: false,
+    });
+  });
+
   it('设置活动面板宽度命令会限制范围并持久化', async () => {
     await registry.execute(COMMAND_IDS.workbenchSetActivityPanelWidth, 999, true);
 
