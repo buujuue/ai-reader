@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0047
 ---
 
 # 工作台外壳与阅读主题保持独立
