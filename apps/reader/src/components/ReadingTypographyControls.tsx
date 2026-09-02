@@ -31,13 +31,15 @@ interface ReadingTypographyControlsProps {
   /** 用于避免旧排版对话框与界面面板同时存在时产生重复 DOM id。 */
   idPrefix: string;
   effective: ReadingTypography;
-  isPdf: boolean;
-  pdfZoom: number;
-  pdfFit: PdfFitMode;
   onApply: (patch: Partial<ReadingTypography>) => void;
   onFlowChange: (flow: ReadingFlow) => void;
-  onPdfZoomChange: (zoom: number) => void;
-  onPdfFitChange: (fit: PdfFitMode) => void;
+  /** 只有材料级 PDF 作用域注入此配置;全局作用域不显示 PDF 视图控件。 */
+  pdf?: {
+    zoom: number;
+    fit: PdfFitMode;
+    onZoomChange: (zoom: number) => void;
+    onFitChange: (fit: PdfFitMode) => void;
+  };
 }
 
 /**
@@ -47,13 +49,9 @@ interface ReadingTypographyControlsProps {
 export function ReadingTypographyControls({
   idPrefix,
   effective,
-  isPdf,
-  pdfZoom,
-  pdfFit,
   onApply,
   onFlowChange,
-  onPdfZoomChange,
-  onPdfFitChange,
+  pdf,
 }: ReadingTypographyControlsProps) {
   return (
     <div className="app-reader-typography-controls">
@@ -116,24 +114,24 @@ export function ReadingTypographyControls({
         />
       </fieldset>
 
-      {isPdf ? (
+      {pdf ? (
         <fieldset className="app-reader-setting-group">
           <legend>PDF 视图</legend>
           <OptionGroup
             label="页面适配"
             options={Object.entries(PDF_FIT_LABELS) as [PdfFitMode, string][]}
-            selected={pdfFit}
-            onSelect={onPdfFitChange}
+            selected={pdf.fit}
+            onSelect={pdf.onFitChange}
           />
           <TypographySlider
             id={`${idPrefix}-pdf-zoom`}
             label="缩放"
-            valueLabel={`${pdfZoom}%`}
+            valueLabel={`${pdf.zoom}%`}
             min={25}
             max={400}
             step={1}
-            value={pdfZoom}
-            onChange={onPdfZoomChange}
+            value={pdf.zoom}
+            onChange={pdf.onZoomChange}
           />
           <p className="app-reader-setting-help">页面适配和缩放仅作用于当前阅读视图。</p>
         </fieldset>

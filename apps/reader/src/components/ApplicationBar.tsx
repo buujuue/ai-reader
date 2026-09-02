@@ -80,7 +80,7 @@ export function ApplicationBar() {
       { id: 'library', label: '书库', checked: primarySidebarVisible },
       { id: 'toc', label: '目录', checked: tocVisible },
       { id: 'separator-1', separator: true },
-      { id: 'typography', label: '阅读排版…', disabled: !activeViewId },
+      { id: 'typography', label: '阅读排版…' },
     ];
   };
 

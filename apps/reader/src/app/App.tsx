@@ -13,7 +13,6 @@ import { MetadataEditorDialog } from '../components/MetadataEditorDialog';
 import { NoteEditorDialog } from '../components/NoteEditorDialog';
 import { PrimarySidebar } from '../components/PrimarySidebar';
 import { PurgeConfirmDialog } from '../components/PurgeConfirmDialog';
-import { ReaderSettingsDialog } from '../components/ReaderSettingsDialog';
 import { StatusBar } from '../components/StatusBar';
 import { SidebarResizeHandle } from '../components/SidebarResizeHandle';
 import { TocSidebar } from '../components/TocSidebar';
@@ -75,7 +74,6 @@ export function App({
   const purgeDialogOpen = useShellUiStore((state) => state.purgeMaterialId !== null);
   const folderDeleteDialogOpen = useShellUiStore((state) => state.folderDeleteId !== null);
   const externalLinkDialogOpen = useShellUiStore((state) => state.externalLinkUrl !== null);
-  const typographyDialogOpen = useShellUiStore((state) => state.typographyEditorViewId !== null);
   const noteDialogOpen = useShellUiStore((state) => state.noteEditorTarget !== null);
   const annotationPanelMaterialId = useShellUiStore((state) => state.annotationPanelMaterialId);
   const closeAnnotationPanel = useCallback(() => {
@@ -178,7 +176,6 @@ export function App({
           purgeDialogOpen,
           folderDeleteDialogOpen,
           externalLinkDialogOpen,
-          typographyDialogOpen,
           noteDialogOpen,
           annotationPanelOpen: annotationPanelMaterialId !== null,
         });
@@ -208,9 +205,6 @@ export function App({
             void commands
               .execute(COMMAND_IDS.shellDismissDialog, 'externalLink')
               .catch(() => undefined);
-            break;
-          case 'dismissTypographyDialog':
-            void commands.execute(COMMAND_IDS.shellDismissDialog, 'typography').catch(() => undefined);
             break;
           case 'dismissNoteDialog':
             void commands.execute(COMMAND_IDS.shellDismissDialog, 'note').catch(() => undefined);
@@ -265,7 +259,6 @@ export function App({
     versionMigrationDialogOpen,
     versionMigrationSnapshotDialogOpen,
     androidBackButton,
-    typographyDialogOpen,
     visibleSidebarKey,
   ]);
 
@@ -444,7 +437,6 @@ export function App({
       <PurgeConfirmDialog />
       <FolderDeleteConfirmDialog />
       <ExternalLinkDialog />
-      <ReaderSettingsDialog />
       <NoteEditorDialog />
       {annotationPanelMaterialId ? (
         <AnnotationPanel materialId={annotationPanelMaterialId} onClose={closeAnnotationPanel} />

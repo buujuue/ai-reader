@@ -16,7 +16,6 @@ const baseState: AndroidBackState = {
   purgeDialogOpen: false,
   folderDeleteDialogOpen: false,
   externalLinkDialogOpen: false,
-  typographyDialogOpen: false,
   noteDialogOpen: false,
   annotationPanelOpen: false,
 };

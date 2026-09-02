@@ -14,7 +14,6 @@ export interface AndroidBackState {
   purgeDialogOpen: boolean;
   folderDeleteDialogOpen: boolean;
   externalLinkDialogOpen: boolean;
-  typographyDialogOpen: boolean;
   noteDialogOpen: boolean;
   annotationPanelOpen: boolean;
 }
@@ -29,7 +28,6 @@ export type AndroidBackAction =
   | { kind: 'dismissPurgeDialog' }
   | { kind: 'dismissFolderDeleteDialog' }
   | { kind: 'dismissExternalLinkDialog' }
-  | { kind: 'dismissTypographyDialog' }
   | { kind: 'dismissNoteDialog' }
   | { kind: 'dismissAnnotationPanel' }
   | { kind: 'exitMarkdownSourceMode'; viewId: string }
@@ -54,7 +52,6 @@ export function resolveAndroidBackAction(state: AndroidBackState): AndroidBackAc
   if (state.purgeDialogOpen) return { kind: 'dismissPurgeDialog' };
   if (state.folderDeleteDialogOpen) return { kind: 'dismissFolderDeleteDialog' };
   if (state.externalLinkDialogOpen) return { kind: 'dismissExternalLinkDialog' };
-  if (state.typographyDialogOpen) return { kind: 'dismissTypographyDialog' };
   if (state.noteDialogOpen) return { kind: 'dismissNoteDialog' };
   if (state.annotationPanelOpen) return { kind: 'dismissAnnotationPanel' };
   if (state.activeSearchViewId) {

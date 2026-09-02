@@ -29,6 +29,8 @@ import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { MarkdownBookDocument } from '../domain/reader/markdown/markdownBookDocument';
 import {
+  DEFAULT_READING_TYPOGRAPHY,
+  hasTypographyOverride,
   isReadingFlow,
   resolveTypography,
   type ReadingTypography,
@@ -1602,11 +1604,7 @@ export function registerReaderCommands(
       store.globalReadingTypography,
       useWorkspaceStore.getState().materialTypography[view.materialId],
     );
-    for (const [openViewId, document] of useReaderRuntime.getState().documents) {
-      if (findView(openViewId)?.materialId === view.materialId) {
-        document.applyTypography(effective);
-      }
-    }
+    applyTypographyToMaterialViews(view.materialId, effective);
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
@@ -1619,33 +1617,31 @@ export function registerReaderCommands(
     useWorkspaceStore.getState().resetMaterialTypography(view.materialId);
     const store = useWorkspaceStore.getState();
     const effective = resolveTypography(store.globalReadingTypography, null);
-    for (const [openViewId, document] of useReaderRuntime.getState().documents) {
-      if (findView(openViewId)?.materialId === view.materialId) {
-        document.applyTypography(effective);
-      }
-    }
+    applyTypographyToMaterialViews(view.materialId, effective);
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   });
 
-  registry.register(COMMAND_IDS.readerSetGlobalTypography, async (...args: unknown[]) => {
-    const patch = (args[0] as Partial<ReadingTypography> | undefined) ?? null;
-    if (!patch) return;
-    const store = useWorkspaceStore.getState();
-    const nextGlobal = {
-      ...store.globalReadingTypography,
-      ...clampTypographyPatch(patch),
-    };
-    useWorkspaceStore.getState().setGlobalReadingTypography(nextGlobal);
-    // 全局默认变化后,所有没有材料级覆盖的开放视图立即跟随生效。
-    for (const viewId of useReaderRuntime.getState().documents.keys()) {
-      const view = findView(viewId);
-      if (!view) continue;
-      const current = useWorkspaceStore.getState();
-      if (current.materialTypography[view.materialId]) continue;
-      useReaderRuntime.getState().getDocument(viewId)?.applyTypography(nextGlobal);
-    }
-    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
-  });
+  registry.register(COMMAND_IDS.readerSetGlobalTypography, (...args: unknown[]) =>
+    enqueueRuntimeTransition(async () => {
+      const patch = (args[0] as Partial<ReadingTypography> | undefined) ?? null;
+      if (!patch) return;
+      const store = useWorkspaceStore.getState();
+      const nextGlobal = {
+        ...store.globalReadingTypography,
+        ...clampTypographyPatch(patch),
+      };
+      await persistGlobalTypography(dependencies.workspaceRepository, nextGlobal);
+    }),
+  );
+
+  registry.register(COMMAND_IDS.readerResetGlobalTypography, () =>
+    enqueueRuntimeTransition(async () => {
+      await persistGlobalTypography(
+        dependencies.workspaceRepository,
+        { ...DEFAULT_READING_TYPOGRAPHY },
+      );
+    }),
+  );
 
   registry.register(COMMAND_IDS.readerSetPdfViewport, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
@@ -1797,6 +1793,54 @@ function clampTypographyPatch(
     next.gap = Math.min(30, Math.max(0, Math.round(next.gap)));
   }
   return next;
+}
+
+function applyTypographyToOpenViews(globalTypography: ReadingTypography): void {
+  const current = useWorkspaceStore.getState();
+  for (const [viewId, document] of useReaderRuntime.getState().documents) {
+    const view = findView(viewId);
+    if (!view) continue;
+    const override = current.materialTypography[view.materialId];
+    document.applyTypography(
+      resolveTypography(
+        globalTypography,
+        hasTypographyOverride(override) ? override : null,
+      ),
+    );
+  }
+}
+
+function applyTypographyToMaterialViews(
+  materialId: string,
+  typography: ReadingTypography,
+): void {
+  for (const [viewId, document] of useReaderRuntime.getState().documents) {
+    if (findView(viewId)?.materialId === materialId) {
+      document.applyTypography(typography);
+    }
+  }
+}
+
+async function persistGlobalTypography(
+  workspaceRepository: WorkspaceRepository,
+  nextGlobal: ReadingTypography,
+): Promise<void> {
+  const previousGlobal = useWorkspaceStore.getState().globalReadingTypography;
+  useWorkspaceStore.getState().setGlobalReadingTypography(nextGlobal);
+  try {
+    // 先更新内存中的权威设置,让开放 Runtime 与面板同步,再提交工作区;
+    // 提交失败时把两者一起恢复,避免 Store 与持久化状态分叉。
+    applyTypographyToOpenViews(nextGlobal);
+    await workspaceRepository.saveState(serializeWorkspaceState());
+  } catch (error) {
+    useWorkspaceStore.getState().setGlobalReadingTypography(previousGlobal);
+    try {
+      applyTypographyToOpenViews(previousGlobal);
+    } catch (rollbackError) {
+      console.error('回滚全局阅读排版失败', rollbackError);
+    }
+    throw error;
+  }
 }
 
 /** 导出前强制落库当前打开视图的最新阅读位置。 */

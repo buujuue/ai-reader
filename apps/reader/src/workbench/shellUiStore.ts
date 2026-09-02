@@ -16,8 +16,6 @@ export interface ShellUiStoreState {
   folderDeleteReturnFocus: HTMLElement | null;
   /** 等待确认打开的外部链接目标;null 表示未打开外部链接确认对话框。 */
   externalLinkUrl: string | null;
-  /** 正在编辑排版的阅读视图 id;null 表示未打开排版设置对话框。 */
-  typographyEditorViewId: string | null;
   /** 正在编辑笔记的批注(materialId + annotationId);null 表示未打开笔记编辑器。 */
   noteEditorTarget: { materialId: string; annotationId: string } | null;
   /** 最近一次成功软删除的批注,供状态栏提供一次性撤销入口。 */
@@ -51,8 +49,6 @@ export interface ShellUiStoreState {
   closeFolderDeleteConfirm: () => void;
   openExternalLinkConfirm: (url: string) => void;
   closeExternalLinkConfirm: () => void;
-  openTypographyEditor: (viewId: string) => void;
-  closeTypographyEditor: () => void;
   openNoteEditor: (materialId: string, annotationId: string) => void;
   closeNoteEditor: () => void;
   setAnnotationUndoTarget: (target: { materialId: string; annotationId: string } | null) => void;
@@ -80,7 +76,6 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   folderDeleteId: null,
   folderDeleteReturnFocus: null,
   externalLinkUrl: null,
-  typographyEditorViewId: null,
   noteEditorTarget: null,
   annotationUndoTarget: null,
   annotationPanelMaterialId: null,
@@ -106,8 +101,6 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   closeFolderDeleteConfirm: () => set({ folderDeleteId: null, folderDeleteReturnFocus: null }),
   openExternalLinkConfirm: (url) => set({ externalLinkUrl: url }),
   closeExternalLinkConfirm: () => set({ externalLinkUrl: null }),
-  openTypographyEditor: (viewId) => set({ typographyEditorViewId: viewId }),
-  closeTypographyEditor: () => set({ typographyEditorViewId: null }),
   openNoteEditor: (materialId, annotationId) =>
     set({ noteEditorTarget: { materialId, annotationId } }),
   closeNoteEditor: () => set({ noteEditorTarget: null }),

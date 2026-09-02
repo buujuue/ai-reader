@@ -1,10 +1,12 @@
-import { BookOpen, Palette, RotateCcw, Settings2 } from 'lucide-react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { BookOpen, Globe2, Palette, RotateCcw, Settings2 } from 'lucide-react';
 
 import { useAppServices } from '../app/AppServicesContext';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { formatFromSourceFileName, formatLabel } from '../domain/library/materialFormat';
 import type { PdfFitMode } from '../domain/reader/readingLocation';
 import {
+  hasTypographyOverride,
   resolveTypography,
   type ReadingFlow,
   type ReadingTypography,
@@ -21,6 +23,8 @@ import {
   THEME_LABELS,
 } from './ReadingTypographyControls';
 import { WorkbenchGlowToggle, WorkbenchThemeOptionList } from './WorkbenchAppearanceControls';
+
+type TypographyScope = 'books' | 'global';
 
 export function InterfaceSidebar() {
   const { commands } = useAppServices();
@@ -41,8 +45,7 @@ export function InterfaceSidebar() {
   const activeMaterialOverride = activeMaterial
     ? materialTypography[activeMaterial.id] ?? null
     : null;
-  const hasMaterialOverride =
-    activeMaterialOverride !== null && Object.keys(activeMaterialOverride).length > 0;
+  const hasMaterialOverride = hasTypographyOverride(activeMaterialOverride);
   const effectiveTypography = activeMaterial
     ? resolveTypography(globalTypography, activeMaterialOverride)
     : null;
@@ -53,6 +56,15 @@ export function InterfaceSidebar() {
   const pdfLocation = activeView?.location?.kind === 'pdf' ? activeView.location : null;
   const pdfZoom = normalizePdfZoom(pdfLocation?.zoom ?? 100);
   const pdfFit = pdfLocation?.fit ?? 'width';
+  const [typographyScope, setTypographyScope] = useState<TypographyScope>(() =>
+    activeMaterial ? 'books' : 'global',
+  );
+  const booksTabRef = useRef<HTMLButtonElement>(null);
+  const globalTabRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!activeMaterial) setTypographyScope('global');
+  }, [activeMaterial]);
 
   const setTheme = (nextTheme: typeof theme) => {
     void commands.execute(COMMAND_IDS.workbenchSetAppearanceTheme, nextTheme).catch(() => undefined);
@@ -103,6 +115,55 @@ export function InterfaceSidebar() {
       .catch(reportTypographyError);
   };
 
+  const applyGlobalTypography = (patch: Partial<ReadingTypography>) => {
+    void commands
+      .execute(COMMAND_IDS.readerSetGlobalTypography, patch)
+      .catch(reportTypographyError);
+  };
+
+  const resetGlobalTypography = () => {
+    void commands
+      .execute(COMMAND_IDS.readerResetGlobalTypography)
+      .catch(reportTypographyError);
+  };
+
+  // 材料在面板保持打开期间消失时,同一渲染周期立即回退到全局范围;
+  // effect 只负责把这次回退同步到下一次材料重新出现时的本地选择。
+  const isGlobalScope = !activeMaterial || typographyScope === 'global';
+
+  const selectTypographyScope = (nextScope: TypographyScope) => {
+    setTypographyScope(nextScope);
+    (nextScope === 'books' ? booksTabRef : globalTabRef).current?.focus();
+  };
+
+  const handleScopeTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    scope: TypographyScope,
+  ) => {
+    let nextScope: TypographyScope | null = null;
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        nextScope = scope === 'books' ? 'global' : activeMaterial ? 'books' : null;
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        nextScope = scope === 'global' ? (activeMaterial ? 'books' : null) : 'global';
+        break;
+      case 'Home':
+        nextScope = activeMaterial ? 'books' : 'global';
+        break;
+      case 'End':
+        nextScope = 'global';
+        break;
+      default:
+        return;
+    }
+    if (!nextScope) return;
+    event.preventDefault();
+    selectTypographyScope(nextScope);
+  };
+
   return (
     <aside aria-label="界面侧栏" className="app-sidebar-panel app-interface-panel">
       <SidebarPanelHeader icon={Settings2} title="界面" />
@@ -124,24 +185,54 @@ export function InterfaceSidebar() {
           <WorkbenchThemeOptionList theme={theme} onSelect={setTheme} />
           <WorkbenchGlowToggle glowEnabled={glowEnabled} onChange={setGlowEnabled} />
         </section>
+
+        <div
+          className="app-interface-scope-tabs"
+          role="tablist"
+          aria-label="阅读排版作用范围"
+        >
+          <button
+            id="interface-books-tab"
+            type="button"
+            role="tab"
+            aria-selected={Boolean(activeMaterial) && typographyScope === 'books'}
+            aria-controls="interface-books-panel"
+            disabled={!activeMaterial}
+            ref={booksTabRef}
+            onClick={() => selectTypographyScope('books')}
+            onKeyDown={(event) => handleScopeTabKeyDown(event, 'books')}
+          >
+            书籍
+          </button>
+          <button
+            id="interface-global-tab"
+            type="button"
+            role="tab"
+            aria-selected={isGlobalScope}
+            aria-controls="interface-global-panel"
+            ref={globalTabRef}
+            onClick={() => selectTypographyScope('global')}
+            onKeyDown={(event) => handleScopeTabKeyDown(event, 'global')}
+          >
+            全局
+          </button>
+        </div>
+
         <section
-          aria-labelledby="interface-books-title"
+          id="interface-books-panel"
+          role="tabpanel"
+          aria-labelledby="interface-books-tab"
           aria-disabled={!activeMaterial}
           className={activeMaterial ? 'app-interface-books' : 'app-interface-books is-disabled'}
           data-scope="books"
+          hidden={isGlobalScope}
         >
-          <div className="app-interface-books-heading">
-            <span className="app-interface-books-icon" aria-hidden>
-              <BookOpen size={16} />
-            </span>
-            <div>
-              <p className="app-interface-panel-eyebrow">阅读排版</p>
-              <h3 id="interface-books-title">书籍</h3>
-            </div>
-            <span className="app-interface-books-format">
-              {activeMaterial ? formatLabel(activeFormat) : '未打开'}
-            </span>
-          </div>
+          <TypographyScopeHeader
+            headingId="interface-books-title"
+            title="书籍"
+            format={activeMaterial ? formatLabel(activeFormat) : '未打开'}
+            icon={BookOpen}
+          />
 
           {activeMaterial && activeView && effectiveTypography ? (
             <>
@@ -180,26 +271,25 @@ export function InterfaceSidebar() {
               <ReadingTypographyControls
                 idPrefix="interface-books"
                 effective={effectiveTypography}
-                isPdf={isPdf}
-                pdfZoom={pdfZoom}
-                pdfFit={pdfFit}
                 onApply={applyTypography}
                 onFlowChange={applyFlow}
-                onPdfZoomChange={applyPdfZoom}
-                onPdfFitChange={applyPdfFit}
+                {...(isPdf
+                  ? {
+                      pdf: {
+                        zoom: pdfZoom,
+                        fit: pdfFit,
+                        onZoomChange: applyPdfZoom,
+                        onFitChange: applyPdfFit,
+                      },
+                    }
+                  : {})}
               />
-              <div className="app-interface-books-footer">
-                <span>恢复后重新跟随全局默认</span>
-                <button
-                  type="button"
-                  className="app-interface-books-reset"
-                  disabled={!hasMaterialOverride}
-                  onClick={resetTypography}
-                >
-                  <RotateCcw size={14} aria-hidden />
-                  恢复默认阅读排版
-                </button>
-              </div>
+              <TypographyResetFooter
+                description="恢复后重新跟随全局默认"
+                buttonLabel="恢复默认阅读排版"
+                disabled={!hasMaterialOverride}
+                onReset={resetTypography}
+              />
             </>
           ) : (
             <div className="app-interface-books-empty" role="note">
@@ -208,6 +298,42 @@ export function InterfaceSidebar() {
             </div>
           )}
         </section>
+
+        <section
+          id="interface-global-panel"
+          role="tabpanel"
+          aria-labelledby="interface-global-tab"
+          className="app-interface-global"
+          data-scope="global"
+          hidden={!isGlobalScope}
+        >
+          <TypographyScopeHeader
+            headingId="interface-global-title"
+            title="全局"
+            format="整个书库"
+            icon={Globe2}
+          />
+          <p className="app-interface-global-description">整个书库的默认阅读排版。</p>
+          <p className="app-interface-global-note" role="note">
+            {hasMaterialOverride
+              ? '当前材料存在材料级覆盖,不会跟随全局默认。'
+              : activeMaterial
+                ? '当前材料会跟随全局默认。'
+                : '全局默认将用于没有材料级覆盖的阅读材料。'}
+          </p>
+          <ReadingTypographyControls
+            idPrefix="interface-global"
+            effective={globalTypography}
+            onApply={applyGlobalTypography}
+            onFlowChange={(flow) => applyGlobalTypography({ flow })}
+          />
+          <TypographyResetFooter
+            description="只改变全局默认,不会清除材料级覆盖。"
+            buttonLabel="恢复全局默认阅读排版"
+            onReset={resetGlobalTypography}
+          />
+        </section>
+
         <p className="app-interface-panel-note" role="note">
           外观偏好保存在本机，刷新或重启后会自动恢复；完整书库备份不会覆盖它。
         </p>
@@ -218,4 +344,56 @@ export function InterfaceSidebar() {
 
 function normalizePdfZoom(value: number): number {
   return Number.isFinite(value) ? Math.min(400, Math.max(25, Math.round(value))) : 100;
+}
+
+function TypographyScopeHeader({
+  headingId,
+  title,
+  format,
+  icon: Icon,
+}: {
+  headingId: string;
+  title: string;
+  format: string;
+  icon: typeof BookOpen;
+}) {
+  return (
+    <div className="app-interface-typography-scope-heading">
+      <span className="app-interface-typography-scope-icon" aria-hidden>
+        <Icon size={16} />
+      </span>
+      <div>
+        <p className="app-interface-panel-eyebrow">阅读排版</p>
+        <h3 id={headingId}>{title}</h3>
+      </div>
+      <span className="app-interface-typography-scope-format">{format}</span>
+    </div>
+  );
+}
+
+function TypographyResetFooter({
+  description,
+  buttonLabel,
+  disabled = false,
+  onReset,
+}: {
+  description: string;
+  buttonLabel: string;
+  disabled?: boolean;
+  onReset: () => void;
+}) {
+  return (
+    <div className="app-interface-typography-footer">
+      <span>{description}</span>
+      <button
+        type="button"
+        className="app-interface-typography-reset"
+        disabled={disabled}
+        onClick={onReset}
+      >
+        <RotateCcw size={14} aria-hidden />
+        {buttonLabel}
+      </button>
+    </div>
+  );
 }

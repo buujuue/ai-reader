@@ -33,7 +33,6 @@ type DismissibleShellDialog =
   | 'purge'
   | 'folderDelete'
   | 'externalLink'
-  | 'typography'
   | 'note'
   | 'annotationPanel'
   | 'versionMigration'
@@ -131,9 +130,6 @@ export function registerWorkbenchCommands(
         break;
       case 'externalLink':
         useShellUiStore.getState().closeExternalLinkConfirm();
-        break;
-      case 'typography':
-        useShellUiStore.getState().closeTypographyEditor();
         break;
       case 'note':
         useShellUiStore.getState().closeNoteEditor();
@@ -331,10 +327,21 @@ export function registerWorkbenchCommands(
 
   registry.register(COMMAND_IDS.readerOpenTypography, async () => {
     const state = useWorkspaceStore.getState();
-    const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
-    if (group?.activeViewId) {
-      useShellUiStore.getState().openTypographyEditor(group.activeViewId);
+    if (state.interfacePanelVisible) {
+      useShellUiStore.getState().restoreCompactActivityPanel();
+      return;
     }
+    try {
+      await dependencies.workspaceRepository.saveState(
+        withActivityPanelVisibility(serializeWorkspaceState(), 'interface', true),
+      );
+    } catch (error) {
+      console.error('保存界面面板状态失败', error);
+      useShellUiStore.getState().setStatusMessage('保存界面面板状态失败');
+      throw error;
+    }
+    useWorkspaceStore.getState().setInterfacePanelVisible(true);
+    useShellUiStore.getState().restoreCompactActivityPanel();
   });
 
   registry.register(COMMAND_IDS.workbenchFocusEditorGroup, async (...args: unknown[]) => {

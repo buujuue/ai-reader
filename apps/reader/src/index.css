@@ -578,6 +578,49 @@ body::-webkit-scrollbar-thumb:hover,
   color: var(--prototype-text-muted);
 }
 
+.app-interface-scope-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 12px 4px 0;
+  padding: 4px;
+  border: 1px solid var(--prototype-border);
+  border-radius: 8px;
+  background: var(--prototype-surface-soft);
+}
+
+.app-interface-scope-tabs button {
+  min-height: 44px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--prototype-text-secondary);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color var(--prototype-motion),
+    background var(--prototype-motion),
+    border-color var(--prototype-motion);
+}
+
+.app-interface-scope-tabs button:hover:not(:disabled) {
+  color: var(--prototype-text);
+  background: var(--prototype-surface-hover);
+}
+
+.app-interface-scope-tabs button[aria-selected='true'] {
+  border-color: color-mix(in srgb, var(--prototype-accent) 42%, var(--prototype-border));
+  color: var(--prototype-text);
+  background: var(--prototype-accent-soft);
+  font-weight: 650;
+}
+
+.app-interface-scope-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
 .app-interface-books {
   padding: 16px 4px;
   border-bottom: 1px solid var(--prototype-border);
@@ -587,14 +630,14 @@ body::-webkit-scrollbar-thumb:hover,
   opacity: 0.72;
 }
 
-.app-interface-books-heading {
+.app-interface-typography-scope-heading {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
 }
 
-.app-interface-books-icon {
+.app-interface-typography-scope-icon {
   display: inline-flex;
   width: 30px;
   height: 30px;
@@ -605,14 +648,14 @@ body::-webkit-scrollbar-thumb:hover,
   background: var(--prototype-accent-soft);
 }
 
-.app-interface-books h3 {
+.app-interface-typography-scope-heading h3 {
   margin: 0;
   color: var(--prototype-text);
   font-size: 15px;
   font-weight: 650;
 }
 
-.app-interface-books-format {
+.app-interface-typography-scope-format {
   color: var(--prototype-text-muted);
   font-size: 11px;
   font-weight: 650;
@@ -639,8 +682,8 @@ body::-webkit-scrollbar-thumb:hover,
 }
 
 .app-interface-books-material span {
-  color: var(--prototype-text-muted);
-  font-size: 11px;
+  color: var(--prototype-text-secondary);
+  font-size: 12px;
 }
 
 .app-interface-books-material span.is-overridden {
@@ -741,7 +784,7 @@ body::-webkit-scrollbar-thumb:hover,
   border-radius: 7px;
   color: var(--prototype-text-secondary);
   background: var(--prototype-surface-soft);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
@@ -781,7 +824,7 @@ body::-webkit-scrollbar-thumb:hover,
   line-height: 1.5;
 }
 
-.app-interface-books-footer {
+.app-interface-typography-footer {
   display: grid;
   gap: 8px;
   margin-top: 14px;
@@ -789,12 +832,12 @@ body::-webkit-scrollbar-thumb:hover,
   border-top: 1px solid var(--prototype-border);
 }
 
-.app-interface-books-footer > span {
-  color: var(--prototype-text-muted);
-  font-size: 11px;
+.app-interface-typography-footer > span {
+  color: var(--prototype-text-secondary);
+  font-size: 12px;
 }
 
-.app-interface-books-reset {
+.app-interface-typography-reset {
   display: inline-flex;
   min-height: 44px;
   align-items: center;
@@ -805,7 +848,7 @@ body::-webkit-scrollbar-thumb:hover,
   border-radius: 7px;
   color: var(--prototype-text-secondary);
   background: transparent;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   transition:
     color var(--prototype-motion),
@@ -813,12 +856,12 @@ body::-webkit-scrollbar-thumb:hover,
     border-color var(--prototype-motion);
 }
 
-.app-interface-books-reset:hover:not(:disabled) {
+.app-interface-typography-reset:hover:not(:disabled) {
   color: var(--prototype-text);
   background: var(--prototype-surface-hover);
 }
 
-.app-interface-books-reset:disabled {
+.app-interface-typography-reset:disabled {
   cursor: not-allowed;
   opacity: 0.42;
 }
@@ -831,7 +874,7 @@ body::-webkit-scrollbar-thumb:hover,
   border: 1px dashed var(--prototype-border-strong);
   border-radius: 8px;
   color: var(--prototype-text-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -839,6 +882,27 @@ body::-webkit-scrollbar-thumb:hover,
   color: var(--prototype-text-secondary);
   font-size: 12px;
   font-weight: 650;
+}
+
+.app-interface-global {
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--prototype-border);
+}
+
+.app-interface-global-description,
+.app-interface-global-note {
+  color: var(--prototype-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.app-interface-global-description {
+  margin: 8px 0 0;
+}
+
+.app-interface-global-note {
+  margin: 6px 0 0;
+  color: var(--prototype-text-secondary);
 }
 
 @media (max-width: 320px) {

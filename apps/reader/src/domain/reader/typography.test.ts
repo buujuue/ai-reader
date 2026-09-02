@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_READING_TYPOGRAPHY,
   buildTypographyCss,
+  hasTypographyOverride,
   isReadingTypography,
   isTypographyOverride,
   resolveTypography,
@@ -39,6 +40,13 @@ describe('阅读排版', () => {
     expect(isTypographyOverride({ theme: 'dark' })).toBe(true);
     expect(isTypographyOverride({ flow: 'vertical' })).toBe(false);
     expect(isTypographyOverride(null)).toBe(false);
+  });
+
+  it('只有实际包含字段的材料设置才算覆盖全局默认', () => {
+    expect(hasTypographyOverride({ fontSize: 22 })).toBe(true);
+    expect(hasTypographyOverride({})).toBe(false);
+    expect(hasTypographyOverride(null)).toBe(false);
+    expect(hasTypographyOverride(undefined)).toBe(false);
   });
 
   it('resolveTypography 用覆盖字段合并,未覆盖字段沿用全局默认', () => {

@@ -51,23 +51,138 @@ function renderPanel(services: AppServices) {
   );
 }
 
-describe('界面侧栏的书籍范围', () => {
+describe('界面侧栏的阅读排版范围', () => {
   beforeEach(() => {
     useLibraryStore.getState().resetToDefault();
     useWorkspaceStore.getState().resetToDefault();
   });
 
-  it('没有活动阅读材料时禁用书籍范围并给出下一步说明', () => {
+  it('没有活动阅读材料时自动进入全局范围并禁用书籍标签', () => {
     const services = createAppServices({
       workspaceRepository: createInMemoryWorkspaceRepository(),
     });
 
     renderPanel(services);
 
-    const booksScope = screen.getByRole('region', { name: '书籍' });
-    expect(booksScope).toHaveAttribute('aria-disabled', 'true');
-    expect(booksScope).toHaveTextContent('请先打开一份 EPUB、PDF 或 Markdown 阅读材料');
-    expect(within(booksScope).queryByRole('slider', { name: '字号' })).not.toBeInTheDocument();
+    const tablist = screen.getByRole('tablist', { name: '阅读排版作用范围' });
+    const booksTab = within(tablist).getByRole('tab', { name: '书籍' });
+    const globalTab = within(tablist).getByRole('tab', { name: '全局' });
+    expect(booksTab).toBeDisabled();
+    expect(globalTab).toHaveAttribute('aria-selected', 'true');
+
+    const globalScope = screen.getByRole('tabpanel', { name: '全局' });
+    expect(globalScope).toHaveTextContent('整个书库的默认阅读排版');
+    expect(within(globalScope).getByRole('slider', { name: '字号' })).toBeInTheDocument();
+    expect(within(globalScope).queryByRole('group', { name: '页面适配' })).not.toBeInTheDocument();
+    expect(within(globalScope).queryByRole('slider', { name: '缩放' })).not.toBeInTheDocument();
+  });
+
+  it('书籍与全局标签只切换编辑目标,全局始终显示全局值', async () => {
+    const services = createAppServices({
+      workspaceRepository: createInMemoryWorkspaceRepository(),
+    });
+    const { material } = prepareActiveMaterial('当前材料.epub');
+    useWorkspaceStore.getState().setGlobalReadingTypography({
+      ...useWorkspaceStore.getState().globalReadingTypography,
+      fontSize: 18,
+      theme: 'light',
+    });
+    useWorkspaceStore.getState().setMaterialTypography(material.id, {
+      fontSize: 22,
+      theme: 'dark',
+    });
+    const execute = vi.spyOn(services.commands, 'execute');
+    const user = userEvent.setup();
+
+    renderPanel(services);
+
+    const tablist = screen.getByRole('tablist', { name: '阅读排版作用范围' });
+    const globalTab = within(tablist).getByRole('tab', { name: '全局' });
+    await user.click(globalTab);
+
+    const globalScope = screen.getByRole('tabpanel', { name: '全局' });
+    expect(within(globalScope).getByRole('slider', { name: '字号' })).toHaveValue('18');
+    expect(within(globalScope).getByRole('button', { name: '浅色' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(globalScope).toHaveTextContent('当前材料存在材料级覆盖,不会跟随全局默认');
+
+    fireEvent.change(within(globalScope).getByRole('slider', { name: '字号' }), {
+      target: { value: '20' },
+    });
+    await waitFor(() => {
+      expect(execute).toHaveBeenCalledWith(COMMAND_IDS.readerSetGlobalTypography, {
+        fontSize: 20,
+      });
+    });
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toEqual({
+      fontSize: 22,
+      theme: 'dark',
+    });
+
+    await user.click(within(tablist).getByRole('tab', { name: '书籍' }));
+    const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
+    expect(within(booksScope).getByRole('slider', { name: '字号' })).toHaveValue('22');
+    expect(within(booksScope).getByRole('button', { name: '深色' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('阅读排版标签支持方向键与 Home/End 键切换', () => {
+    const services = createAppServices({
+      workspaceRepository: createInMemoryWorkspaceRepository(),
+    });
+    prepareActiveMaterial('当前材料.epub');
+
+    renderPanel(services);
+
+    const tablist = screen.getByRole('tablist', { name: '阅读排版作用范围' });
+    const booksTab = within(tablist).getByRole('tab', { name: '书籍' });
+    const globalTab = within(tablist).getByRole('tab', { name: '全局' });
+    fireEvent.keyDown(booksTab, { key: 'ArrowRight' });
+    expect(globalTab).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(globalTab, { key: 'ArrowLeft' });
+    expect(booksTab).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(booksTab, { key: 'End' });
+    expect(globalTab).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(globalTab, { key: 'Home' });
+    expect(booksTab).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('恢复全局默认阅读排版不会删除材料级覆盖', async () => {
+    const services = createAppServices({
+      workspaceRepository: createInMemoryWorkspaceRepository(),
+    });
+    const { material } = prepareActiveMaterial('当前材料.epub');
+    useWorkspaceStore.getState().setGlobalReadingTypography({
+      ...useWorkspaceStore.getState().globalReadingTypography,
+      fontSize: 24,
+      theme: 'dark',
+    });
+    useWorkspaceStore.getState().setMaterialTypography(material.id, { fontSize: 21 });
+    const execute = vi.spyOn(services.commands, 'execute');
+    const user = userEvent.setup();
+
+    renderPanel(services);
+    await user.click(screen.getByRole('tab', { name: '全局' }));
+    const globalScope = screen.getByRole('tabpanel', { name: '全局' });
+
+    await user.click(within(globalScope).getByRole('button', { name: '恢复全局默认阅读排版' }));
+    await waitFor(() => {
+      expect(execute).toHaveBeenCalledWith(COMMAND_IDS.readerResetGlobalTypography);
+    });
+    expect(useWorkspaceStore.getState().globalReadingTypography).toEqual({
+      fontFamily: 'sansSerif',
+      fontSize: 18,
+      lineHeight: 1.6,
+      margin: 48,
+      gap: 7,
+      flow: 'paginated',
+      theme: 'light',
+    });
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toEqual({ fontSize: 21 });
   });
 
   it('显示活动材料的有效排版值、覆盖状态，并经 Command 修改与恢复', async () => {
@@ -84,7 +199,7 @@ describe('界面侧栏的书籍范围', () => {
 
     renderPanel(services);
 
-    const booksScope = screen.getByRole('region', { name: '书籍' });
+    const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
     expect(booksScope).toHaveTextContent('当前epub材料');
     expect(booksScope).toHaveTextContent('EPUB');
     expect(booksScope).toHaveTextContent('材料级覆盖');
@@ -121,7 +236,7 @@ describe('界面侧栏的书籍范围', () => {
 
     renderPanel(services);
 
-    const booksScope = screen.getByRole('region', { name: '书籍' });
+    const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
     expect(within(booksScope).getByRole('group', { name: '字体' })).toBeInTheDocument();
     expect(within(booksScope).getByRole('slider', { name: '字号' })).toBeInTheDocument();
     expect(within(booksScope).getByRole('slider', { name: '行距' })).toBeInTheDocument();
@@ -154,7 +269,7 @@ describe('界面侧栏的书籍范围', () => {
 
     renderPanel(services);
 
-    const booksScope = screen.getByRole('region', { name: '书籍' });
+    const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
     await user.click(within(booksScope).getByRole('button', { name: '滚动' }));
     await waitFor(() => expect(execute).toHaveBeenCalledWith(commandId, viewId, value));
   });
@@ -175,7 +290,7 @@ describe('界面侧栏的书籍范围', () => {
 
     renderPanel(services);
 
-    const booksScope = screen.getByRole('region', { name: '书籍' });
+    const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
     await user.click(within(booksScope).getByRole('button', { name: '整页' }));
     await waitFor(() => {
       expect(execute).toHaveBeenCalledWith(COMMAND_IDS.readerSetPdfViewport, viewId, 125, 'page');

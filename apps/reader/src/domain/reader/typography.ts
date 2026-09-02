@@ -119,6 +119,13 @@ export function isTypographyOverride(value: unknown): value is Partial<ReadingTy
   return true;
 }
 
+/** 判断材料级排版覆盖是否真正覆盖了至少一个字段。 */
+export function hasTypographyOverride(
+  override: Partial<ReadingTypography> | null | undefined,
+): boolean {
+  return override !== null && override !== undefined && Object.keys(override).length > 0;
+}
+
 /**
  * 合并全局默认与材料级覆盖,得到材料实际生效的排版。
  * 覆盖为 null/undefined 时直接使用全局默认。

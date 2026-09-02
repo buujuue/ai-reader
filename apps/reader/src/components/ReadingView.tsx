@@ -337,7 +337,7 @@ function MaterialReadingToolbar({
   };
 
   const openTypography = () => {
-    useShellUiStore.getState().openTypographyEditor(viewId);
+    executeForGroup(COMMAND_IDS.readerOpenTypography);
   };
 
   const toggleSourceMode = () => {

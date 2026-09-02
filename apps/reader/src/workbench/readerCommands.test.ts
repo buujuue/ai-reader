@@ -2241,6 +2241,98 @@ describe('Reader 排版命令', () => {
     expect(viewId).toBeTruthy();
   });
 
+  it('全局排版变化更新多格式运行时的继承字段并保留材料级覆盖字段', async () => {
+    const materials: ReadingMaterial[] = ['epub', 'md', 'pdf'].map((format) => ({
+      id: `global-${format}`,
+      fingerprint: `fingerprint-${format}`,
+      sourceFileName: `global.${format}`,
+      folderId: null,
+      source: { title: `全局${format}`, author: null, language: 'zh' },
+      override: { title: null, author: null, coverSource: null },
+      title: `全局${format}`,
+      author: null,
+      language: 'zh',
+      coverSource: null,
+      documentVersion: 0,
+      managedFileAvailable: true,
+    }));
+    useLibraryStore.getState().setMaterials(materials);
+    const viewIds = materials.map((material) => useWorkspaceStore.getState().openView(material.id));
+    useWorkspaceStore.getState().setMaterialTypography(materials[1]!.id, { fontSize: 22 });
+    const applied = new Map<string, ReturnType<typeof vi.fn>>();
+    for (const viewId of viewIds) {
+      const applyTypography = vi.fn();
+      applied.set(viewId, applyTypography);
+      useReaderRuntime.getState().setDocument(viewId, {
+        applyTypography,
+      } as unknown as BookDocument);
+    }
+
+    await registry.execute(COMMAND_IDS.readerSetGlobalTypography, {
+      fontSize: 20,
+      theme: 'dark',
+    });
+
+    expect(applied.get(viewIds[0]!)!.mock.lastCall?.[0]).toMatchObject({
+      fontSize: 20,
+      theme: 'dark',
+    });
+    expect(applied.get(viewIds[1]!)!.mock.lastCall?.[0]).toMatchObject({
+      fontSize: 22,
+      theme: 'dark',
+    });
+    expect(applied.get(viewIds[2]!)!.mock.lastCall?.[0]).toMatchObject({
+      fontSize: 20,
+      theme: 'dark',
+    });
+    expect(useWorkspaceStore.getState().materialTypography[materials[1]!.id]).toEqual({
+      fontSize: 22,
+    });
+  });
+
+  it('恢复全局排版默认值时保留所有材料级覆盖', async () => {
+    const host = createTypographyHost();
+    const { material, viewId } = await setupWithHost(host);
+    useWorkspaceStore.getState().setGlobalReadingTypography({
+      ...useWorkspaceStore.getState().globalReadingTypography,
+      fontSize: 24,
+      theme: 'dark',
+    });
+    useWorkspaceStore.getState().setMaterialTypography(material.id, { fontSize: 21 });
+
+    await registry.execute(COMMAND_IDS.readerResetGlobalTypography);
+
+    expect(useWorkspaceStore.getState().globalReadingTypography).toEqual({
+      fontFamily: 'sansSerif',
+      fontSize: 18,
+      lineHeight: 1.6,
+      margin: 48,
+      gap: 7,
+      flow: 'paginated',
+      theme: 'light',
+    });
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toEqual({ fontSize: 21 });
+    expect(host.applyTypography.mock.lastCall?.[0]).toMatchObject({ fontSize: 21, theme: 'light' });
+    expect(viewId).toBeTruthy();
+  });
+
+  it('全局排版保存失败时回滚 Store 与开放运行时', async () => {
+    const host = createTypographyHost();
+    await setupWithHost(host);
+    const previous = useWorkspaceStore.getState().globalReadingTypography;
+    const saveState = vi
+      .spyOn(workspaceRepository, 'saveState')
+      .mockRejectedValue(new Error('模拟工作区保存失败'));
+
+    await expect(
+      registry.execute(COMMAND_IDS.readerSetGlobalTypography, { fontSize: 24 }),
+    ).rejects.toThrow('模拟工作区保存失败');
+
+    expect(useWorkspaceStore.getState().globalReadingTypography).toEqual(previous);
+    expect(host.applyTypography.mock.lastCall?.[0]).toMatchObject(previous);
+    saveState.mockRestore();
+  });
+
   it('PDF 视图尚未完成运行时初始化时也会保存排版模式与视口位置', async () => {
     const material: ReadingMaterial = {
       id: 'pdf-material',

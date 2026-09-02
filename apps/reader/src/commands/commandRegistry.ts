@@ -61,6 +61,7 @@ export const COMMAND_IDS = {
   readerApplyTypography: 'reader.typography.apply',
   readerResetTypography: 'reader.typography.reset',
   readerSetGlobalTypography: 'reader.typography.setGlobal',
+  readerResetGlobalTypography: 'reader.typography.resetGlobal',
   readerSetPdfViewport: 'reader.pdf.viewport',
   readerSetPdfFlow: 'reader.pdf.flow',
   annotationLoadForMaterial: 'annotation.loadForMaterial',

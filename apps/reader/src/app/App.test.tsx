@@ -190,6 +190,21 @@ describe('阅读工作台外壳', () => {
     expect(screen.queryByText('切换到浅色主题')).not.toBeInTheDocument();
   });
 
+  it('阅读排版快捷入口聚焦界面面板,无材料时进入全局范围', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '视图' }));
+    await user.click(screen.getByRole('menuitem', { name: '阅读排版…' }));
+
+    const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
+    expect(within(panel).getByRole('tab', { name: '全局' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.queryByRole('dialog', { name: /阅读排版/ })).not.toBeInTheDocument();
+  });
+
   it('应用顶栏备份与恢复入口经同一 Command 调用 typed Repository', async () => {
     const backupRepository: BackupRepository = {
       exportBackup: vi.fn(async (destinationPath) => ({
@@ -1677,7 +1692,7 @@ describe('打开 EPUB 并重启续读', () => {
 
     await user.click(screen.getByRole('button', { name: '界面' }));
     const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
-    const booksScope = within(panel).getByRole('region', { name: '书籍' });
+    const booksScope = within(panel).getByRole('tabpanel', { name: '书籍' });
     expect(booksScope).toHaveTextContent('示例书');
     expect(booksScope).toHaveTextContent('跟随全局默认');
 
@@ -1696,6 +1711,131 @@ describe('打开 EPUB 并重启续读', () => {
     await waitFor(() => expect(booksScope).toHaveTextContent('跟随全局默认'));
     expect(useWorkspaceStore.getState().globalReadingTypography.theme).toBe('light');
     await expect(repository.loadState()).resolves.toMatchObject({ materialTypography: {} });
+  });
+
+  it('没有活动材料时界面面板进入全局范围并通过生产 Command 保存默认值', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '界面' }));
+    const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
+    const tablist = within(panel).getByRole('tablist', { name: '阅读排版作用范围' });
+    expect(within(tablist).getByRole('tab', { name: '全局' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(within(tablist).getByRole('tab', { name: '书籍' })).toBeDisabled();
+
+    const globalScope = within(panel).getByRole('tabpanel', { name: '全局' });
+    expect(within(globalScope).getByRole('slider', { name: '字号' })).toHaveValue('18');
+    expect(within(globalScope).getByRole('slider', { name: '行距' })).toBeInTheDocument();
+    expect(within(globalScope).getByRole('slider', { name: '页边距' })).toBeInTheDocument();
+    expect(within(globalScope).queryByRole('slider', { name: '缩放' })).not.toBeInTheDocument();
+
+    fireEvent.change(within(globalScope).getByRole('slider', { name: '字号' }), {
+      target: { value: '20' },
+    });
+    await waitFor(() => expect(repository.loadState()).resolves.toMatchObject({
+      globalReadingTypography: { fontSize: 20 },
+    }));
+
+    await user.click(within(globalScope).getByRole('button', { name: '恢复全局默认阅读排版' }));
+    await waitFor(() => expect(repository.loadState()).resolves.toMatchObject({
+      globalReadingTypography: { fontSize: 18, theme: 'light' },
+    }));
+  });
+
+  it('全局排版经应用链路更新 EPUB、Markdown 与 PDF Runtime 并隔离材料覆盖', async () => {
+    const sources = new Map<string, Uint8Array>();
+    addInMemorySource(sources, '多格式 EPUB.epub', buildEpub({ title: '多格式 EPUB' }));
+    addInMemorySource(
+      sources,
+      '多格式 Markdown.md',
+      new TextEncoder().encode('# 多格式 Markdown\n\n这是 Markdown 正文。'),
+    );
+    addInMemorySource(sources, '多格式 PDF.pdf', new TextEncoder().encode('%PDF-1.7\n'));
+    const importRepository = createInMemoryImportRepository(sources);
+    const pdfDocument = makeFakeDocument(2);
+    services = createAppServices({
+      workspaceRepository: repository,
+      importRepository,
+      filePicker: createInMemoryFilePicker([
+        '多格式 EPUB.epub',
+        '多格式 Markdown.md',
+        '多格式 PDF.pdf',
+      ]),
+      viewHostFactory: () => createFakeViewHost(),
+      pdfLib: makeFakeLib(pdfDocument),
+      pdfRasterize: makeFakeRasterizer(),
+    });
+    vi.stubGlobal(
+      'ResizeObserver',
+      class FakeResizeObserver {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      {} as CanvasRenderingContext2D,
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
+      callback(new Blob(['app-test-cover'], { type: 'image/png' }));
+    });
+
+    const user = userEvent.setup();
+    renderApp(services);
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(useLibraryStore.getState().materials).toHaveLength(3));
+
+    for (const title of ['多格式 EPUB', '多格式 Markdown', '示例 PDF']) {
+      await user.click(await screen.findByRole('button', { name: `打开 ${title}` }));
+      await waitFor(() =>
+        expect(
+          useWorkspaceStore.getState().editorGroups[0]?.views.at(-1)?.materialId,
+        ).toBeTruthy(),
+      );
+    }
+    await waitFor(() => expect(useReaderRuntime.getState().documents.size).toBe(3));
+
+    const materials = useLibraryStore.getState().materials;
+    const markdownMaterial = materials.find((material) => material.title === '多格式 Markdown')!;
+    const markdownView = useWorkspaceStore
+      .getState()
+      .editorGroups.flatMap((group) => group.views)
+      .find((view) => view.materialId === markdownMaterial.id)!;
+    await services.commands.execute(COMMAND_IDS.readerApplyTypography, markdownView.id, {
+      fontSize: 22,
+    });
+
+    const runtimeEntries = [...useReaderRuntime.getState().documents.entries()];
+    const applySpies = new Map(
+      runtimeEntries.map(([viewId, document]) => [viewId, vi.spyOn(document, 'applyTypography')]),
+    );
+    for (const applySpy of applySpies.values()) applySpy.mockClear();
+
+    await user.click(screen.getByRole('button', { name: '界面' }));
+    const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
+    await user.click(within(panel).getByRole('tab', { name: '全局' }));
+    await user.click(within(panel).getByRole('button', { name: '深色' }));
+
+    await waitFor(() => expect(useWorkspaceStore.getState().globalReadingTypography.theme).toBe('dark'));
+    for (const [viewId, applySpy] of applySpies) {
+      const last = applySpy.mock.calls.at(-1)?.[0];
+      expect(last?.theme).toBe('dark');
+      const view = useWorkspaceStore
+        .getState()
+        .editorGroups.flatMap((group) => group.views)
+        .find((candidate) => candidate.id === viewId)!;
+      if (view.materialId === markdownMaterial.id) {
+        expect(last?.fontSize).toBe(22);
+      } else {
+        expect(last?.fontSize).toBe(18);
+      }
+    }
+    expect(useWorkspaceStore.getState().materialTypography[markdownMaterial.id]).toEqual({
+      fontSize: 22,
+    });
   });
 
   it('材料更多操作支持编辑书名并将当前材料移入回收站', async () => {
@@ -2070,7 +2210,7 @@ describe('导入并阅读固定版式 PDF', () => {
     await user.click(screen.getByRole('button', { name: '界面' }));
     const booksScope = within(
       await screen.findByRole('complementary', { name: '界面侧栏' }),
-    ).getByRole('region', { name: '书籍' });
+    ).getByRole('tabpanel', { name: '书籍' });
 
     await user.click(within(booksScope).getByRole('button', { name: '整页' }));
     await waitFor(() => {
