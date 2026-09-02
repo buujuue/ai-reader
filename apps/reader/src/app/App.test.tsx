@@ -222,6 +222,10 @@ describe('阅读工作台外壳', () => {
     await user.click(typographyButton);
 
     const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
+    expect(within(panel).getByRole('tab', { name: '书籍' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     expect(document.activeElement).toBe(panel);
     expect(screen.queryByRole('dialog', { name: /阅读排版/ })).not.toBeInTheDocument();
   });
@@ -472,6 +476,38 @@ describe('阅读工作台外壳', () => {
       await waitFor(() =>
         expect(screen.getByRole('complementary', { name: '目录侧栏' })).toBeInTheDocument(),
       );
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
+    }
+  });
+
+  it('紧凑布局已有活动材料时重新打开活动面板不会被自动收起', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
+    try {
+      services = createAppServices({
+        workspaceRepository: repository,
+        viewHostFactory: () => createFakeViewHost(),
+      });
+      const user = userEvent.setup();
+      renderApp(services);
+      await waitFor(() =>
+        expect(document.querySelector('[data-layout-mode="compact"]')).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+      await waitFor(() => expect(screen.getAllByText('示例书').length).toBeGreaterThan(0));
+      await user.click(screen.getByRole('button', { name: '打开 示例书' }));
+      await waitFor(() =>
+        expect(screen.queryByRole('complementary', { name: '书库侧栏' })).not.toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByRole('button', { name: '界面' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('complementary', { name: '界面侧栏' })).toBeInTheDocument();
+      });
+      expect(useShellUiStore.getState().compactActivityPanelDismissed).toBe(false);
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
     }

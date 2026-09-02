@@ -391,6 +391,11 @@ function TitleBar({ state, actions }: { state: SharedPrototypeState; actions: Sh
       case 'theme-picker':
         setThemePickerOpen(true);
         break;
+      case 'typography':
+        actions.setActivePanel('interface');
+        actions.setInterfaceScope('book');
+        actions.showStatus('已聚焦界面面板中的阅读排版');
+        break;
       case 'split':
         actions.showStatus('视图 → 向右拆分编辑器');
         break;
@@ -868,7 +873,7 @@ function ReaderCanvas({ state, actions }: { state: SharedPrototypeState; actions
           <button type="button" aria-label="缩小" title="缩小"><ZoomOut size={15} aria-hidden /></button><span>100%</span><button type="button" aria-label="放大" title="放大"><ZoomIn size={15} aria-hidden /></button><span className="toolbar-separator" /><button type="button" aria-label="添加书签" title="添加书签"><Bookmark size={15} aria-hidden /></button>
           <div className="more-menu-anchor" ref={moreRef}>
             <button type="button" aria-label="更多操作" title="更多操作" aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={16} aria-hidden /></button>
-            {moreOpen ? <div className="more-menu" role="menu" aria-label="当前书籍更多操作"><button type="button" role="menuitem" onClick={() => { setAnnotationOpen(true); setMoreOpen(false); }}>查看本书批注</button><button type="button" role="menuitem" onClick={() => { actions.showStatus('已准备导出本书批注'); setMoreOpen(false); }}>导出本书批注…</button><div className="menu-separator" role="separator" /><button type="button" role="menuitem" onClick={() => { actions.showStatus('已打开阅读设置'); setMoreOpen(false); }}>阅读设置…</button></div> : null}
+            {moreOpen ? <div className="more-menu" role="menu" aria-label="当前书籍更多操作"><button type="button" role="menuitem" onClick={() => { setAnnotationOpen(true); setMoreOpen(false); }}>查看本书批注</button><button type="button" role="menuitem" onClick={() => { actions.showStatus('已准备导出本书批注'); setMoreOpen(false); }}>导出本书批注…</button></div> : null}
           </div>
         </div>
       </div>
