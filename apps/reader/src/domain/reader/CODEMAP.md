@@ -9,7 +9,7 @@
 - `navigationHistory.ts`：每个 ReadingView 的可序列化导航历史（最多 50 个节点）。显式跳转 `pushExplicit` 新增节点、普通翻页 `replaceCurrent` 替换当前节点、`back`/`forward` 后退前进；纯数据结构，可随工作区持久化。
 - `readingLocation.ts`：可序列化的 `ReadingLocation`（第一版为 EPUB CFI）与形状校验。
 - `readingProgress.ts`：把 Foliate 的当前位置投影为可序列化的章节、页码、目录标签与百分比，并提供阅读位置反馈的格式化文本；不把 Range 或渲染器对象带入 Workspace State。
-- `typography.ts`：阅读排版设置（字体、字号、行距、页边距、主题、分页/滚动）。定义完整设置 `ReadingTypography`、全局默认 `DEFAULT_READING_TYPOGRAPHY`、材料级覆盖判定、材料级覆盖与全局默认的合并规则 `resolveTypography`，以及把排版注入文档的 `buildTypographyCss`。字体与颜色全部来自固定映射，不拼接不可信字符串，落实 ADR-0010 不放开安全边界。
+- `typography.ts`：阅读排版设置（字体、字号、行距、页边距、主题、分页/滚动）。定义完整设置 `ReadingTypography`、全局默认 `DEFAULT_READING_TYPOGRAPHY`、材料级覆盖判定、材料级覆盖与全局默认的合并规则 `resolveTypography`，以及把排版注入文档的 `buildTypographyCss`。PDF 只消费适用的正文主题/分页滚动，文字几何保持原文固定；字体与颜色全部来自固定映射，不拼接不可信字符串，落实 ADR-0010 不放开安全边界。
 - `sanitizer.ts`：不可信阅读资源清洗器。`sanitizeEpubResource` 统一处理 XHTML/HTML、SVG、CSS 与脚本 MIME；永久移除脚本、iframe、object、embed、表单、音视频媒体、事件处理器属性、远程/危险 URL 和可执行 CSS，落实 ADR-0010。清洗是打开 EPUB 的必经步骤，无"信任此书"开关。
 - `epubCanonical.ts`：规范 EPUB 转换入口与版本化派生缓存键。原书完整指纹和转换版本进入缓存键；清洗结果只作为阅读、搜索与 CFI 所见 DOM 的派生数据，排版设置不参与转换。
 - `canonicalSearch.ts`：按章节建立规范可读文本、文本偏移到 DOM Range 的映射和版本化搜索索引快照；普通搜索与安全正则共用字符预算、结果上限、章节超时和取消错误边界，正则实际在可终止 Worker 中执行，脚本、模板、CFI 忽略节点及展示辅助节点不进入结果，缓存损坏或版本变化只触发重建。

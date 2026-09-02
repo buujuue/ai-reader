@@ -277,30 +277,25 @@ export function InterfaceSidebar() {
                 </span>
               </div>
               <div className="app-interface-books-summary" aria-label="当前生效排版">
-                <div>
-                  <span>字体</span>
-                  <strong>{FONT_FAMILY_LABELS[effectiveTypography.fontFamily]}</strong>
-                </div>
-                <div>
-                  <span>字号</span>
-                  <strong>{effectiveTypography.fontSize}px</strong>
-                </div>
-                <div>
-                  <span>行距</span>
-                  <strong>{effectiveTypography.lineHeight.toFixed(1)}</strong>
-                </div>
-                <div>
-                  <span>页边距</span>
-                  <strong>{effectiveTypography.margin}px</strong>
-                </div>
-                <div>
-                  <span>主题</span>
-                  <strong>{THEME_LABELS[effectiveTypography.theme]}</strong>
-                </div>
-                <div>
-                  <span>模式</span>
-                  <strong>{effectiveTypography.flow === 'paginated' ? '分页' : '滚动'}</strong>
-                </div>
+                {(isPdf
+                  ? [
+                      ['主题', THEME_LABELS[effectiveTypography.theme]],
+                      ['模式', effectiveTypography.flow === 'paginated' ? '分页' : '滚动'],
+                    ]
+                  : [
+                      ['字体', FONT_FAMILY_LABELS[effectiveTypography.fontFamily]],
+                      ['字号', `${effectiveTypography.fontSize}px`],
+                      ['行距', effectiveTypography.lineHeight.toFixed(1)],
+                      ['页边距', `${effectiveTypography.margin}px`],
+                      ['主题', THEME_LABELS[effectiveTypography.theme]],
+                      ['模式', effectiveTypography.flow === 'paginated' ? '分页' : '滚动'],
+                    ]
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
               </div>
               <ReadingTypographyControls
                 idPrefix="interface-books"

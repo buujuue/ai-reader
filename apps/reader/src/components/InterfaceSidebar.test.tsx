@@ -239,7 +239,7 @@ describe('界面侧栏的阅读排版范围', () => {
     ['EPUB', 'book.epub', false],
     ['Markdown', 'notes.md', false],
     ['PDF', 'paper.pdf', true],
-  ])('%s 都显示通用排版控件，PDF 额外显示当前视图控件', (label, sourceFileName, isPdf) => {
+  ])('%s 显示适用排版控件，PDF 额外显示当前视图控件', (label, sourceFileName, isPdf) => {
     const services = createAppServices({
       workspaceRepository: createInMemoryWorkspaceRepository(),
     });
@@ -251,10 +251,17 @@ describe('界面侧栏的阅读排版范围', () => {
     renderPanel(services);
 
     const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
-    expect(within(booksScope).getByRole('group', { name: '字体' })).toBeInTheDocument();
-    expect(within(booksScope).getByRole('slider', { name: '字号' })).toBeInTheDocument();
-    expect(within(booksScope).getByRole('slider', { name: '行距' })).toBeInTheDocument();
-    expect(within(booksScope).getByRole('slider', { name: '页边距' })).toBeInTheDocument();
+    if (isPdf) {
+      expect(within(booksScope).queryByRole('group', { name: '字体' })).not.toBeInTheDocument();
+      expect(within(booksScope).queryByRole('slider', { name: '字号' })).not.toBeInTheDocument();
+      expect(within(booksScope).queryByRole('slider', { name: '行距' })).not.toBeInTheDocument();
+      expect(within(booksScope).queryByRole('slider', { name: '页边距' })).not.toBeInTheDocument();
+    } else {
+      expect(within(booksScope).getByRole('group', { name: '字体' })).toBeInTheDocument();
+      expect(within(booksScope).getByRole('slider', { name: '字号' })).toBeInTheDocument();
+      expect(within(booksScope).getByRole('slider', { name: '行距' })).toBeInTheDocument();
+      expect(within(booksScope).getByRole('slider', { name: '页边距' })).toBeInTheDocument();
+    }
     expect(within(booksScope).getByRole('button', { name: '恢复默认阅读排版' })).toBeDisabled();
     expect(booksScope).toHaveTextContent(label);
 

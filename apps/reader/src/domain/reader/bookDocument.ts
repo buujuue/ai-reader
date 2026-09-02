@@ -122,7 +122,9 @@ export interface BookDocument {
 
   /**
    * 应用排版设置(字体、字号、行距、页边距、主题、分页/滚动)。
-   * 可在打开前调用(打开后生效),也可在打开途中调用以实时调整。
+   * 可在打开前调用(打开后生效),也可在打开途中调用以实时调整；格式实现
+   * 可以忽略不适用的字段,例如 PDF 的文字几何由原文件固定,视图缩放与页面
+   * 适配另由 PDF 位置状态管理。
    */
   applyTypography(settings: ReadingTypography): void;
 

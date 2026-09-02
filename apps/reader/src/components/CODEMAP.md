@@ -9,7 +9,7 @@
 
 - `ActivityBar.tsx`：左侧活动栏提供“书库”“目录”“界面”三个互斥入口，分别执行 `workbench.togglePrimarySidebar`、`workbench.toggleToc` 与 `workbench.toggleInterfacePanel`；导入动作位于真实书库面板与文件菜单。
 - `InterfaceSidebar.tsx`：界面设置活动面板，复用活动面板宽度、行内/紧凑覆盖抽屉和可恢复 Workspace State；面板打开时接收焦点，阅读排版快捷命令可再次请求焦点；消费外观 Store，并以可访问的“书籍/全局”标签分别编辑材料级实际生效排版与全局默认排版。全局变化通过稳定 Command 更新开放 Runtime 的有效值，材料级覆盖字段保持优先，不直接接触偏好存储。
-- `ReadingTypographyControls.tsx`：阅读排版控件的共享表现层，展示字体、字号、行距、页边距、主题、分页/滚动；只有材料级 PDF 作用域注入 PDF 视图配置后才显示页面适配和缩放，全局作用域不传入该配置。通过调用方注入材料级、全局或 ReadingView 级 Command，不直接访问 Store、Repository 或渲染器。
+- `ReadingTypographyControls.tsx`：阅读排版控件的共享表现层；EPUB/Markdown 材料级与全局作用域展示字体、字号、行距、页边距、主题、分页/滚动，材料级 PDF 只展示适用的正文主题/分页滚动，并额外显示当前 View 的页面适配和缩放，全局作用域不传入 PDF 配置。通过调用方注入材料级、全局或 ReadingView 级 Command，不直接访问 Store、Repository 或渲染器。
 - `WorkbenchAppearanceControls.tsx`：工作台主题选项和背景光开关的共享可访问控件，供生产界面面板与开发态原型复用；视觉状态通过主题语义令牌呈现，选中态同时提供 `aria-pressed` 与图标反馈。
 - `SidebarPanelHeader.tsx`：书库与目录共用的固定顶栏结构，统一标题、图标、右侧操作槽、行高和触控命中区，不承载具体业务行为。
 - `SidebarResizeHandle.tsx`：书库与目录共用的可拖动/可键盘调整宽度手柄；拖动过程更新活动面板宽度，结束时经 `workbench.setActivityPanelWidth` 持久化，不直接访问 Repository。

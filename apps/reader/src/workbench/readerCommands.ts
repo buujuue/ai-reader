@@ -1814,10 +1814,7 @@ async function persistMaterialTypography(
   const previousEffective = resolveTypography(store.globalReadingTypography, previousOverride);
   const nextEffective = resolveTypography(store.globalReadingTypography, nextOverride);
 
-  store.resetMaterialTypography(materialId);
-  if (nextOverride !== undefined) {
-    store.setMaterialTypography(materialId, nextOverride);
-  }
+  replaceMaterialTypography(store, materialId, nextOverride);
 
   try {
     applyTypographyToMaterialViews(materialId, nextEffective);
@@ -1834,15 +1831,21 @@ function restoreMaterialTypography(
   previousEffective: ReadingTypography,
 ): void {
   const store = useWorkspaceStore.getState();
-  store.resetMaterialTypography(materialId);
-  if (previousOverride !== undefined) {
-    store.setMaterialTypography(materialId, previousOverride);
-  }
+  replaceMaterialTypography(store, materialId, previousOverride);
   try {
     applyTypographyToMaterialViews(materialId, previousEffective);
   } catch (rollbackError) {
     console.error('回滚材料阅读排版失败', rollbackError);
   }
+}
+
+function replaceMaterialTypography(
+  store: ReturnType<typeof useWorkspaceStore.getState>,
+  materialId: string,
+  override: Partial<ReadingTypography> | undefined,
+): void {
+  store.resetMaterialTypography(materialId);
+  if (override !== undefined) store.setMaterialTypography(materialId, override);
 }
 
 async function persistGlobalTypography(

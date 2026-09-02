@@ -33,7 +33,7 @@ interface ReadingTypographyControlsProps {
   effective: ReadingTypography;
   onApply: (patch: Partial<ReadingTypography>) => void;
   onFlowChange: (flow: ReadingFlow) => void;
-  /** 只有材料级 PDF 作用域注入此配置;全局作用域不显示 PDF 视图控件。 */
+  /** 材料级 PDF 注入此配置;PDF 固定文字几何不显示字体/字号/行距/页边距控件。 */
   pdf?: {
     zoom: number;
     fit: PdfFitMode;
@@ -55,45 +55,47 @@ export function ReadingTypographyControls({
 }: ReadingTypographyControlsProps) {
   return (
     <div className="app-reader-typography-controls">
-      <fieldset className="app-reader-setting-group">
-        <legend>文字</legend>
-        <OptionGroup
-          label="字体"
-          options={Object.entries(FONT_FAMILY_LABELS) as [FontFamilyKey, string][]}
-          selected={effective.fontFamily}
-          onSelect={(fontFamily) => onApply({ fontFamily })}
-        />
-        <TypographySlider
-          id={`${idPrefix}-font-size`}
-          label="字号"
-          valueLabel={`${effective.fontSize}px`}
-          min={10}
-          max={48}
-          step={1}
-          value={effective.fontSize}
-          onChange={(value) => onApply({ fontSize: value })}
-        />
-        <TypographySlider
-          id={`${idPrefix}-line-height`}
-          label="行距"
-          valueLabel={effective.lineHeight.toFixed(1)}
-          min={1}
-          max={3}
-          step={0.1}
-          value={effective.lineHeight}
-          onChange={(value) => onApply({ lineHeight: value })}
-        />
-        <TypographySlider
-          id={`${idPrefix}-margin`}
-          label="页边距"
-          valueLabel={`${effective.margin}px`}
-          min={0}
-          max={160}
-          step={4}
-          value={effective.margin}
-          onChange={(value) => onApply({ margin: value })}
-        />
-      </fieldset>
+      {!pdf ? (
+        <fieldset className="app-reader-setting-group">
+          <legend>文字</legend>
+          <OptionGroup
+            label="字体"
+            options={Object.entries(FONT_FAMILY_LABELS) as [FontFamilyKey, string][]}
+            selected={effective.fontFamily}
+            onSelect={(fontFamily) => onApply({ fontFamily })}
+          />
+          <TypographySlider
+            id={`${idPrefix}-font-size`}
+            label="字号"
+            valueLabel={`${effective.fontSize}px`}
+            min={10}
+            max={48}
+            step={1}
+            value={effective.fontSize}
+            onChange={(value) => onApply({ fontSize: value })}
+          />
+          <TypographySlider
+            id={`${idPrefix}-line-height`}
+            label="行距"
+            valueLabel={effective.lineHeight.toFixed(1)}
+            min={1}
+            max={3}
+            step={0.1}
+            value={effective.lineHeight}
+            onChange={(value) => onApply({ lineHeight: value })}
+          />
+          <TypographySlider
+            id={`${idPrefix}-margin`}
+            label="页边距"
+            valueLabel={`${effective.margin}px`}
+            min={0}
+            max={160}
+            step={4}
+            value={effective.margin}
+            onChange={(value) => onApply({ margin: value })}
+          />
+        </fieldset>
+      ) : null}
 
       <fieldset className="app-reader-setting-group">
         <legend>显示</legend>
