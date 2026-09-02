@@ -41,7 +41,15 @@ import type { BackupRepository } from '../domain/library/backupRepository';
 import { createDefaultTauriBackupRepository } from '../domain/library/tauriBackupRepository';
 import { createUnsupportedBackupRepository } from '../domain/library/backupRepository';
 import { useAnnotationStore } from '../workbench/annotationStore';
+import { useWorkbenchAppearanceStore } from '../workbench/appearanceStore';
 import { createInMemoryFilePicker, createTauriFilePicker, type FilePicker } from './filePicker';
+import {
+  applyWorkbenchAppearanceToDocument,
+  createLocalStorageWorkbenchAppearancePreferences,
+  DEFAULT_WORKBENCH_APPEARANCE,
+  normalizeWorkbenchAppearance,
+  type WorkbenchAppearancePreferences,
+} from './workbenchAppearance';
 import {
   createDefaultExternalUrlOpener,
   type ExternalUrlOpener,
@@ -114,6 +122,7 @@ export interface AppServices {
   windowLifecycle: WindowLifecycle | null;
   androidBackButton: AndroidBackButton | null;
   epubNativeAccelerator: EpubNativeAccelerator;
+  appearancePreferences: WorkbenchAppearancePreferences;
 }
 
 export interface AppServicesOptions {
@@ -140,6 +149,7 @@ export interface AppServicesOptions {
   androidBackButton?: AndroidBackButton | null;
   /** 可注入的有限 Reader Runtime 缓存；生产按窗口指针/宽度自动选择预算。 */
   readerRuntimeCache?: ReaderRuntimeCache;
+  appearancePreferences?: WorkbenchAppearancePreferences;
 }
 
 /** Tauri WebView 运行时会注入 __TAURI_INTERNALS__;浏览器降级开发时使用内存 Adapter。 */
@@ -218,6 +228,16 @@ export function createLibraryFolderRepository(
 
 export function createAppServices(options: AppServicesOptions = {}): AppServices {
   const workspaceRepository = options.workspaceRepository ?? createWorkspaceRepository();
+  const appearancePreferences =
+    options.appearancePreferences ?? createLocalStorageWorkbenchAppearancePreferences();
+  let appearance = DEFAULT_WORKBENCH_APPEARANCE;
+  try {
+    appearance = normalizeWorkbenchAppearance(appearancePreferences.load());
+  } catch (error) {
+    console.error('读取工作台外观失败', error);
+  }
+  useWorkbenchAppearanceStore.getState().hydrate(appearance);
+  applyWorkbenchAppearanceToDocument(appearance);
   const importServices =
     options.importRepository && options.filePicker
       ? { importRepository: options.importRepository, filePicker: options.filePicker }
@@ -287,7 +307,11 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     epubDerivedTocCache,
     readerRuntimeCache,
   };
-  registerWorkbenchCommands(commands, { workspaceRepository, annotationRepository });
+  registerWorkbenchCommands(commands, {
+    workspaceRepository,
+    annotationRepository,
+    appearancePreferences,
+  });
   registerBackupCommands(commands, {
     backupRepository,
     destinationPicker: backupDestinationPicker,
@@ -344,5 +368,6 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     windowLifecycle,
     androidBackButton,
     epubNativeAccelerator,
+    appearancePreferences,
   };
 }

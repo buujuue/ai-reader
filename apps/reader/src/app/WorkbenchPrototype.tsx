@@ -38,9 +38,17 @@ import {
   useState,
 } from 'react';
 
+import {
+  getWorkbenchTheme,
+  type WorkbenchThemeId,
+} from './workbenchAppearance';
+import {
+  WorkbenchGlowToggle as ThemeGlowToggle,
+  WorkbenchThemeOptionList as ThemeOptionList,
+} from '../components/WorkbenchAppearanceControls';
 import './workbenchPrototype.css';
 
-type ThemeMode = 'midnight' | 'apple' | 'claude' | 'mint' | 'rose';
+type ThemeMode = WorkbenchThemeId;
 type ActivityPanel = 'library' | 'toc' | 'interface' | null;
 type MenuKey = 'file' | 'edit' | 'view' | null;
 type InterfaceScope = 'book' | 'global';
@@ -48,20 +56,6 @@ type ReadingFontFamily = 'default' | 'serif' | 'sans';
 type ReadingViewMode = 'single' | 'double';
 
 const MAX_FOLDER_DEPTH = 5;
-
-interface PrototypeTheme {
-  description: string;
-  id: ThemeMode;
-  label: string;
-}
-
-const PROTOTYPE_THEMES: readonly PrototypeTheme[] = [
-  { id: 'midnight', label: '极夜黑', description: '默认 · 蓝紫环境光' },
-  { id: 'apple', label: '苹果白', description: '通透冷白 · 系统蓝' },
-  { id: 'claude', label: 'Claude 护眼', description: '暖纸米色 · 陶土橙' },
-  { id: 'mint', label: '清新绿', description: '低饱和绿 · 自然呼吸感' },
-  { id: 'rose', label: '柔雾粉', description: '克制豆沙粉 · 柔和安静' },
-];
 
 interface PrototypeBook {
   id: string;
@@ -511,63 +505,6 @@ function ThemePicker({
   );
 }
 
-function ThemeGlowToggle({ glowEnabled, onChange }: { glowEnabled: boolean; onChange: () => void }) {
-  return (
-    <button
-      className={glowEnabled ? 'theme-glow-toggle is-on' : 'theme-glow-toggle'}
-      type="button"
-      role="switch"
-      aria-checked={glowEnabled}
-      onClick={onChange}
-    >
-      <span className="theme-glow-icon" aria-hidden><Sparkles size={15} /></span>
-      <span className="theme-glow-copy">
-        <strong>背景光效果</strong>
-        <small>{glowEnabled ? '已开启 · 每套配色使用对应光晕' : '已关闭 · 使用纯色渐变背景'}</small>
-      </span>
-      <span className="theme-glow-state">{glowEnabled ? '开启' : '关闭'}</span>
-    </button>
-  );
-}
-
-function ThemeOptionList({
-  theme,
-  onSelect,
-  selectedOptionRef,
-}: {
-  theme: ThemeMode;
-  onSelect: (theme: ThemeMode) => void;
-  selectedOptionRef?: React.RefObject<HTMLButtonElement | null>;
-}) {
-  return (
-    <div className="theme-option-list">
-      {PROTOTYPE_THEMES.map((option) => {
-        const selected = option.id === theme;
-        return (
-          <button
-            key={option.id}
-            ref={selected ? selectedOptionRef : undefined}
-            className={selected ? 'theme-option selected' : 'theme-option'}
-            type="button"
-            data-theme-option={option.id}
-            aria-pressed={selected}
-            onClick={() => onSelect(option.id)}
-          >
-            <span className="theme-option-preview" aria-hidden>
-              <span />
-            </span>
-            <span className="theme-option-copy">
-              <strong>{option.label}</strong>
-              <small>{option.description}</small>
-            </span>
-            <span className="theme-option-check" aria-hidden>{selected ? <Check size={15} /> : null}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function MenuButton({
   label,
   menuKey,
@@ -991,8 +928,8 @@ function WorkbenchStatus({ state }: { state: SharedPrototypeState }) {
   return <footer className="workbench-statusbar"><div><span className="status-indicator" /><span>AI Reader</span><span>本地托管书库</span></div><div><span>VS Code 工作区</span><span>UTF-8</span><span className="status-theme">{state.theme === 'midnight' ? <Moon size={12} aria-hidden /> : <Sun size={12} aria-hidden />}<span>{activeTheme.label}</span></span></div></footer>;
 }
 
-function getPrototypeTheme(theme: ThemeMode): PrototypeTheme {
-  return PROTOTYPE_THEMES.find((option) => option.id === theme) ?? PROTOTYPE_THEMES[0]!;
+function getPrototypeTheme(theme: ThemeMode) {
+  return getWorkbenchTheme(theme);
 }
 
 function setBookDragData(event: DragEvent<HTMLButtonElement>, bookId: string) {

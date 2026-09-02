@@ -23,6 +23,7 @@ import { resolveAndroidBackAction } from './androidBackButton';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useSearchStore } from '../workbench/searchStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { useWorkbenchAppearanceStore } from '../workbench/appearanceStore';
 import { getVisibleSidebars, useLayoutPolicy } from '../workbench/layoutPolicy';
 import { useAppServices } from './AppServicesContext';
 
@@ -46,6 +47,8 @@ export function App({
   const tocVisible = useWorkspaceStore((state) => state.tocVisible);
   const interfacePanelVisible = useWorkspaceStore((state) => state.interfacePanelVisible);
   const activityPanelWidth = useWorkspaceStore((state) => state.activityPanelWidth);
+  const workbenchTheme = useWorkbenchAppearanceStore((state) => state.theme);
+  const glowEnabled = useWorkbenchAppearanceStore((state) => state.glowEnabled);
   const activeViewId = useWorkspaceStore((state) => {
     const group = state.editorGroups.find((candidate) => candidate.id === state.activeEditorGroupId);
     return group?.activeViewId ?? null;
@@ -357,9 +360,8 @@ export function App({
     <div
       className="app-shell workbench-prototype"
       data-variant="C"
-      data-theme="midnight"
-      data-tone="4"
-      data-glow="1.4"
+      data-theme={workbenchTheme}
+      data-glow={glowEnabled ? 'on' : 'off'}
     >
       <a className="app-skip-link" href="#reader-main">
         跳到阅读正文

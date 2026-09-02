@@ -2,7 +2,11 @@
 
 ## 功能
 
-- `App.tsx`：默认渲染 C 风格暗色生产工作台，读取 `LayoutPolicy`，为中等/紧凑容器渲染互斥的覆盖式书库/目录/界面抽屉，并保留 Editor Group、侧栏和阅读位置等工作区状态；活动面板宽度由 `Workspace Store` 驱动并由 `SidebarResizeHandle` 调整；材料批注面板是按 materialId 绑定的运行时覆盖层；根容器承接平台安全区。`WorkbenchPrototype` 仍仅用于视觉对比，内含默认极夜黑与四套新增浅色配色、每套对应背景光及临时开关，并在活动栏提供界面面板预览阅读排版；主题配色在面板底部默认折叠，不接入生产主题状态。
+- `App.tsx`：默认渲染 C 风格生产工作台，读取 `LayoutPolicy` 与本机 `WorkbenchAppearance Store`，为中等/紧凑容器渲染互斥的覆盖式书库/目录/界面抽屉，并保留 Editor Group、侧栏和阅读位置等工作区状态；活动面板宽度由 `Workspace Store` 驱动并由 `SidebarResizeHandle` 调整；材料批注面板是按 materialId 绑定的运行时覆盖层；根容器承接平台安全区、工作台主题和背景光属性。
+- `workbenchAppearance.ts`：正式共享的五套工作台主题元数据、语义令牌对应的主题 ID、非法偏好归一化、本机 `localStorage`/内存偏好 Adapter，以及首绘前根节点属性应用；不读写 Workspace State。
+- `workbenchAppearance.css`：生产工作台与开发态原型共用的主题语义令牌、背景光层和首绘根背景定义。
+- `bootstrap.ts`：组装本机外观偏好、在首次 React 绘制前恢复外观 Store 与文档根属性，并把外观偏好注入 Workbench Command。
+- `WorkbenchPrototype`：仅用于视觉对照，主题元数据和外观控件复用正式共享能力，不成为生产行为来源。
 
 - `main.tsx`（位于 `src/` 根，不在本目录）通过 `createRoot` 挂载，组合 `AppServicesProvider` 与 `App`。
 - `bootstrap.ts`：组装 `AppServices`（含 `EpubNativeAccelerator`）。`isTauriRuntime()` 检测 `__TAURI_INTERNALS__`，据此选择 Tauri Adapter 或内存 Adapter；Tauri 原生预取默认经过协议、能力、语义来源与平台门控，当前仅启用已验证的 Windows，其他平台返回不可用 Adapter；任意失败由阅读命令透明回退纯 JS。桌面端的 `WindowLifecycle` 只暴露关闭请求监听与销毁窗口两项能力，Android 端通过 Tauri `onBackButtonPress` 注入系统返回事件；`createAppServices()` 注册工作台、书库、批注导出、备份与阅读命令，内存降级时用演示 EPUB 种子化书库，可注入平台窄接口供测试。书库命令、Markdown 命令与阅读命令共享同一组依赖；bootstrap 将 Markdown 的 Runtime 挂起/恢复和材料刷新接到 `readerCommands.ts`，确保源码编辑与阅读渲染遵循同一缓存/失效协议；重新关联或重新导入资料后，Tauri 端重载应用，浏览器降级端重建该材料的活动阅读视图。

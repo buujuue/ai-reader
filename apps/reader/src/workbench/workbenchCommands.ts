@@ -1,5 +1,13 @@
 import type { CommandRegistry } from '../commands/commandRegistry';
 import { COMMAND_IDS } from '../commands/commandRegistry';
+import {
+  applyWorkbenchAppearanceToDocument,
+  createInMemoryWorkbenchAppearancePreferences,
+  getWorkbenchTheme,
+  isWorkbenchThemeId,
+  type WorkbenchAppearance,
+  type WorkbenchAppearancePreferences,
+} from '../app/workbenchAppearance';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
 import {
@@ -10,11 +18,13 @@ import {
 } from '../domain/workspace/workspaceState';
 import { useShellUiStore } from './shellUiStore';
 import { useAnnotationStore } from './annotationStore';
+import { useWorkbenchAppearanceStore } from './appearanceStore';
 import { useWorkspaceStore } from './workspaceStore';
 
 export interface WorkbenchCommandDependencies {
   workspaceRepository: WorkspaceRepository;
   annotationRepository?: AnnotationRepository;
+  appearancePreferences?: WorkbenchAppearancePreferences;
 }
 
 type DismissibleShellDialog =
@@ -76,6 +86,19 @@ function withActivityPanelVisibility(
   };
 }
 
+function saveWorkbenchAppearance(
+  preferences: WorkbenchAppearancePreferences,
+  appearance: WorkbenchAppearance,
+): void {
+  try {
+    preferences.save(appearance);
+  } catch (error) {
+    console.error('保存工作台外观失败', error);
+    useShellUiStore.getState().setStatusMessage('保存工作台外观失败');
+    throw error;
+  }
+}
+
 /**
  * 工作台 Command 的唯一实现入口。持久化成功后才更新 Store,
  * 保证工作区状态以 Rust 侧提交的事实为准。
@@ -84,6 +107,9 @@ export function registerWorkbenchCommands(
   registry: CommandRegistry,
   dependencies: WorkbenchCommandDependencies,
 ): void {
+  const appearancePreferences =
+    dependencies.appearancePreferences ?? createInMemoryWorkbenchAppearancePreferences();
+
   registry.register(COMMAND_IDS.appBack, async (...args: unknown[]) => {
     if (args[0] === true) window.history.back();
   });
@@ -221,6 +247,28 @@ export function registerWorkbenchCommands(
     useShellUiStore
       .getState()
       .setStatusMessage(nextVisible ? '已保存工作区状态:界面面板显示' : '已保存工作区状态:界面面板隐藏');
+  });
+
+  registry.register(COMMAND_IDS.workbenchSetAppearanceTheme, async (...args: unknown[]) => {
+    const theme = args[0];
+    if (!isWorkbenchThemeId(theme)) return;
+    const current = useWorkbenchAppearanceStore.getState();
+    const next = { theme, glowEnabled: current.glowEnabled };
+    saveWorkbenchAppearance(appearancePreferences, next);
+    useWorkbenchAppearanceStore.getState().setTheme(theme);
+    applyWorkbenchAppearanceToDocument(next);
+    useShellUiStore.getState().setStatusMessage(`已切换到${getWorkbenchTheme(theme).label}主题`);
+  });
+
+  registry.register(COMMAND_IDS.workbenchSetBackgroundGlow, async (...args: unknown[]) => {
+    const glowEnabled = args[0];
+    if (typeof glowEnabled !== 'boolean') return;
+    const current = useWorkbenchAppearanceStore.getState();
+    const next = { theme: current.theme, glowEnabled };
+    saveWorkbenchAppearance(appearancePreferences, next);
+    useWorkbenchAppearanceStore.getState().setGlowEnabled(glowEnabled);
+    applyWorkbenchAppearanceToDocument(next);
+    useShellUiStore.getState().setStatusMessage(glowEnabled ? '已开启背景光效果' : '已关闭背景光效果');
   });
 
   registry.register(COMMAND_IDS.workbenchSetActivityPanelWidth, async (...args: unknown[]) => {

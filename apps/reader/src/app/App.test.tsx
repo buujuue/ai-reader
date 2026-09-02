@@ -12,6 +12,7 @@ import { addInMemorySource } from '../domain/library/inMemoryImportRepository';
 import { createInMemoryImportRepository } from '../domain/library/inMemoryImportRepository';
 import { buildEpub } from '../domain/library/epub/zipWriter';
 import { createInMemoryFilePicker } from './filePicker';
+import { createInMemoryWorkbenchAppearancePreferences } from './workbenchAppearance';
 import {
   makeFakeDocument,
   makeFakeLib,
@@ -29,6 +30,7 @@ import { useReaderRuntime } from '../workbench/readerRuntime';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useAnnotationStore } from '../workbench/annotationStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
+import { useWorkbenchAppearanceStore } from '../workbench/appearanceStore';
 import { createInMemoryAnnotationRepository } from '../domain/annotation/inMemoryAnnotationRepository';
 import { createInMemoryLibraryFolderRepository } from '../domain/library/inMemoryLibraryFolderRepository';
 import type { LibraryFolder } from '../domain/library/libraryFolder';
@@ -133,6 +135,7 @@ describe('阅读工作台外壳', () => {
     useShellUiStore.getState().closeAnnotationPanel();
     useShellUiStore.getState().closeFolderDeleteConfirm();
     useShellUiStore.getState().restoreCompactActivityPanel();
+    useWorkbenchAppearanceStore.getState().resetToDefault();
   });
 
   it('呈现简体中文工作台外壳', () => {
@@ -295,6 +298,44 @@ describe('阅读工作台外壳', () => {
       expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
     });
     await expect(repository.loadState()).resolves.toMatchObject({ interfacePanelVisible: false });
+  });
+
+  it('界面面板展示五套工作台主题并独立保存背景光偏好', async () => {
+    const appearancePreferences = createInMemoryWorkbenchAppearancePreferences({
+      theme: 'apple',
+      glowEnabled: false,
+    });
+    services = createAppServices({ workspaceRepository: repository, appearancePreferences });
+    const user = userEvent.setup();
+    renderApp(services);
+    await user.click(screen.getByRole('button', { name: '界面' }));
+
+    const panel = screen.getByRole('complementary', { name: '界面侧栏' });
+    expect(within(panel).getByRole('button', { name: /极夜黑/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(within(panel).getByRole('button', { name: /苹果白/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(panel).getByRole('button', { name: /Claude 护眼/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /清新绿/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /柔雾粉/ })).toBeInTheDocument();
+
+    await user.click(within(panel).getByRole('button', { name: /Claude 护眼/ }));
+    expect(document.querySelector('.app-shell.workbench-prototype')).toHaveAttribute(
+      'data-theme',
+      'claude',
+    );
+    expect(useWorkbenchAppearanceStore.getState().glowEnabled).toBe(false);
+
+    const glow = within(panel).getByRole('switch', { name: '背景光效果' });
+    expect(glow).toHaveAttribute('aria-checked', 'false');
+    await user.click(glow);
+    expect(glow).toHaveAttribute('aria-checked', 'true');
+    expect(document.documentElement.dataset.workbenchGlow).toBe('on');
+    expect(appearancePreferences.load()).toEqual({ theme: 'claude', glowEnabled: true });
   });
 
   it('紧凑布局以覆盖抽屉呈现界面面板并可由同一入口关闭', async () => {
