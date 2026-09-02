@@ -33,6 +33,7 @@ export function ActivityBar() {
         type="button"
         aria-label="书库"
         aria-pressed={primarySidebarVisible && !compactActivityPanelDismissed}
+        data-activity-panel="primary"
         title={primarySidebarVisible ? '隐藏书库' : '显示书库'}
         onClick={toggleLibrary}
         className="app-activity-button"
@@ -43,6 +44,7 @@ export function ActivityBar() {
         type="button"
         aria-label="目录"
         aria-pressed={tocVisible && !compactActivityPanelDismissed}
+        data-activity-panel="toc"
         title={tocVisible ? '隐藏目录' : '显示目录'}
         onClick={toggleToc}
         className="app-activity-button"
@@ -53,6 +55,7 @@ export function ActivityBar() {
         type="button"
         aria-label="界面"
         aria-pressed={interfacePanelVisible && !compactActivityPanelDismissed}
+        data-activity-panel="interface"
         title={interfacePanelVisible ? '隐藏界面' : '显示界面'}
         onClick={toggleInterfacePanel}
         className="app-activity-button"

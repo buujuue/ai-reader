@@ -102,6 +102,20 @@ describe('工作台命令处理', () => {
     });
   });
 
+  it('阅读排版快捷命令只打开并聚焦界面面板,不创建独立设置状态', async () => {
+    await registry.execute(COMMAND_IDS.readerOpenTypography);
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      primarySidebarVisible: false,
+      tocVisible: false,
+      interfacePanelVisible: true,
+    });
+    await expect(repository.loadState()).resolves.toMatchObject({
+      interfacePanelVisible: true,
+    });
+    expect(useShellUiStore.getState().interfacePanelFocusRequestToken).toBeGreaterThan(0);
+  });
+
   it('设置活动面板宽度命令会限制范围并持久化', async () => {
     await registry.execute(COMMAND_IDS.workbenchSetActivityPanelWidth, 999, true);
 

@@ -26,6 +26,10 @@ export interface ShellUiStoreState {
   /** 紧凑布局打开材料后临时收起活动面板,不改写 Workspace State。 */
   compactActivityPanelDismissed: boolean;
   compactActivityPanelDismissRequestToken: number;
+  /** 请求已打开的界面面板把焦点移到自身,供阅读排版快捷入口复用。 */
+  interfacePanelFocusRequestToken: number;
+  /** 快捷入口聚焦时要求界面面板选中的排版作用域。 */
+  interfacePanelFocusScope: 'books' | 'global' | null;
   /** 书库筛选框聚焦请求序号,用于让菜单命令驱动 UI 聚焦。 */
   libraryFilterFocusToken: number;
   /** 等待脏 Markdown 视图关闭确认的 viewId;null 表示未打开脏文档关闭对话框。 */
@@ -57,6 +61,7 @@ export interface ShellUiStoreState {
   dismissCompactActivityPanel: () => void;
   requestCompactActivityPanelDismissal: () => void;
   restoreCompactActivityPanel: () => void;
+  requestInterfacePanelFocus: (scope: 'books' | 'global') => void;
   requestLibraryFilterFocus: () => void;
   openMarkdownDirtyClose: (viewId: string, action: 'close' | 'exitSource') => void;
   closeMarkdownDirtyClose: () => void;
@@ -82,6 +87,8 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
   annotationPanelReturnFocus: null,
   compactActivityPanelDismissed: false,
   compactActivityPanelDismissRequestToken: 0,
+  interfacePanelFocusRequestToken: 0,
+  interfacePanelFocusScope: null,
   libraryFilterFocusToken: 0,
   markdownDirtyCloseViewId: null,
   markdownDirtyCloseAction: null,
@@ -123,6 +130,11 @@ export const useShellUiStore = create<ShellUiStoreState>()((set) => ({
       compactActivityPanelDismissRequestToken: state.compactActivityPanelDismissRequestToken + 1,
     })),
   restoreCompactActivityPanel: () => set({ compactActivityPanelDismissed: false }),
+  requestInterfacePanelFocus: (scope) =>
+    set((state) => ({
+      interfacePanelFocusRequestToken: state.interfacePanelFocusRequestToken + 1,
+      interfacePanelFocusScope: scope,
+    })),
   requestLibraryFilterFocus: () =>
     set((state) => ({ libraryFilterFocusToken: state.libraryFilterFocusToken + 1 })),
   openMarkdownDirtyClose: (viewId, action) =>

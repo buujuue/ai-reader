@@ -17,14 +17,40 @@ import { StatusBar } from '../components/StatusBar';
 import { SidebarResizeHandle } from '../components/SidebarResizeHandle';
 import { TocSidebar } from '../components/TocSidebar';
 import { VersionMigrationDialog } from '../components/VersionMigrationDialog';
-import { COMMAND_IDS } from '../commands/commandRegistry';
+import { COMMAND_IDS, type CommandId, type CommandRegistry } from '../commands/commandRegistry';
 import { resolveAndroidBackAction } from './androidBackButton';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useSearchStore } from '../workbench/searchStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { useWorkbenchAppearanceStore } from '../workbench/appearanceStore';
-import { getVisibleSidebars, useLayoutPolicy } from '../workbench/layoutPolicy';
+import { getVisibleSidebars, useLayoutPolicy, type SidebarId } from '../workbench/layoutPolicy';
 import { useAppServices } from './AppServicesContext';
+
+const ACTIVITY_PANEL_COMMANDS: Record<SidebarId, CommandId> = {
+  primary: COMMAND_IDS.workbenchTogglePrimarySidebar,
+  toc: COMMAND_IDS.workbenchToggleToc,
+  interface: COMMAND_IDS.workbenchToggleInterfacePanel,
+};
+
+function focusActivityPanelButton(sidebar: SidebarId): void {
+  document.querySelector<HTMLButtonElement>(`[data-activity-panel="${sidebar}"]`)?.focus();
+}
+
+function closeActivityPanel(commands: CommandRegistry, sidebar: SidebarId): void {
+  void commands
+    .execute(ACTIVITY_PANEL_COMMANDS[sidebar])
+    .then(() => focusActivityPanelButton(sidebar))
+    .catch(() => undefined);
+}
+
+function isEscapeOwnedByNestedSurface(target: EventTarget | null): boolean {
+  if (typeof Element === 'undefined' || !(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      '[role="menu"], [role="dialog"], input:not([type="range"]), textarea, select, [contenteditable="true"]',
+    ),
+  );
+}
 
 export function App({
   onReady,
@@ -85,6 +111,9 @@ export function App({
   const compactActivityPanelDismissRequestToken = useShellUiStore(
     (state) => state.compactActivityPanelDismissRequestToken,
   );
+  const compactActivityPanelDismissRequestTokenRef = useRef(
+    compactActivityPanelDismissRequestToken,
+  );
   const visibleSidebars = getVisibleSidebars(layoutPolicy, {
     primary: primarySidebarVisible,
     toc: tocVisible,
@@ -97,9 +126,13 @@ export function App({
   const visibleSidebarKey = effectiveVisibleSidebars.join(',');
 
   useEffect(() => {
+    const hasNewDismissRequest =
+      compactActivityPanelDismissRequestToken !==
+      compactActivityPanelDismissRequestTokenRef.current;
+    compactActivityPanelDismissRequestTokenRef.current = compactActivityPanelDismissRequestToken;
     if (
       layoutPolicy.mode === 'compact' &&
-      (activeViewId || compactActivityPanelDismissRequestToken > 0)
+      (activeViewId || hasNewDismissRequest)
     ) {
       useShellUiStore.getState().dismissCompactActivityPanel();
     } else if (layoutPolicy.mode !== 'compact') {
@@ -154,12 +187,6 @@ export function App({
     if (!androidBackButton) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    const sidebarCommands = {
-      primary: COMMAND_IDS.workbenchTogglePrimarySidebar,
-      toc: COMMAND_IDS.workbenchToggleToc,
-      interface: COMMAND_IDS.workbenchToggleInterfacePanel,
-    } as const;
-
     void androidBackButton
       .onBackButtonPress((event) => {
         const action = resolveAndroidBackAction({
@@ -185,7 +212,7 @@ export function App({
             void commands.execute(COMMAND_IDS.readerSearchClose, action.viewId).catch(() => undefined);
             break;
           case 'closeSidebar':
-            void commands.execute(sidebarCommands[action.sidebar]).catch(() => undefined);
+            closeActivityPanel(commands, action.sidebar);
             break;
           case 'dismissMarkdownDirtyClose':
             void commands
@@ -259,6 +286,34 @@ export function App({
     versionMigrationDialogOpen,
     versionMigrationSnapshotDialogOpen,
     androidBackButton,
+    visibleSidebarKey,
+  ]);
+
+  // 紧凑抽屉是覆盖式次级导航:Escape 关闭当前抽屉并把焦点归还活动栏。
+  // 菜单、对话框和搜索输入拥有更内层的 Escape 语义,不在这里抢先关闭抽屉。
+  useEffect(() => {
+    const activeSidebar = effectiveVisibleSidebars[0];
+    if (
+      layoutPolicy.mode !== 'compact' ||
+      compactActivityPanelDismissed ||
+      !activeSidebar
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (isEscapeOwnedByNestedSurface(event.target)) return;
+      event.preventDefault();
+      closeActivityPanel(commands, activeSidebar);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    commands,
+    compactActivityPanelDismissed,
+    layoutPolicy.mode,
     visibleSidebarKey,
   ]);
 

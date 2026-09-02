@@ -28,6 +28,11 @@ type TypographyScope = 'books' | 'global';
 
 export function InterfaceSidebar() {
   const { commands } = useAppServices();
+  const panelRef = useRef<HTMLElement | null>(null);
+  const interfacePanelFocusRequestToken = useShellUiStore(
+    (state) => state.interfacePanelFocusRequestToken,
+  );
+  const interfacePanelFocusScope = useShellUiStore((state) => state.interfacePanelFocusScope);
   const theme = useWorkbenchAppearanceStore((state) => state.theme);
   const glowEnabled = useWorkbenchAppearanceStore((state) => state.glowEnabled);
   const currentTheme = getWorkbenchTheme(theme);
@@ -59,11 +64,35 @@ export function InterfaceSidebar() {
   const [typographyScope, setTypographyScope] = useState<TypographyScope>(() =>
     activeMaterial ? 'books' : 'global',
   );
+  const previousActiveMaterialIdRef = useRef<string | null>(activeMaterial?.id ?? null);
+  const lastHandledFocusRequestTokenRef = useRef(interfacePanelFocusRequestToken);
   const booksTabRef = useRef<HTMLButtonElement>(null);
   const globalTabRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (!activeMaterial) setTypographyScope('global');
+    panelRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (
+      interfacePanelFocusRequestToken === lastHandledFocusRequestTokenRef.current ||
+      interfacePanelFocusRequestToken <= 0
+    ) {
+      return;
+    }
+    lastHandledFocusRequestTokenRef.current = interfacePanelFocusRequestToken;
+    if (interfacePanelFocusScope) setTypographyScope(interfacePanelFocusScope);
+    panelRef.current?.focus();
+  }, [interfacePanelFocusRequestToken, interfacePanelFocusScope]);
+
+  useEffect(() => {
+    const previousActiveMaterialId = previousActiveMaterialIdRef.current;
+    previousActiveMaterialIdRef.current = activeMaterial?.id ?? null;
+    if (!activeMaterial) {
+      setTypographyScope('global');
+    } else if (previousActiveMaterialId === null) {
+      setTypographyScope('books');
+    }
   }, [activeMaterial]);
 
   const setTheme = (nextTheme: typeof theme) => {
@@ -127,8 +156,8 @@ export function InterfaceSidebar() {
       .catch(reportTypographyError);
   };
 
-  // 材料在面板保持打开期间消失时,同一渲染周期立即回退到全局范围;
-  // effect 只负责把这次回退同步到下一次材料重新出现时的本地选择。
+  // 材料在面板保持打开期间消失时立即回退到全局范围;从无材料进入
+  // 活动材料时切到书籍范围,在材料之间切换则保留用户已经选择的作用域。
   const isGlobalScope = !activeMaterial || typographyScope === 'global';
 
   const selectTypographyScope = (nextScope: TypographyScope) => {
@@ -165,7 +194,12 @@ export function InterfaceSidebar() {
   };
 
   return (
-    <aside aria-label="界面侧栏" className="app-sidebar-panel app-interface-panel">
+    <aside
+      ref={panelRef}
+      aria-label="界面侧栏"
+      tabIndex={-1}
+      className="app-sidebar-panel app-interface-panel"
+    >
       <SidebarPanelHeader icon={Settings2} title="界面" />
       <div className="app-interface-panel-content">
         <section aria-labelledby="interface-appearance-title" className="app-interface-appearance">

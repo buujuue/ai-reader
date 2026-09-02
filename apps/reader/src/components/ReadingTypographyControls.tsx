@@ -28,7 +28,7 @@ export const PDF_FIT_LABELS: Record<PdfFitMode, string> = {
 };
 
 interface ReadingTypographyControlsProps {
-  /** 用于避免旧排版对话框与界面面板同时存在时产生重复 DOM id。 */
+  /** 由作用域调用方提供稳定前缀,确保书籍级和全局控件的 DOM id 不重复。 */
   idPrefix: string;
   effective: ReadingTypography;
   onApply: (patch: Partial<ReadingTypography>) => void;

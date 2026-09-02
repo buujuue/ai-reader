@@ -19,6 +19,7 @@ import {
 import { useShellUiStore } from './shellUiStore';
 import { useAnnotationStore } from './annotationStore';
 import { useWorkbenchAppearanceStore } from './appearanceStore';
+import { useLibraryStore } from './libraryStore';
 import { useWorkspaceStore } from './workspaceStore';
 
 export interface WorkbenchCommandDependencies {
@@ -327,8 +328,19 @@ export function registerWorkbenchCommands(
 
   registry.register(COMMAND_IDS.readerOpenTypography, async () => {
     const state = useWorkspaceStore.getState();
+    const activeGroup = state.editorGroups.find((group) => group.id === state.activeEditorGroupId);
+    const activeMaterialId = activeGroup?.views.find(
+      (view) => view.id === activeGroup.activeViewId,
+    )?.materialId;
+    const hasActiveMaterial = Boolean(
+      activeMaterialId && useLibraryStore.getState().materials.some(
+        (material) => material.id === activeMaterialId,
+      ),
+    );
+    const focusScope = hasActiveMaterial ? 'books' : 'global';
     if (state.interfacePanelVisible) {
       useShellUiStore.getState().restoreCompactActivityPanel();
+      useShellUiStore.getState().requestInterfacePanelFocus(focusScope);
       return;
     }
     try {
@@ -342,6 +354,7 @@ export function registerWorkbenchCommands(
     }
     useWorkspaceStore.getState().setInterfacePanelVisible(true);
     useShellUiStore.getState().restoreCompactActivityPanel();
+    useShellUiStore.getState().requestInterfacePanelFocus(focusScope);
   });
 
   registry.register(COMMAND_IDS.workbenchFocusEditorGroup, async (...args: unknown[]) => {

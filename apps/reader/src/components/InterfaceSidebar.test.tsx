@@ -77,6 +77,20 @@ describe('界面侧栏的阅读排版范围', () => {
     expect(within(globalScope).queryByRole('slider', { name: '缩放' })).not.toBeInTheDocument();
   });
 
+  it('界面面板打开期间从无材料进入活动材料时切换到书籍范围', async () => {
+    const services = createAppServices({
+      workspaceRepository: createInMemoryWorkspaceRepository(),
+    });
+    renderPanel(services);
+    expect(screen.getByRole('tab', { name: '全局' })).toHaveAttribute('aria-selected', 'true');
+
+    prepareActiveMaterial('当前材料.epub');
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: '书籍' })).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
   it('书籍与全局标签只切换编辑目标,全局始终显示全局值', async () => {
     const services = createAppServices({
       workspaceRepository: createInMemoryWorkspaceRepository(),

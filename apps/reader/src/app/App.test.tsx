@@ -202,6 +202,27 @@ describe('阅读工作台外壳', () => {
       'aria-selected',
       'true',
     );
+    expect(document.activeElement).toBe(panel);
+    expect(screen.queryByRole('dialog', { name: /阅读排版/ })).not.toBeInTheDocument();
+  });
+
+  it('阅读工具栏的排版入口聚焦同一个界面面板', async () => {
+    services = createAppServices({
+      workspaceRepository: repository,
+      viewHostFactory: () => createFakeViewHost(),
+    });
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await user.click(await screen.findByRole('button', { name: /打开 示例书/ }));
+    const toolbar = await screen.findByRole('toolbar', { name: /示例书/ });
+    const typographyButton = within(toolbar).getByRole('button', { name: '阅读排版' });
+
+    await user.click(typographyButton);
+
+    const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
+    expect(document.activeElement).toBe(panel);
     expect(screen.queryByRole('dialog', { name: /阅读排版/ })).not.toBeInTheDocument();
   });
 
@@ -364,15 +385,54 @@ describe('阅读工作台外壳', () => {
       });
 
       await user.click(screen.getByRole('button', { name: '界面' }));
+      const interfaceButton = screen.getByRole('button', { name: '界面' });
       await waitFor(() => {
         expect(screen.getByRole('complementary', { name: '界面侧栏' })).toBeInTheDocument();
       });
       expect(document.querySelector('[data-sidebar-presentation="overlay"]')).toBeInTheDocument();
+      expect(document.activeElement).toBe(screen.getByRole('complementary', { name: '界面侧栏' }));
 
-      await user.click(screen.getByRole('button', { name: '界面' }));
+      const fontSizeSlider = within(
+        screen.getByRole('complementary', { name: '界面侧栏' }),
+      ).getByRole('slider', { name: '字号' });
+      fontSizeSlider.focus();
+      await user.keyboard('{Escape}');
       await waitFor(() => {
         expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
       });
+      expect(document.activeElement).toBe(interfaceButton);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
+    }
+  });
+
+  it('紧凑布局的 Android 返回键关闭界面抽屉并归还活动栏焦点', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
+    let backHandler: ((event: { canGoBack: boolean }) => void | Promise<void>) | null = null;
+    services = createAppServices({
+      workspaceRepository: repository,
+      androidBackButton: {
+        onBackButtonPress: async (handler) => {
+          backHandler = handler;
+          return () => undefined;
+        },
+      },
+    });
+    try {
+      const user = userEvent.setup();
+      renderApp(services);
+      await waitFor(() => expect(backHandler).not.toBeNull());
+
+      const interfaceButton = screen.getByRole('button', { name: '界面' });
+      await user.click(interfaceButton);
+      await screen.findByRole('complementary', { name: '界面侧栏' });
+
+      await backHandler!({ canGoBack: false });
+      await waitFor(() => {
+        expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
+      });
+      expect(document.activeElement).toBe(interfaceButton);
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
     }
