@@ -2333,6 +2333,46 @@ describe('Reader 排版命令', () => {
     saveState.mockRestore();
   });
 
+  it('材料级排版保存失败时回滚覆盖与开放运行时', async () => {
+    const host = createTypographyHost();
+    const { material, viewId } = await setupWithHost(host);
+    await registry.execute(COMMAND_IDS.readerApplyTypography, viewId, { fontSize: 20 });
+    const previousOverride = useWorkspaceStore.getState().materialTypography[material.id];
+    const previousEffective = useWorkspaceStore.getState().getEffectiveTypography(material.id);
+    host.applyTypography.mockClear();
+    const saveState = vi
+      .spyOn(workspaceRepository, 'saveState')
+      .mockRejectedValue(new Error('模拟材料排版保存失败'));
+
+    await expect(
+      registry.execute(COMMAND_IDS.readerApplyTypography, viewId, { fontSize: 24 }),
+    ).rejects.toThrow('模拟材料排版保存失败');
+
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toEqual(previousOverride);
+    expect(host.applyTypography).toHaveBeenLastCalledWith(previousEffective);
+    saveState.mockRestore();
+  });
+
+  it('恢复材料级排版保存失败时回滚覆盖与开放运行时', async () => {
+    const host = createTypographyHost();
+    const { material, viewId } = await setupWithHost(host);
+    await registry.execute(COMMAND_IDS.readerApplyTypography, viewId, { fontSize: 20 });
+    const previousOverride = useWorkspaceStore.getState().materialTypography[material.id];
+    const previousEffective = useWorkspaceStore.getState().getEffectiveTypography(material.id);
+    host.applyTypography.mockClear();
+    const saveState = vi
+      .spyOn(workspaceRepository, 'saveState')
+      .mockRejectedValue(new Error('模拟恢复排版保存失败'));
+
+    await expect(
+      registry.execute(COMMAND_IDS.readerResetTypography, viewId),
+    ).rejects.toThrow('模拟恢复排版保存失败');
+
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toEqual(previousOverride);
+    expect(host.applyTypography).toHaveBeenLastCalledWith(previousEffective);
+    saveState.mockRestore();
+  });
+
   it('PDF 视图尚未完成运行时初始化时也会保存排版模式与视口位置', async () => {
     const material: ReadingMaterial = {
       id: 'pdf-material',

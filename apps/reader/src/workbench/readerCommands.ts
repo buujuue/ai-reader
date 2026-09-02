@@ -1598,14 +1598,7 @@ export function registerReaderCommands(
       ...store.materialTypography[view.materialId],
       ...clamped,
     };
-    useWorkspaceStore.getState().setMaterialTypography(view.materialId, merged);
-
-    const effective = resolveTypography(
-      store.globalReadingTypography,
-      useWorkspaceStore.getState().materialTypography[view.materialId],
-    );
-    applyTypographyToMaterialViews(view.materialId, effective);
-    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    await persistMaterialTypography(dependencies.workspaceRepository, view.materialId, merged);
   });
 
   registry.register(COMMAND_IDS.readerResetTypography, async (...args: unknown[]) => {
@@ -1614,11 +1607,7 @@ export function registerReaderCommands(
     const view = findView(viewId);
     if (!view) return;
 
-    useWorkspaceStore.getState().resetMaterialTypography(view.materialId);
-    const store = useWorkspaceStore.getState();
-    const effective = resolveTypography(store.globalReadingTypography, null);
-    applyTypographyToMaterialViews(view.materialId, effective);
-    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    await persistMaterialTypography(dependencies.workspaceRepository, view.materialId, undefined);
   });
 
   registry.register(COMMAND_IDS.readerSetGlobalTypography, (...args: unknown[]) =>
@@ -1690,20 +1679,7 @@ export function registerReaderCommands(
     ) return;
     const store = useWorkspaceStore.getState();
     const merged = { ...store.materialTypography[view.materialId], flow };
-    useWorkspaceStore.getState().setMaterialTypography(view.materialId, merged);
-    const effective = resolveTypography(
-      store.globalReadingTypography,
-      useWorkspaceStore.getState().materialTypography[view.materialId],
-    );
-    for (const [openViewId, openDocument] of useReaderRuntime.getState().documents) {
-      if (
-        openDocument instanceof PdfBookDocument &&
-        findView(openViewId)?.materialId === view.materialId
-      ) {
-        openDocument.applyTypography(effective);
-      }
-    }
-    await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
+    await persistMaterialTypography(dependencies.workspaceRepository, view.materialId, merged);
   }));
 
   registry.register(COMMAND_IDS.readerRestoreView, async (...args: unknown[]) => {
@@ -1795,29 +1771,77 @@ function clampTypographyPatch(
   return next;
 }
 
+function forEachOpenReaderView(
+  callback: (document: BookDocument, materialId: string) => void,
+  filter?: (materialId: string) => boolean,
+): void {
+  for (const [viewId, document] of useReaderRuntime.getState().documents) {
+    const materialId = findView(viewId)?.materialId;
+    if (!materialId || (filter && !filter(materialId))) continue;
+    callback(document, materialId);
+  }
+}
+
 function applyTypographyToOpenViews(globalTypography: ReadingTypography): void {
   const current = useWorkspaceStore.getState();
-  for (const [viewId, document] of useReaderRuntime.getState().documents) {
-    const view = findView(viewId);
-    if (!view) continue;
-    const override = current.materialTypography[view.materialId];
+  forEachOpenReaderView((document, materialId) => {
+    const override = current.materialTypography[materialId];
     document.applyTypography(
       resolveTypography(
         globalTypography,
         hasTypographyOverride(override) ? override : null,
       ),
     );
-  }
+  });
 }
 
 function applyTypographyToMaterialViews(
   materialId: string,
   typography: ReadingTypography,
 ): void {
-  for (const [viewId, document] of useReaderRuntime.getState().documents) {
-    if (findView(viewId)?.materialId === materialId) {
-      document.applyTypography(typography);
-    }
+  forEachOpenReaderView((document) => document.applyTypography(typography), (openMaterialId) =>
+    openMaterialId === materialId,
+  );
+}
+
+async function persistMaterialTypography(
+  workspaceRepository: WorkspaceRepository,
+  materialId: string,
+  nextOverride: Partial<ReadingTypography> | undefined,
+): Promise<void> {
+  const store = useWorkspaceStore.getState();
+  const previousOverride = store.materialTypography[materialId];
+  const previousEffective = resolveTypography(store.globalReadingTypography, previousOverride);
+  const nextEffective = resolveTypography(store.globalReadingTypography, nextOverride);
+
+  store.resetMaterialTypography(materialId);
+  if (nextOverride !== undefined) {
+    store.setMaterialTypography(materialId, nextOverride);
+  }
+
+  try {
+    applyTypographyToMaterialViews(materialId, nextEffective);
+    await workspaceRepository.saveState(serializeWorkspaceState());
+  } catch (error) {
+    restoreMaterialTypography(materialId, previousOverride, previousEffective);
+    throw error;
+  }
+}
+
+function restoreMaterialTypography(
+  materialId: string,
+  previousOverride: Partial<ReadingTypography> | undefined,
+  previousEffective: ReadingTypography,
+): void {
+  const store = useWorkspaceStore.getState();
+  store.resetMaterialTypography(materialId);
+  if (previousOverride !== undefined) {
+    store.setMaterialTypography(materialId, previousOverride);
+  }
+  try {
+    applyTypographyToMaterialViews(materialId, previousEffective);
+  } catch (rollbackError) {
+    console.error('回滚材料阅读排版失败', rollbackError);
   }
 }
 
