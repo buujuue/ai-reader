@@ -8,6 +8,7 @@ import { createInMemoryWorkspaceRepository } from '../domain/workspace/inMemoryW
 import { DEFAULT_WORKSPACE_STATE } from '../domain/workspace/workspaceState';
 import type { BookDocument } from '../domain/reader/bookDocument';
 import type { PdfReadingLocation } from '../domain/reader/readingLocation';
+import type { ReadingMaterial } from '../domain/library/material';
 import type { FoliateViewHost } from '../domain/reader/viewHost';
 import { ReadingInputController } from '../domain/reader/readingInput';
 import type { SearchEvent } from '../domain/reader/search';
@@ -25,6 +26,7 @@ import { ReaderRuntimeCache } from './readerRuntimeCache';
 import { useWorkspaceStore } from './workspaceStore';
 import { useReaderRuntime } from './readerRuntime';
 import { useSearchStore } from './searchStore';
+import { useLibraryStore } from './libraryStore';
 
 function createFakeViewHost(overrides: Partial<FoliateViewHost> = {}): FoliateViewHost {
   return {
@@ -1853,6 +1855,7 @@ describe('Reader 导航命令', () => {
   beforeEach(() => {
     useWorkspaceStore.getState().resetToDefault();
     useReaderRuntime.setState({ documents: new Map() });
+    useLibraryStore.getState().resetToDefault();
   });
 
   it('目录跳转命令把目标 href 交给 BookDocument 并压入历史节点', async () => {
@@ -2177,6 +2180,26 @@ describe('Reader 排版命令', () => {
     expect(last.fontFamily).toBe(useWorkspaceStore.getState().globalReadingTypography.fontFamily);
   });
 
+  it('同一材料跨 Editor Group 打开时排版覆盖立即应用到两个阅读运行时', async () => {
+    const firstHost = createTypographyHost();
+    const { material, viewId } = await setupWithHost(firstHost);
+    const split = useWorkspaceStore.getState().splitEditorGroup('right');
+    const secondViewId = split?.viewId;
+    expect(secondViewId).toBeTruthy();
+    const secondApply = vi.fn();
+    useReaderRuntime.getState().setDocument(secondViewId!, {
+      applyTypography: secondApply,
+    } as unknown as BookDocument);
+
+    await registry.execute(COMMAND_IDS.readerApplyTypography, viewId, { lineHeight: 2.1 });
+
+    expect(firstHost.applyTypography.mock.calls.at(-1)![0].lineHeight).toBe(2.1);
+    expect(secondApply.mock.calls.at(-1)![0].lineHeight).toBe(2.1);
+    await expect(workspaceRepository.loadState()).resolves.toMatchObject({
+      materialTypography: { [material.id]: { lineHeight: 2.1 } },
+    });
+  });
+
   it('应用排版命令把数值字段收敛到合理区间', async () => {
     const host = createTypographyHost();
     const { material, viewId } = await setupWithHost(host);
@@ -2216,6 +2239,47 @@ describe('Reader 排版命令', () => {
     const last = host.applyTypography.mock.calls.at(-1)![0];
     expect(last.fontSize).toBe(21);
     expect(viewId).toBeTruthy();
+  });
+
+  it('PDF 视图尚未完成运行时初始化时也会保存排版模式与视口位置', async () => {
+    const material: ReadingMaterial = {
+      id: 'pdf-material',
+      fingerprint: 'pdf-fingerprint',
+      sourceFileName: 'paper.pdf',
+      folderId: null,
+      source: { title: '测试 PDF', author: null, language: 'zh' },
+      override: { title: null, author: null, coverSource: null },
+      title: '测试 PDF',
+      author: null,
+      language: 'zh',
+      coverSource: null,
+      documentVersion: 0,
+      managedFileAvailable: true,
+    };
+    useLibraryStore.getState().setMaterials([material]);
+    const viewId = useWorkspaceStore.getState().openView(material.id);
+    importRepository = createInMemoryImportRepository();
+    workspaceRepository = createInMemoryWorkspaceRepository();
+    registry = new CommandRegistry();
+    registerReaderCommands(registry, { importRepository, workspaceRepository });
+
+    await registry.execute(COMMAND_IDS.readerSetPdfFlow, viewId, 'scrolled');
+    await registry.execute(COMMAND_IDS.readerSetPdfViewport, viewId, 150, 'page');
+
+    expect(useWorkspaceStore.getState().materialTypography[material.id]).toMatchObject({
+      flow: 'scrolled',
+    });
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toEqual({
+      kind: 'pdf',
+      page: 1,
+      scrollTop: 0,
+      zoom: 150,
+      fit: 'page',
+    });
+    await expect(workspaceRepository.loadState()).resolves.toMatchObject({
+      materialTypography: { [material.id]: { flow: 'scrolled' } },
+      editorGroups: [{ views: [{ location: { zoom: 150, fit: 'page' } }] }],
+    });
   });
 });
 describe('统一阅读输入 -> 翻页 Command -> 渲染器(工单 #12)', () => {

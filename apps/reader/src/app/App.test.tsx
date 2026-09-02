@@ -1666,6 +1666,38 @@ describe('打开 EPUB 并重启续读', () => {
     });
   });
 
+  it('界面面板的书籍范围通过生产 Command 持久化 EPUB 排版并更新有效值', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    const openButton = await screen.findByRole('button', { name: /打开 示例书/ });
+    await user.click(openButton);
+    await waitFor(() => expect(useWorkspaceStore.getState().editorGroups[0]?.views).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: '界面' }));
+    const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
+    const booksScope = within(panel).getByRole('region', { name: '书籍' });
+    expect(booksScope).toHaveTextContent('示例书');
+    expect(booksScope).toHaveTextContent('跟随全局默认');
+
+    await user.click(within(booksScope).getByRole('button', { name: '护眼' }));
+    await waitFor(() => {
+      expect(booksScope).toHaveTextContent('材料级覆盖');
+      expect(booksScope).toHaveTextContent('护眼');
+    });
+    await expect(repository.loadState()).resolves.toMatchObject({
+      materialTypography: {
+        [useLibraryStore.getState().materials[0]!.id]: { theme: 'sepia' },
+      },
+    });
+
+    await user.click(within(booksScope).getByRole('button', { name: '恢复默认阅读排版' }));
+    await waitFor(() => expect(booksScope).toHaveTextContent('跟随全局默认'));
+    expect(useWorkspaceStore.getState().globalReadingTypography.theme).toBe('light');
+    await expect(repository.loadState()).resolves.toMatchObject({ materialTypography: {} });
+  });
+
   it('材料更多操作支持编辑书名并将当前材料移入回收站', async () => {
     const user = userEvent.setup();
     renderApp(services);
@@ -2021,6 +2053,43 @@ describe('导入并阅读固定版式 PDF', () => {
       expect(screen.getByRole('toolbar', { name: /示例 PDF/ })).toBeInTheDocument();
       expect(useWorkspaceStore.getState().editorGroups[0]!.views).toHaveLength(1);
     });
+  });
+
+  it('界面面板的 PDF 书籍范围把页面适配和缩放保留在当前 ReadingView', async () => {
+    const user = userEvent.setup();
+    renderApp(services);
+
+    await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
+    await waitFor(() => expect(screen.getAllByText('示例 PDF').length).toBeGreaterThan(0));
+    await user.click(await screen.findByRole('button', { name: /打开 示例 PDF/ }));
+    await waitFor(() => expect(screen.getByRole('toolbar', { name: /示例 PDF/ })).toBeInTheDocument());
+
+    const viewId = useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id;
+    await waitFor(() => expect(useReaderRuntime.getState().getDocument(viewId)?.getCurrentIndex()).toBe(1));
+    const materialId = useLibraryStore.getState().materials[0]!.id;
+    await user.click(screen.getByRole('button', { name: '界面' }));
+    const booksScope = within(
+      await screen.findByRole('complementary', { name: '界面侧栏' }),
+    ).getByRole('region', { name: '书籍' });
+
+    await user.click(within(booksScope).getByRole('button', { name: '整页' }));
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toMatchObject({
+        kind: 'pdf',
+        fit: 'page',
+      });
+    });
+    fireEvent.change(within(booksScope).getByRole('slider', { name: '缩放' }), {
+      target: { value: '150' },
+    });
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.location).toMatchObject({
+        kind: 'pdf',
+        zoom: 150,
+      });
+    });
+    expect(useWorkspaceStore.getState().materialTypography[materialId]).toBeUndefined();
+    expect(useWorkspaceStore.getState().editorGroups[0]!.views[0]!.id).toBe(viewId);
   });
 
   it('PDF 分页正文左右点击经当前 ReadingView 作用域到前后页 Command', async () => {

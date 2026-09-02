@@ -421,9 +421,16 @@ export class PdfBookDocument implements BookDocument {
   setViewport(zoom: number, fit: PdfFitModeLike): void {
     this.resumeRangeTransportForInteraction();
     this.renderer?.setViewport(zoom, fit);
-    if (this.currentLocation) {
-      this.currentLocation = { ...this.currentLocation, zoom, fit };
-    }
+    const currentPage = this.currentLocation?.page ?? this.renderer?.getCurrentPage() ?? 1;
+    const scrollTop =
+      this.typography.flow === 'paginated' ? 0 : this.renderer?.getScrollTop() ?? 0;
+    this.currentLocation = {
+      kind: 'pdf',
+      page: currentPage,
+      scrollTop,
+      zoom,
+      fit,
+    };
     this.notifyLocation();
   }
 

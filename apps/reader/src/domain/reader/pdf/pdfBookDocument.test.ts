@@ -203,6 +203,15 @@ describe('PdfBookDocument', () => {
     expect(book.getLocation()).toEqual({ kind: 'pdf', page: 2, scrollTop: 0, zoom: 120, fit: 'height' });
   });
 
+  it('首次位置回报前 setViewport 也会建立可持久化的当前页面位置', async () => {
+    const { book } = createDocument();
+    await book.open(makeContainer());
+
+    book.setViewport(135, 'page');
+
+    expect(book.getLocation()).toEqual({ kind: 'pdf', page: 1, scrollTop: 0, zoom: 135, fit: 'page' });
+  });
+
   it('分页模式下 next/prev 切换页码并更新位置', async () => {
     const { book } = createDocument({ pageCount: 5 });
     await book.open(makeContainer());

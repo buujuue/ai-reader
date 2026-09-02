@@ -578,6 +578,275 @@ body::-webkit-scrollbar-thumb:hover,
   color: var(--prototype-text-muted);
 }
 
+.app-interface-books {
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--prototype-border);
+}
+
+.app-interface-books.is-disabled {
+  opacity: 0.72;
+}
+
+.app-interface-books-heading {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.app-interface-books-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--prototype-accent-strong);
+  background: var(--prototype-accent-soft);
+}
+
+.app-interface-books h3 {
+  margin: 0;
+  color: var(--prototype-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.app-interface-books-format {
+  color: var(--prototype-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.app-interface-books-material {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--prototype-border);
+  border-radius: 9px;
+  background: var(--prototype-surface-soft);
+}
+
+.app-interface-books-material strong {
+  overflow: hidden;
+  color: var(--prototype-text);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-interface-books-material span {
+  color: var(--prototype-text-muted);
+  font-size: 11px;
+}
+
+.app-interface-books-material span.is-overridden {
+  color: var(--prototype-accent-strong);
+}
+
+.app-interface-books-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 9px;
+  overflow: hidden;
+  border: 1px solid var(--prototype-border);
+  border-radius: 8px;
+  background: var(--prototype-border);
+}
+
+.app-interface-books-summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--prototype-surface-soft);
+}
+
+.app-interface-books-summary span {
+  color: var(--prototype-text-muted);
+  font-size: 10px;
+}
+
+.app-interface-books-summary strong {
+  overflow: hidden;
+  color: var(--prototype-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-reader-typography-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.app-reader-setting-group {
+  min-width: 0;
+  margin: 0;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--prototype-border);
+}
+
+.app-reader-setting-group legend {
+  padding: 0;
+  color: var(--prototype-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.app-reader-setting-control {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.app-reader-setting-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-reader-setting-label {
+  color: var(--prototype-text-secondary);
+  font-size: 12px;
+}
+
+.app-reader-setting-value {
+  color: var(--prototype-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-reader-setting-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.app-reader-setting-option {
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px 5px;
+  overflow: hidden;
+  border: 1px solid var(--prototype-border);
+  border-radius: 7px;
+  color: var(--prototype-text-secondary);
+  background: var(--prototype-surface-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--prototype-motion),
+    border-color var(--prototype-motion),
+    background var(--prototype-motion),
+    transform var(--prototype-motion);
+}
+
+.app-reader-setting-option:hover {
+  color: var(--prototype-text);
+  background: var(--prototype-surface-hover);
+}
+
+.app-reader-setting-option:active {
+  transform: scale(0.985);
+}
+
+.app-reader-setting-option[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--prototype-accent) 42%, var(--prototype-border));
+  color: var(--prototype-text);
+  background: var(--prototype-accent-soft);
+}
+
+.app-reader-setting-slider input[type='range'] {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.app-reader-setting-help {
+  margin: 10px 0 0;
+  color: var(--prototype-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.app-interface-books-footer {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--prototype-border);
+}
+
+.app-interface-books-footer > span {
+  color: var(--prototype-text-muted);
+  font-size: 11px;
+}
+
+.app-interface-books-reset {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--prototype-border);
+  border-radius: 7px;
+  color: var(--prototype-text-secondary);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    color var(--prototype-motion),
+    background var(--prototype-motion),
+    border-color var(--prototype-motion);
+}
+
+.app-interface-books-reset:hover:not(:disabled) {
+  color: var(--prototype-text);
+  background: var(--prototype-surface-hover);
+}
+
+.app-interface-books-reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.app-interface-books-empty {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px 10px;
+  border: 1px dashed var(--prototype-border-strong);
+  border-radius: 8px;
+  color: var(--prototype-text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.app-interface-books-empty strong {
+  color: var(--prototype-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@media (max-width: 320px) {
+  .app-reader-setting-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .app-theme-option-list {
   display: grid;
   gap: 3px;
@@ -1762,6 +2031,10 @@ body::-webkit-scrollbar-thumb:hover,
     border-color: ButtonText;
     background: ButtonFace;
     forced-color-adjust: auto;
+  }
+
+  .app-shell .app-reader-setting-option[aria-pressed='true'] {
+    border: 2px solid Highlight;
   }
 
   .app-shell button:focus-visible,

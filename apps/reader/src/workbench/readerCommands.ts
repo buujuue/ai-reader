@@ -22,14 +22,17 @@ import {
   type FoliateViewHostFactory,
 } from '../domain/reader/foliateViewHost';
 import { back as historyBack, forward as historyForward } from '../domain/reader/navigationHistory';
-import type { PdfFitMode } from '../domain/reader/readingLocation';
+import { isPdfFitMode, type PdfFitMode } from '../domain/reader/readingLocation';
 import { PdfBookDocument } from '../domain/reader/pdf/pdfBookDocument';
 import type { PdfFileSource, PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { MarkdownBookDocument } from '../domain/reader/markdown/markdownBookDocument';
-import type { ReadingTypography } from '../domain/reader/typography';
-import { resolveTypography } from '../domain/reader/typography';
+import {
+  isReadingFlow,
+  resolveTypography,
+  type ReadingTypography,
+} from '../domain/reader/typography';
 import { inspectEpub } from '../domain/library/epub/epubInspector';
 import type { ImportRepository } from '../domain/library/importRepository';
 import type { ReadingMaterial } from '../domain/library/material';
@@ -1648,21 +1651,47 @@ export function registerReaderCommands(
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     const zoom = args[1] as number | undefined;
     const fit = args[2] as PdfFitMode | undefined;
-    if (!viewId || typeof zoom !== 'number' || !fit) return;
+    if (!viewId || typeof zoom !== 'number' || !Number.isFinite(zoom) || !isPdfFitMode(fit)) return;
+    const view = findView(viewId);
     const document = useReaderRuntime.getState().getDocument(viewId);
-    if (!(document instanceof PdfBookDocument)) return;
+    const material = view
+      ? useLibraryStore.getState().materials.find((item) => item.id === view.materialId)
+      : null;
+    if (
+      !view ||
+      (!(document instanceof PdfBookDocument) &&
+        (!material || formatFromSourceFileName(material.sourceFileName) !== 'pdf'))
+    ) return;
     const clamped = Math.min(400, Math.max(25, Math.round(zoom)));
-    document.setViewport(clamped, fit);
+    if (document instanceof PdfBookDocument) {
+      document.setViewport(clamped, fit);
+    } else {
+      const current = view.location?.kind === 'pdf'
+        ? view.location
+        : { kind: 'pdf' as const, page: 1, scrollTop: 0, zoom: 100, fit: 'width' as const };
+      useWorkspaceStore.getState().setViewLocation(viewId, {
+        ...current,
+        zoom: clamped,
+        fit,
+      });
+    }
     await dependencies.workspaceRepository.saveState(serializeWorkspaceState());
   }));
 
   registry.register(COMMAND_IDS.readerSetPdfFlow, (...args: unknown[]) => enqueueRuntimeTransition(async () => {
     const viewId = (args[0] as string | undefined) ?? getActiveViewId();
     const flow = args[1] as 'paginated' | 'scrolled' | undefined;
-    if (!viewId || !flow) return;
+    if (!viewId || !isReadingFlow(flow)) return;
     const view = findView(viewId);
+    const material = view
+      ? useLibraryStore.getState().materials.find((item) => item.id === view.materialId)
+      : null;
     const document = useReaderRuntime.getState().getDocument(viewId);
-    if (!view || !(document instanceof PdfBookDocument)) return;
+    if (
+      !view ||
+      (!(document instanceof PdfBookDocument) &&
+        (!material || formatFromSourceFileName(material.sourceFileName) !== 'pdf'))
+    ) return;
     const store = useWorkspaceStore.getState();
     const merged = { ...store.materialTypography[view.materialId], flow };
     useWorkspaceStore.getState().setMaterialTypography(view.materialId, merged);
