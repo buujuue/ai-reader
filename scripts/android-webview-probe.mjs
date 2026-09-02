@@ -12,6 +12,8 @@ export const ANDROID_WEBVIEW_PROBE_SCHEMA = 'android-webview-probe.v1';
 export const DEFAULT_READY_TIMEOUT_MS = 30_000;
 export const DEFAULT_READY_INTERVAL_MS = 500;
 export const DEFAULT_CDP_PORT = 9333;
+export const DEFAULT_UI_DUMP_ATTEMPTS = 5;
+export const DEFAULT_UI_DUMP_INTERVAL_MS = 250;
 const MAX_DIAGNOSTIC_HISTORY = 24;
 
 const sleep = (durationMs) => new Promise((resolvePromise) => setTimeout(resolvePromise, durationMs));
@@ -294,6 +296,76 @@ export function validateAndroidUiHierarchy(path, packageId) {
     return { valid: false, reason: `UIAutomator 语义树不包含目标包 ${packageId}` };
   }
   return { valid: true };
+}
+
+/**
+ * Capture UIAutomator output from a live Android device. A WebView can have a
+ * visible compositor frame while its accessibility snapshot is still being
+ * produced, so an empty first dump is retried within a small bounded budget.
+ * `exec-out cat` keeps the XML on the raw adb stream instead of the shell
+ * output path, which avoids losing an otherwise valid hierarchy in CI.
+ */
+export async function captureAndroidUiHierarchy({
+  phase,
+  remotePath = `/sdcard/ai-reader-${phase}-ui.xml`,
+  attempts = DEFAULT_UI_DUMP_ATTEMPTS,
+  intervalMs = DEFAULT_UI_DUMP_INTERVAL_MS,
+  adb = createAdbRunner(),
+  sleepFn = sleep,
+}) {
+  const maxAttempts = Number.isFinite(Number(attempts))
+    ? Math.max(1, Math.floor(Number(attempts)))
+    : DEFAULT_UI_DUMP_ATTEMPTS;
+  const retryIntervalMs = Number.isFinite(Number(intervalMs))
+    ? Math.max(0, Number(intervalMs))
+    : DEFAULT_UI_DUMP_INTERVAL_MS;
+  const history = [];
+  let lastHierarchy = '';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const removeResult = await safeAdb(adb, ['shell', 'rm', '-f', remotePath]);
+    const dumpResult = await safeAdb(adb, ['shell', 'uiautomator', 'dump', remotePath]);
+    const readResult = await safeAdb(adb, ['exec-out', 'cat', remotePath]);
+    const hierarchy = String(readResult.stdout ?? '');
+    const hasHierarchy = hierarchy.includes('<hierarchy');
+    const validAttempt = removeResult.ok && dumpResult.ok && readResult.ok && hasHierarchy;
+    lastHierarchy = hierarchy;
+    let reason = null;
+    if (!removeResult.ok) reason = `清理上一次 UIAutomator 文件失败：${removeResult.error}`;
+    else if (!dumpResult.ok) reason = `UIAutomator dump 失败：${dumpResult.error}`;
+    else if (!readResult.ok) reason = `读取 UIAutomator 文件失败：${readResult.error}`;
+    else if (!validAttempt) reason = 'UIAutomator 文件为空或不包含 hierarchy 根节点';
+    boundedPush(history, {
+      attempt,
+      bytes: Buffer.byteLength(hierarchy, 'utf8'),
+      dumpOutput: safeErrorMessage(dumpResult.stdout),
+      dumpOk: dumpResult.ok,
+      hasHierarchy,
+      readOk: readResult.ok,
+      removeOk: removeResult.ok,
+      reason,
+    });
+
+    if (validAttempt) {
+      return {
+        valid: true,
+        hierarchy,
+        attempts: attempt,
+        history,
+        remotePath,
+      };
+    }
+    if (attempt < maxAttempts) await sleepFn(retryIntervalMs);
+  }
+
+  return {
+    valid: false,
+    hierarchy: lastHierarchy,
+    attempts: maxAttempts,
+    history,
+    remotePath,
+    reason: history.at(-1)?.reason ?? 'UIAutomator 未返回语义树',
+  };
 }
 
 function safeErrorMessage(error) {
@@ -648,6 +720,34 @@ function parseArgs(argv) {
   };
 }
 
+function parseUiCaptureArgs(argv) {
+  const values = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument.startsWith('--')) continue;
+    const key = argument.slice(2).replaceAll('-', '_');
+    values[key] = argv[index + 1];
+    index += 1;
+  }
+  for (const key of ['phase', 'output']) {
+    if (!values[key]) throw new Error(`缺少参数 --${key.replaceAll('_', '-')}`);
+  }
+  const attempts = Number(values.attempts ?? DEFAULT_UI_DUMP_ATTEMPTS);
+  const intervalMs = Number(values.interval_ms ?? DEFAULT_UI_DUMP_INTERVAL_MS);
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new Error('--attempts 必须是正整数');
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs < 0) {
+    throw new Error('--interval-ms 必须是非负数字');
+  }
+  return {
+    phase: values.phase,
+    attempts,
+    intervalMs,
+    output: resolve(values.output),
+  };
+}
+
 async function main() {
   if (process.argv[2] === '--validate-png') {
     const path = process.argv[3];
@@ -669,6 +769,24 @@ async function main() {
     if (result.valid) console.log(`Android UIAutomator 语义树有效且属于目标包：${packageId}`);
     else console.error(`Android UIAutomator 语义树校验失败：${result.reason}`);
     process.exitCode = result.valid ? 0 : 1;
+    return;
+  }
+  if (process.argv[2] === '--capture-ui') {
+    const options = parseUiCaptureArgs(process.argv.slice(3));
+    mkdirSync(dirname(options.output), { recursive: true });
+    const result = await captureAndroidUiHierarchy(options);
+    writeFileSync(options.output, result.hierarchy, 'utf8');
+    for (const attempt of result.history) {
+      const commandOutput = attempt.dumpOutput ? `，${attempt.dumpOutput}` : '';
+      console.log(
+        `Android ${options.phase} UIAutomator 采集第 ${attempt.attempt} 次：` +
+          `${attempt.bytes} bytes${attempt.reason ? `，${attempt.reason}` : ''}${commandOutput}`,
+      );
+    }
+    if (!result.valid) {
+      console.error(`Android ${options.phase} 阶段 UIAutomator 语义树采集失败：${result.reason}`);
+      process.exitCode = 1;
+    }
     return;
   }
   const options = parseArgs(process.argv.slice(2));

@@ -23,7 +23,7 @@ Issue #30 的 Android 平板验收分为自动化原生证据与真机手工流�
 - `webview_devtools_remote_<pid>` 调试 socket 已出现并可通过 `adb forward` 访问；
 - CDP `Runtime.evaluate` 能看到可见的 `.app-shell`、应用顶栏、`AI Reader` 标识、`#reader-main` 和编辑器区。
 
-探测通过 `dumpsys activity activities` 读取 Android 35 的 resumed Activity，不依赖新版系统已不稳定输出的旧窗口焦点摘要。UIAutomator 语义树必须包含目标包，并拒绝 `android:id/aerr_*` 系统错误对话框，避免把被 ANR 弹窗覆盖的工作台误当成有效证据。探测超时会指出 `start`、`touch` 或 `restart` 阶段、尝试次数、最后一次状态和上限，不会把空白截图误判为成功。每个阶段都保存 `*-webview-probe.json`、`*-foreground-activity.txt`、`*-target-process.txt`、截图和 UIAutomator 语义树；任一阶段失败时，退出钩子仍会采集当前设备状态和 `android-logcat.txt`，避免后续读取不存在文件掩盖原始原因。探测器的立即成功、重试成功和超时诊断由 `pnpm test:android-smoke` 覆盖。
+探测通过 `dumpsys activity activities` 读取 Android 35 的 resumed Activity，不依赖新版系统已不稳定输出的旧窗口焦点摘要。UIAutomator 语义树必须包含目标包，并拒绝 `android:id/aerr_*` 系统错误对话框，避免把被 ANR 弹窗覆盖的工作台误当成有效证据。探测超时会指出 `start`、`touch` 或 `restart` 阶段、尝试次数、最后一次状态和上限，不会把空白截图误判为成功。每个阶段都保存 `*-webview-probe.json`、`*-foreground-activity.txt`、`*-target-process.txt`、截图和 UIAutomator 语义树；UIAutomator 采集在有限次数内重试，并通过 `adb exec-out cat` 读取刚生成的 XML，保留每次尝试的字节数和命令诊断，避免可见 WebView 已就绪但首次无障碍快照为空时丢失证据。任一阶段失败时，退出钩子仍会采集当前设备状态和 `android-logcat.txt`，避免后续读取不存在文件掩盖原始原因。探测器的立即成功、重试成功、UIAutomator 空文件重试和超时诊断由 `pnpm test:android-smoke` 覆盖。
 
 ## 真机验收流程
 

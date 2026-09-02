@@ -7,6 +7,7 @@ import { deflateSync } from 'node:zlib';
 
 import {
   AndroidWebViewReadyTimeoutError,
+  captureAndroidUiHierarchy,
   parseForegroundActivity,
   validateAndroidScreenshot,
   validateAndroidUiHierarchy,
@@ -101,6 +102,37 @@ describe('Android WebView 就绪探测', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it('UIAutomator 首次返回空文件时会重试并保留可用语义树', async () => {
+    const calls = [];
+    let dumpCount = 0;
+    const result = await captureAndroidUiHierarchy({
+      phase: 'start',
+      attempts: 3,
+      intervalMs: 1,
+      sleepFn: async () => {},
+      adb: async (args) => {
+        calls.push(args);
+        if (args[0] === 'shell' && args[1] === 'uiautomator') {
+          dumpCount += 1;
+          return `UI hierchary dumped to: ${args[3]}`;
+        }
+        if (args[0] === 'exec-out' && args[1] === 'cat') {
+          return dumpCount === 1
+            ? ''
+            : '<hierarchy><node package="com.example.reader" /></hierarchy>';
+        }
+        return '';
+      },
+    });
+
+    assert.equal(result.valid, true);
+    assert.equal(result.attempts, 2);
+    assert.equal(result.hierarchy.includes('<hierarchy>'), true);
+    assert.equal(result.history[0].hasHierarchy, false);
+    assert.equal(result.history[1].hasHierarchy, true);
+    assert.equal(calls.some((args) => args[0] === 'exec-out' && args[1] === 'cat'), true);
   });
 
   it('目标应用已在前台且工作台可识别时立即成功', async () => {

@@ -96,6 +96,9 @@ assert(
 );
 assert(androidSmoke.includes('capture_phase_evidence'), 'The Android smoke script must retain phase evidence on failure');
 assert(androidSmoke.includes('validate_phase_evidence'), 'The Android smoke script must reject empty or invalid phase evidence');
+assert(androidSmoke.includes('--capture-ui'), 'The Android smoke script must use the bounded UIAutomator capture helper');
+assert(androidSmoke.includes('ANDROID_SMOKE_UI_DUMP_ATTEMPTS'), 'UIAutomator capture retry count must be configurable');
+assert(androidSmoke.includes('ANDROID_SMOKE_UI_DUMP_INTERVAL_MS'), 'UIAutomator capture retry interval must be configurable');
 assert(androidSmoke.includes('--validate-png'), 'The Android smoke script must reject uniform or blank PNG evidence');
 assert(androidSmoke.includes('--validate-ui'), 'The Android smoke script must reject system dialogs and unrelated UI evidence');
 assert(androidSmoke.includes("report.result !== \"ready\""), 'The Android smoke script must reject non-ready WebView probe reports');
@@ -112,8 +115,11 @@ assert(androidProbe.includes('ws://127.0.0.1:${port}/devtools/page/${target.id}'
 assert(androidProbe.includes('documentReadyState'), 'Android readiness must require a settled WebView document');
 assert(androidProbe.includes('workbenchVisible'), 'Android readiness must require a visible AI Reader workbench');
 assert(androidProbe.includes('AndroidWebViewReadyTimeoutError'), 'Android readiness timeout must have a structured diagnostic');
+assert(androidProbe.includes('captureAndroidUiHierarchy'), 'Android UIAutomator capture must be implemented in the root probe');
+assert(androidProbe.includes("['exec-out', 'cat', remotePath]"), 'Android UIAutomator XML must be read through the raw adb stream');
 assert(androidProbeTest.includes('立即成功'), 'Android readiness regression must cover immediate success');
 assert(androidProbeTest.includes('重试后成功'), 'Android readiness regression must cover retry success');
+assert(androidProbeTest.includes('UIAutomator 首次返回空文件时会重试'), 'Android UIAutomator evidence regression must cover empty first dumps');
 assert(androidProbeTest.includes('超时'), 'Android readiness regression must cover bounded timeout diagnostics');
 assert(androidProbeTest.includes('系统 ANR 对话框'), 'Android evidence regression must reject system ANR dialogs');
 assert(workflow.includes('pnpm test:android-smoke'), 'The Android job must run the bounded readiness regression tests');

@@ -9,6 +9,8 @@ mkdir -p "$EVIDENCE_DIR"
 
 ready_timeout_ms="${ANDROID_SMOKE_READY_TIMEOUT_MS:-30000}"
 ready_interval_ms="${ANDROID_SMOKE_READY_INTERVAL_MS:-500}"
+ui_dump_attempts="${ANDROID_SMOKE_UI_DUMP_ATTEMPTS:-5}"
+ui_dump_interval_ms="${ANDROID_SMOKE_UI_DUMP_INTERVAL_MS:-250}"
 cdp_port="${ANDROID_SMOKE_CDP_PORT:-9333}"
 
 case "$ready_timeout_ms" in
@@ -16,6 +18,12 @@ case "$ready_timeout_ms" in
 esac
 case "$ready_interval_ms" in
   ''|*[!0-9]*) echo '::error::ANDROID_SMOKE_READY_INTERVAL_MS must be a positive integer' >&2; exit 1 ;;
+esac
+case "$ui_dump_attempts" in
+  ''|*[!0-9]*) echo '::error::ANDROID_SMOKE_UI_DUMP_ATTEMPTS must be a positive integer' >&2; exit 1 ;;
+esac
+case "$ui_dump_interval_ms" in
+  ''|*[!0-9]*) echo '::error::ANDROID_SMOKE_UI_DUMP_INTERVAL_MS must be a non-negative integer' >&2; exit 1 ;;
 esac
 case "$cdp_port" in
   ''|*[!0-9]*) echo '::error::ANDROID_SMOKE_CDP_PORT must be a numeric TCP port' >&2; exit 1 ;;
@@ -90,9 +98,13 @@ capture_phase_evidence() {
     "$EVIDENCE_DIR/${phase}-screenshot.log" \
     "阶段 $phase 截图命令未返回额外诊断。"
 
-  local remote_ui="/sdcard/ai-reader-${phase}-ui.xml"
-  adb shell uiautomator dump "$remote_ui" > "$EVIDENCE_DIR/${phase}-uiautomator.log" 2>&1 || true
-  adb shell cat "$remote_ui" > "$phase_ui" 2>> "$EVIDENCE_DIR/${phase}-uiautomator.log" || true
+  node scripts/android-webview-probe.mjs \
+    --capture-ui \
+    --phase "$phase" \
+    --attempts "$ui_dump_attempts" \
+    --interval-ms "$ui_dump_interval_ms" \
+    --output "$phase_ui" \
+    > "$EVIDENCE_DIR/${phase}-uiautomator.log" 2>&1 || true
   if ! test -s "$phase_ui"; then
     printf '%s\n' "阶段 $phase 未能取得 UIAutomator 语义树；请查看 uiautomator 日志。" \
       > "$EVIDENCE_DIR/${phase}-ui-evidence-error.txt"
