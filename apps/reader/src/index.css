@@ -1689,6 +1689,13 @@ body::-webkit-scrollbar-thumb:hover,
   display: none;
 }
 
+.app-reading-toolbar-placeholder {
+  display: inline-block;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+
 .app-reading-toolbar-actions .app-icon-button {
   flex: 0 0 auto;
   color: var(--prototype-text-secondary);

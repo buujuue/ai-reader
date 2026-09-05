@@ -26,7 +26,7 @@ export interface ShellUiStoreState {
   /** 紧凑布局打开材料后临时收起活动面板,不改写 Workspace State。 */
   compactActivityPanelDismissed: boolean;
   compactActivityPanelDismissRequestToken: number;
-  /** 请求已打开的界面面板把焦点移到自身,供阅读排版快捷入口复用。 */
+  /** 请求已打开的界面面板把焦点移到自身,供应用顶栏的阅读排版快捷入口复用。 */
   interfacePanelFocusRequestToken: number;
   /** 快捷入口聚焦时要求界面面板选中的排版作用域。 */
   interfacePanelFocusScope: 'books' | 'global' | null;

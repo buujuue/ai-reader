@@ -4,7 +4,6 @@ import {
   Code2,
   MoreHorizontal,
   Pencil,
-  Settings2,
   Star,
   StickyNote,
   Trash2,
@@ -336,10 +335,6 @@ function MaterialReadingToolbar({
       .catch(() => undefined);
   };
 
-  const openTypography = () => {
-    executeForGroup(COMMAND_IDS.readerOpenTypography);
-  };
-
   const toggleSourceMode = () => {
     executeForGroup(COMMAND_IDS.markdownToggleSourceMode, viewId);
   };
@@ -405,15 +400,7 @@ function MaterialReadingToolbar({
       className="app-reading-toolbar"
     >
       <div className="app-reading-toolbar-actions" aria-label="阅读工具">
-        <button
-          type="button"
-          aria-label="阅读排版"
-          title="调整阅读排版（字体、字号、行距、页边距、主题、分页/滚动）"
-          onClick={openTypography}
-          className="app-icon-button"
-        >
-          <Settings2 size={16} aria-hidden />
-        </button>
+        <span className="app-reading-toolbar-placeholder" aria-hidden="true" />
         {isMarkdown ? (
           <button
             type="button"

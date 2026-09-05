@@ -17,7 +17,7 @@
 - `libraryDragDrop.ts`：书库材料拖放的窄载荷边界；以私有 MIME JSON 编码/解析单个 `MaterialId`，拒绝文件、多材料、空载荷和非法 JSON，不触碰 Store、Repository 或 Tauri。
 - `MaterialCover.tsx`：封面渲染，经 `importRepository.readCover` 读取托管封面字节并以对象 URL 渲染；默认 IntersectionObserver 懒加载（进入视口才解码）、卸载时 revoke 释放；无封面复用工作区底色和文字颜色显示书名占位，加载失败显示「封面加载失败」。
 - `EditorArea.tsx`：编辑器区，按持久化拆分方向渲染最多两个 Editor Group；每组直接承载活动 `ReadingView`，不再渲染标签栏。点击编辑器组和紧凑布局组切换按钮通过 Command 维护当前组与 Runtime；紧凑布局把不可见组以 `visible=false` 传给 `ReadingView`，由阅读视图挂起该组 Runtime；无活动视图时显示空状态占位。
-- `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；`visible=false` 时清理内容文档输入接线并经 Reader Command 挂起 Runtime，重新可见时复用或安全重建同一 View 的对象；PDF 顶层文档的滚轮/左右点击/轻触只在该 ReadingView 正文容器内接入统一阅读输入，工具栏、搜索栏、对话框和其它 Editor Group 不会被劫持；托管副本缺失时由 Reader Runtime 显示明确的“正文当前不可用”错误并保留标签/用户数据；阅读工具栏提供阅读排版与 Markdown 源码模式，存在拆分组时在材料更多操作左侧提供关闭当前拆分区的 X；材料更多菜单提供向右/向下拆分、查看/导出批注与设置主要材料；导航历史仍由目录、搜索和 Reader Command 维护，不在常驻工具栏显示前进/后退按钮。Markdown 视图处于源码模式时由 Command 挂起 Foliate、清理阅读输入并渲染 `MarkdownSourceEditor`；Runtime 失效导致 `document` 暂时为空时仍保持源码区域，不显示旧阅读容器。Reader 外部不直接操作 Foliate View。
+- `ReadingView.tsx`：单个阅读视图正文。把所属组活动视图的 `BookDocument` 通过 `mountViewDocument` 挂载到自身容器；`visible=false` 时清理内容文档输入接线并经 Reader Command 挂起 Runtime，重新可见时复用或安全重建同一 View 的对象；PDF 顶层文档的滚轮/左右点击/轻触只在该 ReadingView 正文容器内接入统一阅读输入，工具栏、搜索栏、对话框和其它 Editor Group 不会被劫持；托管副本缺失时由 Reader Runtime 显示明确的“正文当前不可用”错误并保留标签/用户数据；阅读工具栏左上角仅保留排版占位，Markdown 源码模式仍由工具栏提供，存在拆分组时在材料更多操作左侧提供关闭当前拆分区的 X；材料更多菜单提供向右/向下拆分、查看/导出批注与设置主要材料；导航历史仍由目录、搜索和 Reader Command 维护，不在常驻工具栏显示前进/后退按钮。Markdown 视图处于源码模式时由 Command 挂起 Foliate、清理阅读输入并渲染 `MarkdownSourceEditor`；Runtime 失效导致 `document` 暂时为空时仍保持源码区域，不显示旧阅读容器。Reader 外部不直接操作 Foliate View。
 - `MarkdownSourceEditor.tsx`：Markdown 源码模式编辑器（ADR-0009）。仅在首次进入源码模式时动态加载 CodeMirror 6（高亮、撤销重做、查找替换），读写共享 `MarkdownDocumentSession` 缓冲区，并把用户确认恢复的外部会话文本同步到已挂载编辑器；程序化同步不会回流为用户编辑 Command，避免放弃后重新制造快照。绑定 Ctrl/Cmd+S 执行 `markdown.save`，由 `ReadingView` 在 `sourceMode` 时渲染。
 - `MarkdownDirtyCloseDialog.tsx`：脏 Markdown 文档关闭/退出源码模式确认对话框。提供「保存」「放弃」「取消」，分别执行 `markdown.closeDirty` 的 save/discard/cancel；由 `shellUiStore.markdownDirtyCloseViewId` 控制开关。
 - `MarkdownRecoveryDialog.tsx`：启动恢复对话框。逐份展示 available/conflict/corrupt 快照；有效或冲突快照可经 `markdown.recovery.resolve` 载入为未保存缓冲区，损坏快照只允许丢弃，绝不自动覆盖正式内容。
@@ -75,4 +75,4 @@ app/App.tsx  ──►  components/
 
 ## 依赖方向
 
-`components/` 只消费状态与命令，不直接触碰持久化/Repository；用户意图一律经 Command 表达，由 `workbench/` 的命令实现处理。阅读排版控件只负责可访问表现和回调参数，材料级排版、全局排版与 PDF View 级视口由调用方选择不同稳定 Command；工具栏和视图菜单的阅读排版入口只聚焦界面活动面板，不创建独立对话框。阅读视图的渲染器挂载是渲染职责，经 `mountViewDocument` 窄函数完成，不泄漏 Foliate View 到组件。
+`components/` 只消费状态与命令，不直接触碰持久化/Repository；用户意图一律经 Command 表达，由 `workbench/` 的命令实现处理。阅读排版控件只负责可访问表现和回调参数，材料级排版、全局排版与 PDF View 级视口由调用方选择不同稳定 Command；视图菜单的阅读排版入口聚焦界面活动面板，阅读工具栏左上角仅保留占位，不创建独立对话框。阅读视图的渲染器挂载是渲染职责，经 `mountViewDocument` 窄函数完成，不泄漏 Foliate View 到组件。
