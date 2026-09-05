@@ -1,4 +1,5 @@
 import type { ReadingLocation } from './readingLocation';
+import type { ReflowableReaderThemeId } from './epubTheme';
 import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
 import type { TocSource } from './toc';
@@ -127,6 +128,15 @@ export interface BookDocument {
    * 适配另由 PDF 位置状态管理。
    */
   applyTypography(settings: ReadingTypography): void;
+
+  /**
+   * 让适用的可重排 EPUB 立即采用当前全局工作台主题；其它格式不提供此能力。
+   * 主题属于本机外观，不进入阅读材料或 Workspace State。
+   */
+  applyWorkbenchTheme?(theme: ReflowableReaderThemeId): void;
+
+  /** 仅可重排 EPUB 在当前切片提供；固定版式返回 false。 */
+  isReflowable?(): boolean;
 
   /** 下一页。 */
   next(): Promise<void>;

@@ -1,3 +1,10 @@
+import {
+  buildPureBlackColorAttributeSelectors,
+  EPUB_THEME_BLACK_VARIABLE,
+  REFLOWABLE_READER_THEME_PALETTES,
+  type ReflowableReaderThemeId,
+} from './epubTheme';
+
 /**
  * 阅读排版(Reading Typography):全局阅读默认、阅读材料级排版覆盖与
  * ReadingView 级视口状态是三个不同数据层级。本模块定义排版设置的结构、
@@ -164,6 +171,73 @@ html, body {
   line-height: ${settings.lineHeight};
   background-color: ${palette.background} !important;
   color: ${palette.foreground} !important;
+}
+html, body, body * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--reading-scrollbar-thumb) transparent;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+body *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+body *::-webkit-scrollbar-track,
+html::-webkit-scrollbar-corner,
+body::-webkit-scrollbar-corner,
+body *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+body *::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: var(--reading-scrollbar-thumb);
+  background-clip: padding-box;
+}`;
+}
+
+/**
+ * 为可重排 EPUB 构建正文排版 CSS。
+ *
+ * 旧的 ReadingTheme 仍由 PDF/Markdown 的既有边界使用；可重排 EPUB 的
+ * 正文配色改由 WorkbenchAppearance 的五主题驱动。CSS 只提供默认继承色，
+ * 不覆盖显式彩色后代或书内局部背景。
+ */
+export function buildReflowableEpubTypographyCss(
+  settings: ReadingTypography,
+  theme: ReflowableReaderThemeId,
+): string {
+  const palette = REFLOWABLE_READER_THEME_PALETTES[theme];
+  const fontFamily = FONT_FAMILY_CSS[settings.fontFamily];
+  const scrollbarThumb = `color-mix(in srgb, ${palette.foreground} 35%, transparent)`;
+  const blackAttributeSelectors = buildPureBlackColorAttributeSelectors();
+  return `
+html {
+  --font-family: ${fontFamily};
+  --font-size: ${settings.fontSize}px;
+  --line-height: ${settings.lineHeight};
+  --theme-bg-color: ${palette.background};
+  --theme-fg-color: ${palette.foreground};
+  --${EPUB_THEME_BLACK_VARIABLE.slice(2)}: ${palette.foreground};
+  --reading-scrollbar-thumb: ${scrollbarThumb};
+  background-color: var(--theme-bg-color) !important;
+}
+:where(html, body) {
+  color: var(--theme-fg-color);
+}
+html, body {
+  font-family: ${fontFamily};
+  font-size: ${settings.fontSize}px !important;
+  line-height: ${settings.lineHeight};
+}
+${blackAttributeSelectors} {
+  color: var(${EPUB_THEME_BLACK_VARIABLE}) !important;
 }
 html, body, body * {
   scrollbar-width: thin;

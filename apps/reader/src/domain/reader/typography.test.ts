@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_READING_TYPOGRAPHY,
+  buildReflowableEpubTypographyCss,
   buildTypographyCss,
   hasTypographyOverride,
   isReadingTypography,
@@ -87,5 +88,14 @@ describe('阅读排版', () => {
     const css = buildTypographyCss({ ...DEFAULT_READING_TYPOGRAPHY, theme: 'dark' });
     expect(css).toContain('background-color: #18181b');
     expect(css).toContain('color: #e4e4e7');
+  });
+
+  it('可重排 EPUB 使用五主题纸张色与纯黑兼容变量，不强制覆盖彩色后代', () => {
+    const css = buildReflowableEpubTypographyCss(DEFAULT_READING_TYPOGRAPHY, 'midnight');
+    expect(css).toContain('--theme-bg-color: #1e2023');
+    expect(css).toContain('--ai-reader-epub-theme-black: #ffffff');
+    expect(css).toContain('[color="#000" i]');
+    expect(css).toContain(':where(html, body)');
+    expect(css).not.toContain('body * { color:');
   });
 });

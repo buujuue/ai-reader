@@ -9,6 +9,11 @@ import { sanitizeEpubContent } from './sanitizer';
 import type { Toc, TocSource } from './toc';
 import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
+import {
+  DEFAULT_REFLOWABLE_READER_THEME,
+  transformReflowableEpubThemeResource,
+  type ReflowableReaderThemeId,
+} from './epubTheme';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 import type { NativeEpubPrefetch } from './nativeEpub';
 import type { ReadingProgress } from './readingProgress';
@@ -65,6 +70,7 @@ export class EpubBookDocument implements BookDocument {
   private readonly sourceFingerprint: string;
   private readonly derivedTocCache: EpubDerivedTocCache | undefined;
   private typography: ReadingTypography = DEFAULT_READING_TYPOGRAPHY;
+  private workbenchTheme: ReflowableReaderThemeId = DEFAULT_REFLOWABLE_READER_THEME;
   private host: FoliateViewHost | null = null;
   private container: HTMLElement | null = null;
   private currentLocation: ReadingLocation | null = null;
@@ -146,7 +152,8 @@ export class EpubBookDocument implements BookDocument {
       }
     }) ?? null;
     // 打开后应用排版设置(字体、字号、行距、主题、分页/滚动)。
-    view.applyTypography(this.typography);
+    this.applyTypographyToHost();
+    this.applyWorkbenchThemeToHost();
     await view.init(null);
     this.opened = true;
     this.currentProgress = view.getReadingProgress?.() ?? null;
@@ -303,7 +310,17 @@ export class EpubBookDocument implements BookDocument {
 
   applyTypography(settings: ReadingTypography): void {
     this.typography = settings;
-    this.host?.applyTypography(settings);
+    this.applyTypographyToHost();
+  }
+
+  applyWorkbenchTheme(theme: ReflowableReaderThemeId): void {
+    if (this.format !== 'epub') return;
+    this.workbenchTheme = theme;
+    this.applyWorkbenchThemeToHost();
+  }
+
+  isReflowable(): boolean {
+    return this.format === 'epub' && (this.host?.isReflowable?.() ?? true);
   }
 
   onInternalLink(listener: (href: string) => void): () => void {
@@ -378,7 +395,12 @@ export class EpubBookDocument implements BookDocument {
       return;
     }
     // 内容清洗:在文本资源进入渲染器前移除脚本、嵌入、媒体与危险 URL。
-    this.host.onContentData((type, data) => this.canonicalTransform.transform(type, data));
+    this.host.onContentData((type, data) => {
+      const canonical = this.canonicalTransform.transform(type, data);
+      return this.format === 'epub'
+        ? transformReflowableEpubThemeResource(type, canonical)
+        : canonical;
+    });
     // 位置变化事件:把渲染器 CFI 转成可序列化的 ReadingLocation。
     this.host.onRelocate((cfi) => {
       const location: ReadingLocation = { kind: this.locationKind, cfi };
@@ -429,6 +451,15 @@ export class EpubBookDocument implements BookDocument {
     if (this.requestedLocationTimer) clearTimeout(this.requestedLocationTimer);
     this.requestedLocation = null;
     this.requestedLocationTimer = null;
+  }
+
+  private applyTypographyToHost(): void {
+    this.host?.applyTypography(this.typography);
+  }
+
+  private applyWorkbenchThemeToHost(): void {
+    if (this.format !== 'epub') return;
+    this.host?.applyReflowableTheme?.(this.workbenchTheme);
   }
 }
 

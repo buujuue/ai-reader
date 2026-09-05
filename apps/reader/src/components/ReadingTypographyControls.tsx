@@ -33,6 +33,8 @@ interface ReadingTypographyControlsProps {
   effective: ReadingTypography;
   onApply: (patch: Partial<ReadingTypography>) => void;
   onFlowChange: (flow: ReadingFlow) => void;
+  /** 可重排 EPUB 的正文主题由工作台五主题驱动，不显示旧三主题控件。 */
+  showTheme?: boolean;
   /** 材料级 PDF 注入此配置;PDF 固定文字几何不显示字体/字号/行距/页边距控件。 */
   pdf?: {
     zoom: number;
@@ -51,6 +53,7 @@ export function ReadingTypographyControls({
   effective,
   onApply,
   onFlowChange,
+  showTheme = true,
   pdf,
 }: ReadingTypographyControlsProps) {
   return (
@@ -99,12 +102,14 @@ export function ReadingTypographyControls({
 
       <fieldset className="app-reader-setting-group">
         <legend>显示</legend>
-        <OptionGroup
-          label="主题"
-          options={Object.entries(THEME_LABELS) as [ReadingTheme, string][]}
-          selected={effective.theme}
-          onSelect={(theme) => onApply({ theme })}
-        />
+        {showTheme ? (
+          <OptionGroup
+            label="主题"
+            options={Object.entries(THEME_LABELS) as [ReadingTheme, string][]}
+            selected={effective.theme}
+            onSelect={(theme) => onApply({ theme })}
+          />
+        ) : null}
         <OptionGroup
           label="阅读模式"
           options={[

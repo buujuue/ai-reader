@@ -1,6 +1,14 @@
 import type { SearchEvent, SearchOptions } from './search';
 import type { ReadingTypography } from './typography';
-import { buildTypographyCss } from './typography';
+import {
+  buildReflowableEpubTypographyCss,
+  buildTypographyCss,
+  DEFAULT_READING_TYPOGRAPHY,
+} from './typography';
+import {
+  REFLOWABLE_READER_THEME_PALETTES,
+  type ReflowableReaderThemeId,
+} from './epubTheme';
 import type { FoliateViewHost, FoliateViewHostFactory } from './viewHost';
 import type { FoliateViewOpenOptions } from './viewHost';
 import type { ReadingProgress } from './readingProgress';
@@ -188,6 +196,8 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
   private readonly progressHandlers = new Set<EventListener>();
   private readonly contentCreateHandlers = new Set<EventListener>();
   private closeScheduled = false;
+  private activeReflowableTheme: ReflowableReaderThemeId | null = null;
+  private currentTypography: ReadingTypography | null = null;
 
   constructor(
     element: ExtendedFoliateView,
@@ -371,7 +381,12 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     };
   }
 
+  isReflowable(): boolean {
+    return typeof this.element.renderer?.setStyles === 'function';
+  }
+
   applyTypography(settings: ReadingTypography): void {
+    this.currentTypography = settings;
     const renderer = this.element.renderer;
     if (!renderer) {
       return;
@@ -386,7 +401,23 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
     // 字体、字号、行距与主题经 setStyles 注入文档 CSS。
     // `foliate-paginator` exposes setStyles; `foliate-fxl` is an HTMLElement
     // and intentionally keeps the book's viewport/style instead of reflowing it.
-    renderer.setStyles?.(buildTypographyCss(settings));
+    if (this.activeReflowableTheme && this.isReflowable()) {
+      renderer.setStyles?.(
+        buildReflowableEpubTypographyCss(settings, this.activeReflowableTheme),
+      );
+      this.applyReflowableThemeBackground(this.activeReflowableTheme);
+    } else {
+      this.activeReflowableTheme = null;
+      // `foliate-fxl` 没有 setStyles;固定版式只继续消费既有视口属性,
+      // 不把全局工作台正文主题扩展到整页图片或 PDF。
+      renderer.setStyles?.(buildTypographyCss(settings));
+    }
+  }
+
+  applyReflowableTheme(theme: ReflowableReaderThemeId): void {
+    if (!this.isReflowable()) return;
+    this.activeReflowableTheme = theme;
+    this.applyTypography(this.currentTypography ?? DEFAULT_READING_TYPOGRAPHY);
   }
 
   async *search(options: SearchOptions): AsyncGenerator<SearchEvent, void, void> {
@@ -488,6 +519,9 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       const detail = (event as CustomEvent<{ doc?: Document }>).detail;
       if (detail?.doc) {
         degradeUnsupportedMathMl(detail.doc);
+        if (this.activeReflowableTheme) {
+          this.applyReflowableThemeBackgroundToDocument(detail.doc, this.activeReflowableTheme);
+        }
         listener(detail.doc);
         this.drawSearchAnnotationsForDocument(detail.doc);
       }
@@ -499,6 +533,37 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
       this.contentCreateHandlers.delete(handler);
       this.element.removeEventListener('load', handler);
     };
+  }
+
+  /**
+   * Paginator 会缓存章节首次计算出的背景。为保留书内 body 背景/背景图片，
+   * 透明正文才使用全局纸张色；带有书内背景的章节把变量置空，让 paginator
+   * 保留原始背景。新章节由同一个 load 事件路径再次执行，避免迟到章节闪回旧色。
+   */
+  private applyReflowableThemeBackground(theme: ReflowableReaderThemeId): void {
+    const background = REFLOWABLE_READER_THEME_PALETTES[theme].background;
+    for (const doc of this.getContentDocs()) {
+      this.applyReflowableThemeBackgroundToDocument(doc, theme);
+    }
+  }
+
+  private applyReflowableThemeBackgroundToDocument(
+    doc: Document,
+    theme: ReflowableReaderThemeId,
+  ): void {
+    const root = doc.documentElement;
+    const body = doc.body;
+    if (!root || !body || !doc.defaultView) return;
+    const bodyStyle = doc.defaultView.getComputedStyle(body);
+    const hasBookBackground =
+      bodyStyle.backgroundImage !== 'none' ||
+      (bodyStyle.backgroundColor !== '' &&
+        bodyStyle.backgroundColor !== 'transparent' &&
+        bodyStyle.backgroundColor !== 'rgba(0, 0, 0, 0)');
+    root.style.setProperty(
+      '--theme-bg-color',
+      hasBookBackground ? '' : REFLOWABLE_READER_THEME_PALETTES[theme].background,
+    );
   }
 
   getCFI(index: number, range: Range): string {
@@ -590,6 +655,8 @@ export class UpstreamFoliateViewHost implements FoliateViewHost {
         this.book = null;
         this.derivedToc = null;
         this.tocSource = 'native';
+        this.activeReflowableTheme = null;
+        this.currentTypography = null;
         this.opened = false;
       }
     };

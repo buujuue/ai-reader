@@ -16,6 +16,7 @@ import { useWorkbenchAppearanceStore } from '../workbench/appearanceStore';
 import { useLibraryStore } from '../workbench/libraryStore';
 import { useShellUiStore } from '../workbench/shellUiStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
+import { useReaderRuntime } from '../workbench/readerRuntime';
 import { SidebarPanelHeader } from './SidebarPanelHeader';
 import {
   FONT_FAMILY_LABELS,
@@ -58,6 +59,16 @@ export function InterfaceSidebar() {
     ? formatFromSourceFileName(activeMaterial.sourceFileName)
     : 'unknown';
   const isPdf = activeFormat === 'pdf';
+  const activeDocument = useReaderRuntime((state) =>
+    activeView ? state.documents.get(activeView.id) ?? null : null,
+  );
+  const isReflowableEpub =
+    activeFormat === 'epub' && activeDocument?.isReflowable?.() !== false;
+  const isFixedLayoutEpub = activeFormat === 'epub' && !isReflowableEpub;
+  const hasApplicableMaterialOverride =
+    hasMaterialOverride &&
+    (!isReflowableEpub ||
+      Object.keys(activeMaterialOverride ?? {}).some((key) => key !== 'theme'));
   const pdfLocation = activeView?.location?.kind === 'pdf' ? activeView.location : null;
   const pdfZoom = normalizePdfZoom(pdfLocation?.zoom ?? 100);
   const pdfFit = pdfLocation?.fit ?? 'width';
@@ -214,7 +225,7 @@ export function InterfaceSidebar() {
             <span className="app-interface-appearance-current">{currentTheme.label}</span>
           </div>
           <p className="app-interface-appearance-description">
-            只改变工作台外壳，不会改变阅读材料的正文主题。
+            改变工作台外壳；可重排 EPUB 正文跟随当前主题，PDF 与固定版式保持原貌。
           </p>
           <WorkbenchThemeOptionList theme={theme} onSelect={setTheme} />
           <WorkbenchGlowToggle glowEnabled={glowEnabled} onChange={setGlowEnabled} />
@@ -272,12 +283,26 @@ export function InterfaceSidebar() {
             <>
               <div className="app-interface-books-material">
                 <strong title={activeMaterial.title}>{activeMaterial.title}</strong>
-                <span className={hasMaterialOverride ? 'is-overridden' : undefined}>
-                  {hasMaterialOverride ? '材料级覆盖' : '跟随全局默认'}
+                <span className={hasApplicableMaterialOverride ? 'is-overridden' : undefined}>
+                  {hasApplicableMaterialOverride ? '材料级覆盖' : '跟随全局默认'}
                 </span>
               </div>
               <div className="app-interface-books-summary" aria-label="当前生效排版">
-                {(isPdf
+                {(isReflowableEpub
+                  ? [
+                      ['字体', FONT_FAMILY_LABELS[effectiveTypography.fontFamily]],
+                      ['字号', `${effectiveTypography.fontSize}px`],
+                      ['行距', effectiveTypography.lineHeight.toFixed(1)],
+                      ['页边距', `${effectiveTypography.margin}px`],
+                      ['主题', currentTheme.label],
+                      ['模式', effectiveTypography.flow === 'paginated' ? '分页' : '滚动'],
+                    ]
+                  : isFixedLayoutEpub
+                    ? [
+                        ['主题', '原书版式'],
+                        ['模式', effectiveTypography.flow === 'paginated' ? '分页' : '滚动'],
+                      ]
+                    : isPdf
                   ? [
                       ['主题', THEME_LABELS[effectiveTypography.theme]],
                       ['模式', effectiveTypography.flow === 'paginated' ? '分页' : '滚动'],
@@ -302,6 +327,7 @@ export function InterfaceSidebar() {
                 effective={effectiveTypography}
                 onApply={applyTypography}
                 onFlowChange={applyFlow}
+                showTheme={!isReflowableEpub && !isFixedLayoutEpub}
                 {...(isPdf
                   ? {
                       pdf: {
@@ -344,7 +370,9 @@ export function InterfaceSidebar() {
           />
           <p className="app-interface-global-description">整个书库的默认阅读排版。</p>
           <p className="app-interface-global-note" role="note">
-            {hasMaterialOverride
+            {isReflowableEpub
+              ? '当前可重排 EPUB 的正文主题跟随上方工作台主题；全局旧主题仅供其它适用格式使用。'
+              : hasMaterialOverride
               ? '当前材料存在材料级覆盖,不会跟随全局默认。'
               : activeMaterial
                 ? '当前材料会跟随全局默认。'
@@ -355,6 +383,7 @@ export function InterfaceSidebar() {
             effective={globalTypography}
             onApply={applyGlobalTypography}
             onFlowChange={(flow) => applyGlobalTypography({ flow })}
+            showTheme={!isReflowableEpub}
           />
           <TypographyResetFooter
             description="只改变全局默认,不会清除材料级覆盖。"

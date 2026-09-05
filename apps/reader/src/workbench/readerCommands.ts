@@ -28,6 +28,7 @@ import type { PdfFileSource, PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { MarkdownBookDocument } from '../domain/reader/markdown/markdownBookDocument';
+import type { ReflowableReaderThemeId } from '../domain/reader/epubTheme';
 import {
   DEFAULT_READING_TYPOGRAPHY,
   hasTypographyOverride,
@@ -47,6 +48,7 @@ import { ThrottledPositionPersister } from './positionPersister';
 import { loadAnnotationsForView } from './annotationCommands';
 import { useMarkdownSessionStore } from './markdownSessionStore';
 import { useAnnotationStore } from './annotationStore';
+import { useWorkbenchAppearanceStore } from './appearanceStore';
 import { useLibraryStore } from './libraryStore';
 import { useReaderRuntime, type ReaderDocumentStatus } from './readerRuntime';
 import { useShellUiStore } from './shellUiStore';
@@ -867,6 +869,7 @@ async function ensureActiveViewDocument(
     const lookup = cache.activate(viewId, cacheKey);
     if (lookup.kind === 'hit' && lookup.entry.document === existing) {
       runtime.setDocumentLifecycle(viewId, 'active');
+      applyCurrentWorkbenchTheme(existing);
       runtime.setDocumentState(viewId, { status: 'ready' });
       return existing;
     }
@@ -897,6 +900,11 @@ async function ensureActiveViewDocument(
       message: '暂不支持打开该材料格式。',
     });
     return null;
+  }
+  // 主题是本机工作台偏好，不进入 Workspace State；在首次 open 前把当前值
+  // 写入 EPUB 文档，避免主题切换与异步打开竞态导致新 Runtime 闪回旧色。
+  if (document.format === 'epub') {
+    applyCurrentWorkbenchTheme(document);
   }
   // A tab may have been switched away while the file was being inspected.
   // Do not leave a renderer behind for an inactive or closed view.
@@ -998,6 +1006,7 @@ async function activateViewRuntime(
           useWorkspaceStore.getState().setViewLocation(viewId, locationToRestore);
         }
         useReaderRuntime.getState().setDocumentLifecycle(viewId, 'active');
+        applyCurrentWorkbenchTheme(targetDocument);
         try {
           await suspendViewRuntime(dependencies, previousViewId);
           // 旧 Runtime 必须在旧 ReadingView 仍挂在 DOM 时完成位置 flush 和
@@ -1779,6 +1788,23 @@ function forEachOpenReaderView(
     const materialId = findView(viewId)?.materialId;
     if (!materialId || (filter && !filter(materialId))) continue;
     callback(document, materialId);
+  }
+}
+
+/**
+ * 工作台主题 Command 的窄回调：只更新已经存在的可重排 EPUB Runtime，
+ * 不唤醒挂起对象、不创建新 Runtime，也不触碰阅读位置或缓存容量。
+ */
+export function applyWorkbenchThemeToOpenEpubViews(theme: ReflowableReaderThemeId): void {
+  forEachOpenReaderView((document) => {
+    if (document.format !== 'epub' || document.isReflowable?.() === false) return;
+    document.applyWorkbenchTheme?.(theme);
+  });
+}
+
+function applyCurrentWorkbenchTheme(document: BookDocument): void {
+  if (document.format === 'epub') {
+    document.applyWorkbenchTheme?.(useWorkbenchAppearanceStore.getState().theme);
   }
 }
 

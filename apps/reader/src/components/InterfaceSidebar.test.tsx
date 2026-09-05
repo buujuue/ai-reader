@@ -116,11 +116,8 @@ describe('界面侧栏的阅读排版范围', () => {
 
     const globalScope = screen.getByRole('tabpanel', { name: '全局' });
     expect(within(globalScope).getByRole('slider', { name: '字号' })).toHaveValue('18');
-    expect(within(globalScope).getByRole('button', { name: '浅色' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(globalScope).toHaveTextContent('当前材料存在材料级覆盖,不会跟随全局默认');
+    expect(within(globalScope).queryByRole('button', { name: '浅色' })).not.toBeInTheDocument();
+    expect(globalScope).toHaveTextContent('当前可重排 EPUB 的正文主题跟随上方工作台主题');
 
     fireEvent.change(within(globalScope).getByRole('slider', { name: '字号' }), {
       target: { value: '20' },
@@ -138,10 +135,7 @@ describe('界面侧栏的阅读排版范围', () => {
     await user.click(within(tablist).getByRole('tab', { name: '书籍' }));
     const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
     expect(within(booksScope).getByRole('slider', { name: '字号' })).toHaveValue('22');
-    expect(within(booksScope).getByRole('button', { name: '深色' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(booksScope).toHaveTextContent('科技黑');
   });
 
   it('阅读排版标签支持方向键与 Home/End 键切换', () => {
@@ -220,7 +214,7 @@ describe('界面侧栏的阅读排版范围', () => {
     expect(booksScope).toHaveTextContent('字号');
     expect(booksScope).toHaveTextContent('22px');
     expect(booksScope).toHaveTextContent('主题');
-    expect(booksScope).toHaveTextContent('深色');
+    expect(booksScope).toHaveTextContent('科技黑');
 
     await user.click(within(booksScope).getByRole('button', { name: '衬线' }));
     await waitFor(() => {

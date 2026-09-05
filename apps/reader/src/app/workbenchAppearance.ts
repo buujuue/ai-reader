@@ -1,17 +1,49 @@
-export type WorkbenchThemeId = 'midnight' | 'apple' | 'claude' | 'mint' | 'rose';
+import {
+  REFLOWABLE_READER_THEME_PALETTES,
+  type ReflowableReaderThemeId,
+  type ReflowableReaderThemePalette,
+} from '../domain/reader/epubTheme';
+
+export type WorkbenchThemeId = ReflowableReaderThemeId;
 
 export interface WorkbenchTheme {
   id: WorkbenchThemeId;
   label: string;
   description: string;
+  readerPalette: ReflowableReaderThemePalette;
 }
 
 export const WORKBENCH_THEMES: readonly WorkbenchTheme[] = [
-  { id: 'midnight', label: '极夜黑', description: '默认 · 蓝紫环境光' },
-  { id: 'apple', label: '苹果白', description: '通透冷白 · 系统蓝' },
-  { id: 'claude', label: 'Claude 护眼', description: '暖纸米色 · 陶土橙' },
-  { id: 'mint', label: '清新绿', description: '低饱和绿 · 自然呼吸感' },
-  { id: 'rose', label: '柔雾粉', description: '克制豆沙粉 · 柔和安静' },
+  {
+    id: 'midnight',
+    label: '科技黑',
+    description: '默认 · 蓝紫环境光',
+    readerPalette: REFLOWABLE_READER_THEME_PALETTES.midnight,
+  },
+  {
+    id: 'apple',
+    label: '简洁白',
+    description: '通透冷白 · 系统蓝',
+    readerPalette: REFLOWABLE_READER_THEME_PALETTES.apple,
+  },
+  {
+    id: 'claude',
+    label: '护眼橙',
+    description: '暖纸米色 · 陶土橙',
+    readerPalette: REFLOWABLE_READER_THEME_PALETTES.claude,
+  },
+  {
+    id: 'mint',
+    label: '清新绿',
+    description: '低饱和绿 · 自然呼吸感',
+    readerPalette: REFLOWABLE_READER_THEME_PALETTES.mint,
+  },
+  {
+    id: 'rose',
+    label: '甜蜜粉',
+    description: '克制豆沙粉 · 柔和安静',
+    readerPalette: REFLOWABLE_READER_THEME_PALETTES.rose,
+  },
 ];
 
 export interface WorkbenchAppearance {

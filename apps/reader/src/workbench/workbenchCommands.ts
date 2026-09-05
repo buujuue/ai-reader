@@ -10,6 +10,7 @@ import {
 } from '../app/workbenchAppearance';
 import type { AnnotationRepository } from '../domain/annotation/annotationRepository';
 import type { WorkspaceRepository } from '../domain/workspace/workspaceRepository';
+import type { ReflowableReaderThemeId } from '../domain/reader/epubTheme';
 import {
   clampActivityPanelWidth,
   normalizeSidebarVisibility,
@@ -26,6 +27,7 @@ export interface WorkbenchCommandDependencies {
   workspaceRepository: WorkspaceRepository;
   annotationRepository?: AnnotationRepository;
   appearancePreferences?: WorkbenchAppearancePreferences;
+  onAppearanceThemeChanged?: (theme: ReflowableReaderThemeId) => void;
 }
 
 type DismissibleShellDialog =
@@ -254,6 +256,7 @@ export function registerWorkbenchCommands(
     saveWorkbenchAppearance(appearancePreferences, next);
     useWorkbenchAppearanceStore.getState().setTheme(theme);
     applyWorkbenchAppearanceToDocument(next);
+    dependencies.onAppearanceThemeChanged?.(theme);
     useShellUiStore.getState().setStatusMessage(`已切换到${getWorkbenchTheme(theme).label}主题`);
   });
 

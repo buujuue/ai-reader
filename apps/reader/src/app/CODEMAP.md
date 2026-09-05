@@ -9,7 +9,7 @@
 - `WorkbenchPrototype`：仅用于视觉对照，主题元数据和外观控件复用正式共享能力，不成为生产行为来源。
 
 - `main.tsx`（位于 `src/` 根，不在本目录）通过 `createRoot` 挂载，组合 `AppServicesProvider` 与 `App`。
-- `bootstrap.ts`：组装 `AppServices`（含 `EpubNativeAccelerator`）。`isTauriRuntime()` 检测 `__TAURI_INTERNALS__`，据此选择 Tauri Adapter 或内存 Adapter；Tauri 原生预取默认经过协议、能力、语义来源与平台门控，当前仅启用已验证的 Windows，其他平台返回不可用 Adapter；任意失败由阅读命令透明回退纯 JS。桌面端的 `WindowLifecycle` 只暴露关闭请求监听与销毁窗口两项能力，Android 端通过 Tauri `onBackButtonPress` 注入系统返回事件；`createAppServices()` 注册工作台、书库、批注导出、备份与阅读命令，内存降级时用演示 EPUB 种子化书库，可注入平台窄接口供测试。书库命令、Markdown 命令与阅读命令共享同一组依赖；bootstrap 将 Markdown 的 Runtime 挂起/恢复和材料刷新接到 `readerCommands.ts`，确保源码编辑与阅读渲染遵循同一缓存/失效协议；重新关联或重新导入资料后，Tauri 端重载应用，浏览器降级端重建该材料的活动阅读视图。
+- `bootstrap.ts`：组装 `AppServices`（含 `EpubNativeAccelerator`）。`isTauriRuntime()` 检测 `__TAURI_INTERNALS__`，据此选择 Tauri Adapter 或内存 Adapter；Tauri 原生预取默认经过协议、能力、语义来源与平台门控，当前仅启用已验证的 Windows，其他平台返回不可用 Adapter；任意失败由阅读命令透明回退纯 JS。桌面端的 `WindowLifecycle` 只暴露关闭请求监听与销毁窗口两项能力，Android 端通过 Tauri `onBackButtonPress` 注入系统返回事件；`createAppServices()` 注册工作台、书库、批注导出、备份与阅读命令，内存降级时用演示 EPUB 种子化书库，可注入平台窄接口供测试。书库命令、Markdown 命令与阅读命令共享同一组依赖；bootstrap 将 Markdown 的 Runtime 挂起/恢复和材料刷新接到 `readerCommands.ts`，并将工作台主题 Command 接到可重排 EPUB 的 Runtime 更新回调，确保源码编辑与阅读渲染遵循同一缓存/失效协议；重新关联或重新导入资料后，Tauri 端重载应用，浏览器降级端重建该材料的活动阅读视图。
 - `filePicker.ts`：`FilePicker` 窄接口，`pickEpubs()` 一次返回多份文件路径。Tauri 端经 `@tauri-apps/plugin-dialog` 打开系统文件选择器（`multiple: true`）；Android 使用文档模式、MIME 类型和 `fileAccessMode: 'copy'`，内存端返回固定演示源路径数组。
 - `androidBackButton.ts`：纯函数返回行为解析器，按脏 Markdown/恢复对话框、材料批注覆盖层、其它对话框、搜索、紧凑抽屉和源码模式的优先级生成动作；`App.tsx` 将动作转为既有 Command，关闭紧凑抽屉后把焦点归还活动栏，避免系统返回键直接销毁窗口。
 - `platform.ts`：集中判断当前是否为 Android 原生 WebView，供文件选择器和返回键平台 Adapter 复用。

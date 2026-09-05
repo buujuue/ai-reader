@@ -206,7 +206,7 @@ describe('阅读工作台外壳', () => {
     expect(screen.queryByRole('dialog', { name: /阅读排版/ })).not.toBeInTheDocument();
   });
 
-  it('阅读工具栏的排版入口聚焦同一个界面面板', async () => {
+  it('阅读工具栏左上角仅保留排版占位,不再跳转界面面板', async () => {
     services = createAppServices({
       workspaceRepository: repository,
       viewHostFactory: () => createFakeViewHost(),
@@ -217,17 +217,15 @@ describe('阅读工作台外壳', () => {
     await user.click(screen.getByRole('button', { name: '导入 EPUB' }));
     await user.click(await screen.findByRole('button', { name: /打开 示例书/ }));
     const toolbar = await screen.findByRole('toolbar', { name: /示例书/ });
-    const typographyButton = within(toolbar).getByRole('button', { name: '阅读排版' });
+    const placeholder = toolbar.querySelector('.app-reading-toolbar-placeholder');
 
-    await user.click(typographyButton);
+    expect(placeholder).toBeInTheDocument();
+    expect(within(toolbar).queryByRole('button', { name: '阅读排版' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
 
-    const panel = await screen.findByRole('complementary', { name: '界面侧栏' });
-    expect(within(panel).getByRole('tab', { name: '书籍' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
-    expect(document.activeElement).toBe(panel);
-    expect(screen.queryByRole('dialog', { name: /阅读排版/ })).not.toBeInTheDocument();
+    if (placeholder) await user.click(placeholder);
+
+    expect(screen.queryByRole('complementary', { name: '界面侧栏' })).not.toBeInTheDocument();
   });
 
   it('应用顶栏备份与恢复入口经同一 Command 调用 typed Repository', async () => {
@@ -351,19 +349,19 @@ describe('阅读工作台外壳', () => {
     await user.click(screen.getByRole('button', { name: '界面' }));
 
     const panel = screen.getByRole('complementary', { name: '界面侧栏' });
-    expect(within(panel).getByRole('button', { name: /极夜黑/ })).toHaveAttribute(
+    expect(within(panel).getByRole('button', { name: /科技黑/ })).toHaveAttribute(
       'aria-pressed',
       'false',
     );
-    expect(within(panel).getByRole('button', { name: /苹果白/ })).toHaveAttribute(
+    expect(within(panel).getByRole('button', { name: /简洁白/ })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
-    expect(within(panel).getByRole('button', { name: /Claude 护眼/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /护眼橙/ })).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: /清新绿/ })).toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: /柔雾粉/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /甜蜜粉/ })).toBeInTheDocument();
 
-    await user.click(within(panel).getByRole('button', { name: /Claude 护眼/ }));
+    await user.click(within(panel).getByRole('button', { name: /护眼橙/ }));
     expect(document.querySelector('.app-shell.workbench-prototype')).toHaveAttribute(
       'data-theme',
       'claude',
@@ -1749,7 +1747,8 @@ describe('打开 EPUB 并重启续读', () => {
     });
     const readingToolbar = screen.getByRole('toolbar', { name: /示例书/ });
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
-    expect(within(readingToolbar).getByRole('button', { name: '阅读排版' })).toBeInTheDocument();
+    expect(readingToolbar.querySelector('.app-reading-toolbar-placeholder')).toBeInTheDocument();
+    expect(within(readingToolbar).queryByRole('button', { name: '阅读排版' })).not.toBeInTheDocument();
     expect(within(readingToolbar).queryByRole('button', { name: '向右拆分编辑器组' })).not.toBeInTheDocument();
 
     await user.click(within(readingToolbar).getByRole('button', { name: '材料更多操作' }));
@@ -1792,14 +1791,15 @@ describe('打开 EPUB 并重启续读', () => {
     expect(booksScope).toHaveTextContent('示例书');
     expect(booksScope).toHaveTextContent('跟随全局默认');
 
-    await user.click(within(booksScope).getByRole('button', { name: '护眼' }));
+    await user.click(within(panel).getByRole('button', { name: '护眼橙暖纸米色 · 陶土橙' }));
+    await user.click(within(booksScope).getByRole('button', { name: '衬线' }));
     await waitFor(() => {
       expect(booksScope).toHaveTextContent('材料级覆盖');
-      expect(booksScope).toHaveTextContent('护眼');
+      expect(booksScope).toHaveTextContent('护眼橙');
     });
     await expect(repository.loadState()).resolves.toMatchObject({
       materialTypography: {
-        [useLibraryStore.getState().materials[0]!.id]: { theme: 'sepia' },
+        [useLibraryStore.getState().materials[0]!.id]: { fontFamily: 'serif' },
       },
     });
 
@@ -2363,7 +2363,9 @@ describe('导入并阅读固定版式 PDF', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(book.getCurrentIndex()).toBe(3);
 
-    fireEvent.click(screen.getByRole('button', { name: '阅读排版' }));
+    expect(screen.getByRole('toolbar', { name: /示例 PDF/ }).querySelector(
+      '.app-reading-toolbar-placeholder',
+    )).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(book.getCurrentIndex()).toBe(3);
   });

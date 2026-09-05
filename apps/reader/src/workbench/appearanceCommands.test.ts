@@ -63,4 +63,19 @@ describe('工作台外观命令', () => {
     });
     expect(useShellUiStore.getState().statusMessage).toContain('保存工作台外观失败');
   });
+
+  it('主题命令保存本机偏好后通知开放的可重排 EPUB Runtime', async () => {
+    const onAppearanceThemeChanged = vi.fn();
+    const callbackRegistry = new CommandRegistry();
+    registerWorkbenchCommands(callbackRegistry, {
+      workspaceRepository: repository,
+      appearancePreferences: preferences,
+      onAppearanceThemeChanged,
+    });
+
+    await callbackRegistry.execute(COMMAND_IDS.workbenchSetAppearanceTheme, 'rose');
+
+    expect(onAppearanceThemeChanged).toHaveBeenCalledWith('rose');
+    expect(preferences.load()).toMatchObject({ theme: 'rose' });
+  });
 });

@@ -80,13 +80,13 @@ Rust 不理解 React 焦点、标签布局和选区；TS 不理解数据库表�
 
 拥有 Editor Group、ReadingView 描述、活动视图、主要阅读材料和面板期望状态。`primaryMaterialId` 只由显式 `workbench.setPrimaryMaterial` 或“工作区从无材料进入单材料”规则改变；切换标签、Editor Group 或焦点不会修改它。最多两个 Editor Group，持久化左右/上下拆分方向；同一组内每个阅读材料最多对应一个 ReadingView，跨组可以同时打开同一材料。标签激活通过 `reader.activateView` Command 完成，每组的非活动标签保留位置、视口和导航历史等可序列化状态；已完成的 EPUB/Markdown/PDF Runtime 按 ADR-0041/0043 进入最多三个 resident 的按 ReadingView 身份隔离缓存，其中最多两个 active，其余为 suspended，容量不足只按 LRU 淘汰 suspended，PDF 挂起只保留 PDF.js 文档和当前页的预算内结果。书库文件夹树的用户展开集合 `expandedLibraryFolderIds` 与位于树下方、回收站上方的未归类区块状态 `unfiledMaterialsExpanded` 同属 Workspace State；书库搜索投影、命中路径和搜索期间的临时展开覆盖只存在于 `PrimarySidebar` 运行时，清空搜索后回到搜索前状态。材料更多菜单位于阅读工具栏右侧，提供查看/导出材料批注、设置主要阅读材料、编辑材料元数据和移入回收站；材料批注面板由该菜单打开，支持筛选、编辑、导出和经 `annotation.goTo` 跳转；正文高亮不直接打开面板，失联批注继续展示但不猜测位置。`LayoutPolicy` 根据容器宽度计算实际布局，不改写用户期望。
 
-活动栏的书库、目录和界面入口共享一组严格互斥的 Workspace State 侧栏期望状态；界面面板默认关闭，切换与恢复均通过 `workbench.toggleInterfacePanel` 和 typed Workspace Repository 完成。阅读排版与五套工作台主题、背景光都在界面面板内提供；阅读工具栏按钮和 `视图 → 阅读排版` 只执行 `reader.typography.open` 聚焦现有面板，不创建独立设置状态。工作台主题和背景光由 `WorkbenchAppearance` 窄接口管理，通过稳定 Command 写入本机偏好，不进入 Workspace State 或完整书库备份。`LayoutPolicy` 只把这三类状态投影为宽/中布局的行内侧栏或紧凑布局的覆盖抽屉，紧凑抽屉的 Escape/Android 返回键关闭后焦点归还活动栏。
+活动栏的书库、目录和界面入口共享一组严格互斥的 Workspace State 侧栏期望状态；界面面板默认关闭，切换与恢复均通过 `workbench.toggleInterfacePanel` 和 typed Workspace Repository 完成。阅读排版与五套工作台主题、背景光都在界面面板内提供；`视图 → 阅读排版` 执行 `reader.typography.open` 聚焦现有面板，阅读工具栏左上角仅保留排版占位，不创建独立设置状态。工作台主题和背景光由 `WorkbenchAppearance` 窄接口管理，通过稳定 Command 写入本机偏好，不进入 Workspace State 或完整书库备份。`LayoutPolicy` 只把这三类状态投影为宽/中布局的行内侧栏或紧凑布局的覆盖抽屉，紧凑抽屉的 Escape/Android 返回键关闭后焦点归还活动栏。
 
 ### Command Registry
 
 所有按钮、菜单、键盘、触摸和拖放适配器执行稳定 Command ID。快捷键只负责按键到 Command 的映射，Event 只表达已经发生的事实。书库材料拖放只接受单个 `MaterialId` 并与“移动到……”菜单共用 `library.moveMaterial`；拖放不直接修改 Store 或 Repository，目标由 Command 再次按权威文件夹列表校验。PDF 分页模式的正文左右点击/轻触也通过同一组翻页 Command；由于 PDF 内容位于应用顶层文档，监听必须限定在当前 ReadingView 正文容器内，选择、批注区域拖选和交互控件优先。
 
-工作台外壳使用 C 原型确认的五套语义配色，默认极夜黑且不跟随系统；`WorkbenchAppearance` 在首次 React 绘制前从本机偏好恢复主题与背景光，非法或不可读值回退到极夜黑与开启背景光。阅读材料主题仍由 `ReadingTypography` 按全局默认/材料覆盖管理，工作台外观不修改正文排版。
+工作台外壳使用 C 原型确认的五套语义配色，默认科技黑且不跟随系统；`WorkbenchAppearance` 在首次 React 绘制前从本机偏好恢复主题与背景光，非法或不可读值回退到科技黑与开启背景光。可重排 EPUB 通过 `BookDocument.applyWorkbenchTheme` 使用同一组不透明正文纸张令牌与纯黑/纯白普通正文色；旧 `ReadingTypography.theme` 不覆盖该格式。固定版式 EPUB 与 PDF 不接入该正文配色，尚未迁移的格式继续使用其原有阅读排版边界。具体关系见 ADR-0049。
 
 正文高亮仍以材料级 Annotation 记录保存，但不注册正文点击打开笔记编辑器的行为；材料批注面板区分仅高亮与带文字笔记，笔记编辑从面板进入。
 
@@ -194,7 +194,8 @@ Windows 应用启动后，用户可选择本地 EPUB；文件被复制进入托�
 - **第 34 切片**：三 resident ReadingView 有界常驻实现（单组/双组 EPUB→Markdown→PDF→EPUB A→B→C→A、按 View 计数的 LRU 淘汰、最多两个 active、隐藏 Editor Group 挂起与复用、三格式混合容量和退出清理）。对应工单 #62，继承 #61/#60/#57，具体容量决策见 ADR-0041，PDF 首帧见 ADR-0042。
 - **第 35 切片**：三材料无缝轮换与资源压力总验收（EPUB/Markdown/PDF 同格式逐项命中、混合格式与双组隔离、桌面双 suspended PDF 当前页、第四项/单项/累计超限、结构化诊断、关闭一次与位置冷重建、原生平台证据边界）。对应工单 #63，具体决策见 ADR-0043。
 - **第 36 切片**：界面活动面板中的工作台外观（极夜黑、苹果白、Claude 护眼、清新绿、柔雾粉五套语义主题，独立背景光，本机偏好恢复、首绘防闪烁、生产与原型共享令牌）。对应工单 #67，具体决策见 ADR-0045、ADR-0046、ADR-0047。
-- **第 37 切片**：排版入口收敛到界面活动面板（书籍级/全局排版作用域、PDF 专属视图控件、正文主题隔离，工具栏与视图菜单快捷入口聚焦同一面板，紧凑抽屉 Escape/Android 返回键关闭与焦点归还，移除独立排版对话框）。对应工单 #70，具体决策见 ADR-0047。
+- **第 37 切片**：排版入口收敛到界面活动面板（书籍级/全局排版作用域、PDF 专属视图控件、正文主题隔离，视图菜单快捷入口聚焦同一面板，阅读工具栏左上角仅保留排版占位，紧凑抽屉 Escape/Android 返回键关闭与焦点归还，移除独立排版对话框）。对应工单 #70，具体决策见 ADR-0047；工具栏入口收窄见 ADR-0048。
+- **第 38 切片**：可重排 EPUB 正文跟随五个全局工作台主题（不透明正文纸张、普通正文纯黑/纯白、精确纯黑兼容、跨章节与有限 Runtime 生命周期更新、固定版式与 PDF 排除）。对应工单 #71，具体决策见 ADR-0049；Readest 样式注入行为只作窄范围参考。
 - **EPUB 语义与原生回退切片**：foliate-js 是 EPUB 元数据、封面、目录、spine、资源与 CFI 的唯一语义来源；Rust/Tauri 只在 parity gate 通过的平台预取 container/OPF/NAV/NCX 和资源尺寸。原生解析、预取或桥接失败时，必须在创建阅读器前回退到同一份纯 JS ZIP loader，禁止半原生状态、重复对象或位置漂移。具体决策见 ADR-0024。
 - **EPUB 缺失导航回退切片**：原生 NAV/NCX 不可导航但正文可读时，按受限标题扫描生成非权威临时目录；无可靠标题时保留空目录并继续阅读，缓存由 Rust 私有文件边界托管。具体决策见 ADR-0027。
 - **托管材料范围读取边界**：`ManagedFileSource` 以稳定 MaterialId 对接 Rust 的半开区间读取；TypeScript 侧使用 128 KiB/128 块 LRU 与并发分块去重。Markdown 打开/编辑/重新打开统一使用 Source；PDF 导入检查和阅读均经 `PDFDataRangeTransport` 按需加载，但已导入阅读路径不再先检查后重建 PDF.js 文档；EPUB 检查、打开与资源获取共享 Source，并由惰性 ZIP loader 按需加载。Windows Tauri 的 PDF Source 可通过 `managed-range.localhost` 以 MaterialId + 半开范围接收二进制响应；非 Windows、非 PDF 和浏览器降级继续使用现有受控范围回退，Windows 协议授权或读取失败则直接报告可诊断错误，禁止路径暴露或静默全量读取。具体决策见 ADR-0028、ADR-0029、ADR-0030、ADR-0031 与 ADR-0032。

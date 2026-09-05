@@ -1,6 +1,7 @@
 import type { SearchEvent, SearchOptions } from './search';
 import type { Toc } from './toc';
 import type { ReadingTypography } from './typography';
+import type { ReflowableReaderThemeId } from './epubTheme';
 import type { NativeEpubPrefetch } from './nativeEpub';
 import type { ReadingProgress } from './readingProgress';
 import type { EpubDerivedTocCache } from './derivedToc';
@@ -87,6 +88,12 @@ export interface FoliateViewHost {
    * 只注入固定映射生成的 CSS 与渲染器 attribute,不放开安全边界。
    */
   applyTypography(settings: ReadingTypography): void;
+
+  /** 让可重排 paginator 采用全局正文主题；固定版式忽略。 */
+  applyReflowableTheme?(theme: ReflowableReaderThemeId): void;
+
+  /** 当前 renderer 是否是可重排 paginator。 */
+  isReflowable?(): boolean;
 
   /**
    * 生成给定内容文档中某 Range 的规范化 CFI(index 为内容文档所在章节序号)。
