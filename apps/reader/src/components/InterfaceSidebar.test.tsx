@@ -9,6 +9,7 @@ import { AppServicesProvider } from '../app/AppServicesContext';
 import { createAppServices, type AppServices } from '../app/bootstrap';
 import { COMMAND_IDS } from '../commands/commandRegistry';
 import { useLibraryStore } from '../workbench/libraryStore';
+import { useWorkbenchAppearanceStore } from '../workbench/appearanceStore';
 import { useWorkspaceStore } from '../workbench/workspaceStore';
 import { InterfaceSidebar } from './InterfaceSidebar';
 
@@ -54,6 +55,7 @@ function renderPanel(services: AppServices) {
 describe('界面侧栏的阅读排版范围', () => {
   beforeEach(() => {
     useLibraryStore.getState().resetToDefault();
+    useWorkbenchAppearanceStore.getState().resetToDefault();
     useWorkspaceStore.getState().resetToDefault();
   });
 
@@ -117,7 +119,7 @@ describe('界面侧栏的阅读排版范围', () => {
     const globalScope = screen.getByRole('tabpanel', { name: '全局' });
     expect(within(globalScope).getByRole('slider', { name: '字号' })).toHaveValue('18');
     expect(within(globalScope).queryByRole('button', { name: '浅色' })).not.toBeInTheDocument();
-    expect(globalScope).toHaveTextContent('当前可重排 EPUB 的正文主题跟随上方工作台主题');
+    expect(globalScope).toHaveTextContent('当前可重排 EPUB / Markdown 的正文主题跟随上方工作台主题');
 
     fireEvent.change(within(globalScope).getByRole('slider', { name: '字号' }), {
       target: { value: '20' },
@@ -266,6 +268,26 @@ describe('界面侧栏的阅读排版范围', () => {
       expect(within(booksScope).queryByRole('group', { name: '页面适配' })).not.toBeInTheDocument();
       expect(within(booksScope).queryByRole('slider', { name: '缩放' })).not.toBeInTheDocument();
     }
+  });
+
+  it('Markdown 复用全局五主题摘要并隐藏历史三主题控件', async () => {
+    const services = createAppServices({
+      workspaceRepository: createInMemoryWorkspaceRepository(),
+    });
+    prepareActiveMaterial('notes.md');
+    useWorkbenchAppearanceStore.getState().setTheme('rose');
+
+    renderPanel(services);
+
+    const booksScope = screen.getByRole('tabpanel', { name: '书籍' });
+    expect(booksScope).toHaveTextContent('甜蜜粉');
+    expect(within(booksScope).queryByRole('group', { name: '主题' })).not.toBeInTheDocument();
+
+    const tablist = screen.getByRole('tablist', { name: '阅读排版作用范围' });
+    await userEvent.setup().click(within(tablist).getByRole('tab', { name: '全局' }));
+    const globalScope = screen.getByRole('tabpanel', { name: '全局' });
+    expect(globalScope).toHaveTextContent('当前可重排 EPUB / Markdown 的正文主题跟随上方工作台主题');
+    expect(within(globalScope).queryByRole('group', { name: '主题' })).not.toBeInTheDocument();
   });
 
   it.each([

@@ -2,18 +2,18 @@
 
 ## 功能
 
-Markdown 作为一等阅读材料的阅读内核，落实工单 #17（安全导入并阅读 Markdown）与 ADR-0004 / ADR-0009。它把 Markdown 解析、清洗、按一级标题分段并组装成内存 EPUB，再复用 Foliate 分页器渲染，从而复用既有分页、搜索、目录、导航与排版能力。
+Markdown 作为一等阅读材料的阅读内核，落实工单 #17（安全导入并阅读 Markdown）、#55（阅读运行时缓存一致性）与 #72（复用全局主题并保持编辑恢复一致），以及 ADR-0004 / ADR-0009。它把 Markdown 解析、清洗、按一级标题分段并组装成内存 EPUB，再复用 Foliate 分页器渲染，从而复用既有分页、搜索、目录、导航、排版与五主题配色能力。
 
 - `markdownParser.ts`：`parseMarkdown` 渲染 Markdown → `marked` → `sanitizeHtmlFragment` 清洗 → 按一级标题切分章节；`parseFrontmatter` 提取 `title`/`author` 来源元数据。
 - `markdownInspector.ts`：`inspectMarkdown` 导入检查（空/不可读分类、标题提取与文件名兜底）、`readableNameFromFileName`。`MarkdownInspectError` 领域化错误。
 - `markdownEpub.ts`：`buildMarkdownEpub` 把已清洗的章节组装成最小 stored 内存 EPUB（含 mimetype/container/OPF/nav/章节）；自带最小 stored-zip 写入器，保持本域不依赖 `domain/library`。
-- `markdownBookDocument.ts`：`MarkdownBookDocument` 在打开前把 Markdown 转成内存 EPUB，再复用 `EpubBookDocument` 的 Foliate 宿主封装；`format` 为 `'markdown'`，`ReadingLocation` kind 为 `'markdown'`。
+- `markdownBookDocument.ts`：`MarkdownBookDocument` 在打开前把 Markdown 转成内存 EPUB，再复用 `EpubBookDocument` 的 Foliate 宿主封装；`format` 为 `'markdown'`，`ReadingLocation` kind 为 `'markdown'`，主题由 `WorkbenchAppearance` 的既有五主题入口驱动，不创建 Markdown 专属颜色存储。
 - `markdownSource.ts`：在 Markdown 领域内通过 Blob 兼容来源的 `stream()` 按受控分块物化 UTF-8 完整文本；EPUB/PDF 不复用该入口。
 - 对应 `*.test.ts`：解析、检查、BookDocument 与内存 EPUB 校验（用伪宿主，不依赖真实浏览器渲染）；恶意 Markdown fixture 安全测试在 `sanitizer.test.ts` 与 `markdownParser.test.ts`。
 
 工单 #34 只迁移托管文件来源边界；Markdown 仍在打开时物化完整文本，增量 Markdown 解析不在本工单范围内。
 
-安全边界（ADR-0010）：Markdown 渲染结果一律视为不可信输入，`sanitizeHtmlFragment` 移除脚本、iframe、对象嵌入、事件处理器与危险 URL；清洗发生在进入任何渲染器之前。
+安全边界（ADR-0010）：Markdown 渲染结果一律视为不可信输入，`sanitizeHtmlFragment` 移除脚本、iframe、对象嵌入、事件处理器与危险 URL；清洗发生在进入任何渲染器之前。清洗后的 XHTML/CSS 再复用可重排阅读主题的精确纯黑转换；灰色、彩色、局部背景、图片、SVG/公式与高亮/搜索/选区不被全局正文规则覆盖。
 
 ## 依赖其它文件夹
 

@@ -11,6 +11,7 @@ import type { ReadingTypography } from './typography';
 import { DEFAULT_READING_TYPOGRAPHY } from './typography';
 import {
   DEFAULT_REFLOWABLE_READER_THEME,
+  isWorkbenchThemedReflowableFormat,
   transformReflowableEpubThemeResource,
   type ReflowableReaderThemeId,
 } from './epubTheme';
@@ -314,13 +315,13 @@ export class EpubBookDocument implements BookDocument {
   }
 
   applyWorkbenchTheme(theme: ReflowableReaderThemeId): void {
-    if (this.format !== 'epub') return;
+    if (!isWorkbenchThemedReflowableFormat(this.format)) return;
     this.workbenchTheme = theme;
     this.applyWorkbenchThemeToHost();
   }
 
   isReflowable(): boolean {
-    return this.format === 'epub' && (this.host?.isReflowable?.() ?? true);
+    return isWorkbenchThemedReflowableFormat(this.format) && (this.host?.isReflowable?.() ?? true);
   }
 
   onInternalLink(listener: (href: string) => void): () => void {
@@ -397,7 +398,7 @@ export class EpubBookDocument implements BookDocument {
     // 内容清洗:在文本资源进入渲染器前移除脚本、嵌入、媒体与危险 URL。
     this.host.onContentData((type, data) => {
       const canonical = this.canonicalTransform.transform(type, data);
-      return this.format === 'epub'
+      return isWorkbenchThemedReflowableFormat(this.format)
         ? transformReflowableEpubThemeResource(type, canonical)
         : canonical;
     });
@@ -458,7 +459,7 @@ export class EpubBookDocument implements BookDocument {
   }
 
   private applyWorkbenchThemeToHost(): void {
-    if (this.format !== 'epub') return;
+    if (!isWorkbenchThemedReflowableFormat(this.format)) return;
     this.host?.applyReflowableTheme?.(this.workbenchTheme);
   }
 }

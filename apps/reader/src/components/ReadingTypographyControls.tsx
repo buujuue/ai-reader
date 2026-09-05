@@ -33,7 +33,7 @@ interface ReadingTypographyControlsProps {
   effective: ReadingTypography;
   onApply: (patch: Partial<ReadingTypography>) => void;
   onFlowChange: (flow: ReadingFlow) => void;
-  /** 可重排 EPUB 的正文主题由工作台五主题驱动，不显示旧三主题控件。 */
+  /** 可重排 EPUB / Markdown 的正文主题由工作台五主题驱动，不显示旧三主题控件。 */
   showTheme?: boolean;
   /** 材料级 PDF 注入此配置;PDF 固定文字几何不显示字体/字号/行距/页边距控件。 */
   pdf?: {

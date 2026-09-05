@@ -17,6 +17,7 @@ interface FakeHost extends FoliateViewHost {
   emitReadError: (error: unknown) => void;
   closed: boolean;
   emitContentDuringOpen: boolean;
+  appliedThemes: string[];
 }
 
 function createFakeHost(): FakeHost {
@@ -33,6 +34,7 @@ function createFakeHost(): FakeHost {
     contentData: [] as Array<{ type: string; data: string }>,
     closed: false,
     emitContentDuringOpen: false,
+    appliedThemes: [],
     getReadingProgress() {
       return null;
     },
@@ -130,6 +132,9 @@ function createFakeHost(): FakeHost {
     },
     clearSearch() {},
     applyTypography() {},
+    applyReflowableTheme(theme) {
+      this.appliedThemes.push(theme);
+    },
     close() {
       this.closed = true;
     },
@@ -183,6 +188,29 @@ describe('EpubBookDocument', () => {
 
     expect(host.openedBytes).toBeInstanceOf(File);
     expect(book.getLocation()).toBeNull();
+  });
+
+  it('Markdown 复用五主题样式入口并在渲染前转换精确纯黑声明', async () => {
+    const host = createFakeHost();
+    const book = new EpubBookDocument({
+      source: new File(['markdown'], 'markdown.epub', { type: 'application/epub+zip' }),
+      metadata: { title: 'Markdown', author: null, language: 'zh' },
+      viewHostFactory: () => host,
+      format: 'markdown',
+      locationKind: 'markdown',
+    });
+
+    book.applyWorkbenchTheme('midnight');
+    await book.open(document.createElement('div'));
+    host.emitContentData(
+      'application/xhtml+xml',
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><p style="color: black">正文</p><p style="color: #777">灰色</p></body></html>',
+    );
+
+    expect(book.isReflowable()).toBe(true);
+    expect(host.appliedThemes).toEqual(['midnight']);
+    expect(host.contentData.at(-1)?.data).toContain('var(--ai-reader-epub-theme-black)');
+    expect(host.contentData.at(-1)?.data).toContain('color: #777');
   });
 
   it('挂起后重新挂载同一宿主而不重复打开文档', async () => {

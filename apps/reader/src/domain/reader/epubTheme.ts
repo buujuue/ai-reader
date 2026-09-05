@@ -7,6 +7,13 @@
  */
 export type ReflowableReaderThemeId = 'midnight' | 'apple' | 'claude' | 'mint' | 'rose';
 
+/** 当前复用工作台五主题的可重排材料格式。 */
+export function isWorkbenchThemedReflowableFormat(
+  format: unknown,
+): format is 'epub' | 'markdown' {
+  return format === 'epub' || format === 'markdown';
+}
+
 export interface ReflowableReaderThemePalette {
   /** 页面基础背景，必须是不透明的正文纸张色。 */
   background: string;
@@ -56,7 +63,13 @@ function normalizeColorValue(value: string): string {
 }
 
 function isPureBlackValue(value: string): boolean {
-  return PURE_BLACK_VALUES.has(normalizeColorValue(value));
+  const normalized = normalizeColorValue(value);
+  return (
+    PURE_BLACK_VALUES.has(normalized) ||
+    /^rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(normalized) ||
+    /^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*1(?:\.0+)?\s*\)$/.test(normalized) ||
+    /^rgba\(\s*0\s+0\s+0\s*\/\s*1(?:\.0+)?\s*\)$/.test(normalized)
+  );
 }
 
 /**
@@ -65,7 +78,7 @@ function isPureBlackValue(value: string): boolean {
  */
 export function replacePureBlackCssColors(css: string): string {
   return css.replace(
-    /(^|[;{])(\s*)(color)(\s*:\s*)([^;{}]+)(?=;|})/gi,
+    /(^|[;{])(\s*)(color)(\s*:\s*)([^;{}]+)(?=;|}|$)/gi,
     (match, prefix: string, whitespace: string, property: string, separator: string, value: string) => {
       if (!isPureBlackValue(value)) return match;
       const important = /\s*!important\s*$/i.test(value) ? ' !important' : '';
@@ -117,6 +130,6 @@ export function transformReflowableEpubThemeResource(type: string, input: string
 /** 精确识别旧式 HTML color 属性中的纯黑值，不匹配相近色或背景属性。 */
 export function buildPureBlackColorAttributeSelectors(): string {
   return PURE_BLACK_COLOR_ATTRIBUTES
-    .map((value) => `[color="${value}" i]`)
+    .map((value) => `:not(svg):not(svg *)[color="${value}" i]`)
     .join(',\n');
 }

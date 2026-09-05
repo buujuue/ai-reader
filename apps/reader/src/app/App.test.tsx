@@ -1909,6 +1909,16 @@ describe('打开 EPUB 并重启续读', () => {
       runtimeEntries.map(([viewId, document]) => [viewId, vi.spyOn(document, 'applyTypography')]),
     );
     for (const applySpy of applySpies.values()) applySpy.mockClear();
+    const themeSpies = new Map(
+      runtimeEntries
+        .filter(([, document]) => document.format !== 'pdf')
+        .map(([viewId, document]) => [viewId, vi.spyOn(document, 'applyWorkbenchTheme')]),
+    );
+
+    await services.commands.execute(COMMAND_IDS.workbenchSetAppearanceTheme, 'rose');
+    for (const themeSpy of themeSpies.values()) {
+      expect(themeSpy).toHaveBeenLastCalledWith('rose');
+    }
 
     await user.click(screen.getByRole('button', { name: '界面' }));
     const panel = await screen.findByRole('complementary', { name: '界面侧栏' });

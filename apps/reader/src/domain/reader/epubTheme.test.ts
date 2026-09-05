@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   EPUB_THEME_BLACK_VARIABLE,
   REFLOWABLE_READER_THEME_PALETTES,
+  buildPureBlackColorAttributeSelectors,
+  isWorkbenchThemedReflowableFormat,
   transformReflowableEpubThemeResource,
 } from './epubTheme';
 
@@ -14,6 +16,8 @@ describe('可重排 EPUB 全局主题样式兼容', () => {
         'p { color: #000; }',
         '.gray { color: #777777; }',
         '.near-black { color: #000001; }',
+        '.spaced-rgb { color: rgb(0,  0,  0); }',
+        '.spaced-rgba { color: rgba(0,  0,  0,  1); }',
         '.bg { background-color: #000; }',
         '.named { color: black !important; }',
       ].join('\n'),
@@ -21,6 +25,7 @@ describe('可重排 EPUB 全局主题样式兼容', () => {
 
     expect(css).toContain(`color: var(${EPUB_THEME_BLACK_VARIABLE});`);
     expect(css).toContain(`color: var(${EPUB_THEME_BLACK_VARIABLE}) !important;`);
+    expect(css.match(new RegExp(`color: var\\(${EPUB_THEME_BLACK_VARIABLE}\\)`, 'g'))).toHaveLength(4);
     expect(css).toContain('.gray { color: #777777; }');
     expect(css).toContain('.near-black { color: #000001; }');
     expect(css).toContain('.bg { background-color: #000; }');
@@ -54,5 +59,18 @@ describe('可重排 EPUB 全局主题样式兼容', () => {
       mint: { background: '#f9fcfa', foreground: '#000000' },
       rose: { background: '#fffafd', foreground: '#000000' },
     });
+  });
+
+  it('只把可重排 EPUB 与 Markdown 纳入工作台主题范围', () => {
+    expect(isWorkbenchThemedReflowableFormat('epub')).toBe(true);
+    expect(isWorkbenchThemedReflowableFormat('markdown')).toBe(true);
+    expect(isWorkbenchThemedReflowableFormat('pdf')).toBe(false);
+    expect(isWorkbenchThemedReflowableFormat('unknown')).toBe(false);
+  });
+
+  it('纯黑属性选择器排除 SVG 内容', () => {
+    expect(buildPureBlackColorAttributeSelectors()).toContain(
+      ':not(svg):not(svg *)[color="#000" i]',
+    );
   });
 });

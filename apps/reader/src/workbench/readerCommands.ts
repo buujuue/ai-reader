@@ -28,7 +28,10 @@ import type { PdfFileSource, PdfJsLib } from '../domain/reader/pdf/pdfLibrary';
 import type { PdfPageRasterizer } from '../domain/reader/pdf/pdfPageRenderer';
 import { isPdfTextAnchor, decodePdfTextAnchor } from '../domain/reader/pdf/pdfTextAnchor';
 import { MarkdownBookDocument } from '../domain/reader/markdown/markdownBookDocument';
-import type { ReflowableReaderThemeId } from '../domain/reader/epubTheme';
+import {
+  isWorkbenchThemedReflowableFormat,
+  type ReflowableReaderThemeId,
+} from '../domain/reader/epubTheme';
 import {
   DEFAULT_READING_TYPOGRAPHY,
   hasTypographyOverride,
@@ -902,8 +905,8 @@ async function ensureActiveViewDocument(
     return null;
   }
   // 主题是本机工作台偏好，不进入 Workspace State；在首次 open 前把当前值
-  // 写入 EPUB 文档，避免主题切换与异步打开竞态导致新 Runtime 闪回旧色。
-  if (document.format === 'epub') {
+  // 写入可重排 EPUB/Markdown 文档，避免主题切换与异步打开竞态导致新 Runtime 闪回旧色。
+  if (isWorkbenchThemedReflowableDocument(document)) {
     applyCurrentWorkbenchTheme(document);
   }
   // A tab may have been switched away while the file was being inspected.
@@ -1792,20 +1795,27 @@ function forEachOpenReaderView(
 }
 
 /**
- * 工作台主题 Command 的窄回调：只更新已经存在的可重排 EPUB Runtime，
+ * 工作台主题 Command 的窄回调：只更新已经存在的可重排 EPUB/Markdown Runtime，
  * 不唤醒挂起对象、不创建新 Runtime，也不触碰阅读位置或缓存容量。
  */
-export function applyWorkbenchThemeToOpenEpubViews(theme: ReflowableReaderThemeId): void {
+export function applyWorkbenchThemeToOpenReflowableViews(theme: ReflowableReaderThemeId): void {
   forEachOpenReaderView((document) => {
-    if (document.format !== 'epub' || document.isReflowable?.() === false) return;
+    if (!isWorkbenchThemedReflowableDocument(document)) return;
     document.applyWorkbenchTheme?.(theme);
   });
 }
 
 function applyCurrentWorkbenchTheme(document: BookDocument): void {
-  if (document.format === 'epub') {
+  if (isWorkbenchThemedReflowableDocument(document)) {
     document.applyWorkbenchTheme?.(useWorkbenchAppearanceStore.getState().theme);
   }
+}
+
+function isWorkbenchThemedReflowableDocument(document: BookDocument): boolean {
+  return (
+    isWorkbenchThemedReflowableFormat(document.format) &&
+    document.isReflowable?.() !== false
+  );
 }
 
 function applyTypographyToOpenViews(globalTypography: ReadingTypography): void {

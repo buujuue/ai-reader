@@ -205,8 +205,8 @@ body *::-webkit-scrollbar-thumb {
 /**
  * 为可重排 EPUB 构建正文排版 CSS。
  *
- * 旧的 ReadingTheme 仍由 PDF/Markdown 的既有边界使用；可重排 EPUB 的
- * 正文配色改由 WorkbenchAppearance 的五主题驱动。CSS 只提供默认继承色，
+ * 旧的 ReadingTheme 仍由 PDF 与其它尚未迁移的格式使用；可重排 EPUB/Markdown
+ * 的正文配色改由 WorkbenchAppearance 的五主题驱动。CSS 只提供默认继承色，
  * 不覆盖显式彩色后代或书内局部背景。
  */
 export function buildReflowableEpubTypographyCss(

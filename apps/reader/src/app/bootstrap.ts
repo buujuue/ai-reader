@@ -25,7 +25,7 @@ import { registerAnnotationExportCommands } from '../workbench/annotationExportC
 import { registerLibraryCommands } from '../workbench/libraryCommands';
 import { registerMarkdownCommands } from '../workbench/markdownCommands';
 import {
-  applyWorkbenchThemeToOpenEpubViews,
+  applyWorkbenchThemeToOpenReflowableViews,
   registerReaderCommands,
   flushReaderPositions,
   flushAndCloseAllReaderViews,
@@ -312,7 +312,7 @@ export function createAppServices(options: AppServicesOptions = {}): AppServices
     workspaceRepository,
     annotationRepository,
     appearancePreferences,
-    onAppearanceThemeChanged: applyWorkbenchThemeToOpenEpubViews,
+    onAppearanceThemeChanged: applyWorkbenchThemeToOpenReflowableViews,
   });
   registerBackupCommands(commands, {
     backupRepository,
